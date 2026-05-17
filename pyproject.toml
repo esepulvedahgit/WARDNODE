@@ -1,0 +1,27 @@
+[project]
+name = "flask-blueprints-starter"
+version = "0.1.0"
+description = "Base Flask project using blueprints, SQLAlchemy, Flask-Migrate, HTMX, Bootstrap, Alpine.js, pytest, and Docker."
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13",
+    "flask>=3.0",
+    "flask-limiter>=3.8",
+    "flask-login>=0.6",
+    "flask-migrate>=4.0",
+    "flask-sqlalchemy>=3.1",
+    "flask-wtf>=1.2",
+    "gunicorn>=22.0",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

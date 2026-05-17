@@ -1,0 +1,26 @@
+[Unit]
+Description=WardNode WF — Firewall Agent
+Documentation=https://github.com/tu-org/wardnode
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/wardnode/wardnode-wf-agent.py
+ExecStopPost=/bin/rm -f /run/wardnode/wardnode-wf.sock
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+# ── Hardening ──────────────────────────────────────
+# ProtectSystem omitido: UFW necesita acceso rw a /etc/ufw y /var/lib/ufw
+# RestrictNamespaces/SystemCallFilter omitidos: compatibilidad con iptables/nftables
+PrivateTmp=yes
+ReadWritePaths=/run/wardnode
+LockPersonality=yes
+UMask=0117
+
+[Install]
+WantedBy=multi-user.target

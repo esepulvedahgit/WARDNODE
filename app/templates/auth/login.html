@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Login | WardNode{% endblock %}
+
+{% block content %}
+<section class="auth-panel panel mx-auto">
+  <h1 class="h4 mb-3">Iniciar sesion</h1>
+  <form method="post" action="{{ url_for('auth.login_post', next=request.args.get('next')) }}" class="vstack gap-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div>
+      <label class="form-label" for="email">Correo</label>
+      <input class="form-control" id="email" name="email" type="email" autocomplete="email" required>
+    </div>
+    <div>
+      <label class="form-label" for="password">Contrasena</label>
+      <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn btn-primary" type="submit">Entrar</button>
+  </form>
+  <a class="d-inline-block mt-3" href="{{ url_for('auth.forgot_password') }}">Recuperar contrasena</a>
+</section>
+{% endblock %}
+

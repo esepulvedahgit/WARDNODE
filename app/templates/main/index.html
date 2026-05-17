@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Inicio | WardNode{% endblock %}
+
+{% block content %}
+<section class="row g-4 align-items-start">
+  <div class="col-lg-8">
+    <h1 class="h3 mb-3">WardNode</h1>
+    <p class="text-secondary">
+      Consola defensiva para administrar un proxy inverso Nginx con reglas OWASP CRS.
+    </p>
+
+    <a class="btn btn-primary" href="{{ url_for('proxy.dashboard') }}">Abrir consola</a>
+
+    <button
+      class="btn btn-outline-secondary"
+      hx-get="{{ url_for('main.status_partial') }}"
+      hx-target="#status-panel"
+      hx-swap="innerHTML"
+    >
+      Probar HTMX
+    </button>
+
+    <div id="status-panel" class="mt-3"></div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="border rounded p-3" x-data="{ open: false }">
+      <button class="btn btn-outline-secondary btn-sm" type="button" x-on:click="open = !open">
+        Microinteraccion Alpine
+      </button>
+      <p class="mb-0 mt-3 text-secondary" x-show="open" x-transition>
+        Alpine queda reservado para comportamientos pequenos del lado cliente.
+      </p>
+    </div>
+  </div>
+</section>
+{% endblock %}

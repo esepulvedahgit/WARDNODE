@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+
+{% block title %}WardNode OBS — Observabilidad | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a class="bc-link" href="{{ url_for('modules.index') }}">Módulos</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">OBS · Grafana</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page"
+     x-data="obsPanel()"
+     x-init="loadStatus()"
+     @obs-restart-ok.window="loadStatus()">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+        <i class="bi bi-bar-chart-line-fill" style="color:var(--accent)"></i>
+        WardNode OBS
+      </h1>
+      <p class="text-secondary mb-0 small">Observabilidad centralizada — logs WAF, nginx, ModSecurity y SSH en Grafana + Loki.</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span x-show="lokiOk === true && grafanaOk === true && fluentbitOk === true" x-cloak class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">
+        <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Stack operativo
+      </span>
+      <span x-show="lokiOk === false || grafanaOk === false || fluentbitOk === false" style="display:none" class="badge-mode badge-off">
+        <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Servicios inactivos
+      </span>
+      <span x-show="lokiOk === null" style="display:none" class="badge-mode" style="color:var(--text-muted)">
+        <span class="spinner-border spinner-border-sm me-1" style="width:10px;height:10px"></span>Verificando…
+      </span>
+      <button @click="loadStatus()" class="btn btn-sm btn-outline-secondary" :disabled="loading">
+        <i class="bi bi-arrow-clockwise" :class="{'spin': loading}"></i>
+      </button>
+    </div>
+  </div>
+
+  {# ── Badges de estado de servicios ── #}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px">
+    <div style="display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;padding:6px 12px;font-size:12px">
+      <i class="bi bi-database" style="color:var(--accent)"></i>
+      <span style="color:var(--text-secondary)">Loki</span>
+      <span :class="lokiOk === true ? 'text-success' : lokiOk === false ? 'text-danger' : 'text-secondary'"
+            x-text="lokiOk === true ? '● activo' : lokiOk === false ? '● inactivo' : '● —'"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;padding:6px 12px;font-size:12px">
+      <i class="bi bi-graph-up" style="color:var(--accent)"></i>
+      <span style="color:var(--text-secondary)">Grafana</span>
+      <span :class="grafanaOk === true ? 'text-success' : grafanaOk === false ? 'text-danger' : 'text-secondary'"
+            x-text="grafanaOk === true ? '● activo' : grafanaOk === false ? '● inactivo' : '● —'"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;padding:6px 12px;font-size:12px">
+      <i class="bi bi-funnel" style="color:var(--accent)"></i>
+      <span style="color:var(--text-secondary)">Fluent Bit</span>
+      <span :class="fluentbitOk === true ? 'text-success' : fluentbitOk === false ? 'text-danger' : 'text-secondary'"
+            x-text="fluentbitOk === true ? '● activo' : fluentbitOk === false ? '● inactivo' : '● —'"></span>
+    </div>
+  </div>
+
+  {# ── Alerta + reinicio si servicios inactivos ── #}
+  <div x-show="lokiOk === false || grafanaOk === false || fluentbitOk === false" style="display:none"
+       x-data="obsRestart()">
+
+    {# Overlay de carga durante reinicio #}
+    <div x-show="running" x-cloak
+         style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:200;
+                display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+      <div style="background:#fff;border-radius:12px;padding:32px 40px;text-align:center;max-width:340px;width:90%">
+        <div class="spinner-border mb-3" style="color:var(--accent);width:32px;height:32px"></div>
+        <p style="font-size:13px;font-weight:600;margin:0 0 4px" x-text="stepText"></p>
+        <p style="font-size:11px;color:var(--text-muted);margin:0">Hasta 60 segundos en el primer arranque.</p>
+      </div>
+    </div>
+
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;margin-bottom:20px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-danger);font-size:18px;flex-shrink:0;margin-top:1px"></i>
+        <div style="flex:1">
+          <p style="font-weight:600;margin:0 0 4px;font-size:13px">Servicios de observabilidad inactivos</p>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px">
+            Uno o más contenedores no responden. Puedes reiniciarlos directamente:
+          </p>
+          <div x-show="restartError" x-cloak
+               style="font-size:11px;color:var(--c-danger);margin-bottom:8px" x-text="restartError"></div>
+          <button @click="restart()" :disabled="running"
+                  class="btn btn-sm btn-danger">
+            <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+            <i x-show="!running" class="bi bi-arrow-repeat me-1"></i>
+            <span x-text="running ? 'Reiniciando…' : 'Reiniciar servicios'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+
+    {# ── Acceso a Grafana ── #}
+    <div class="col-lg-6">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-graph-up" style="color:var(--accent)"></i>
+            <h2 class="card-panel-title">Acceso a Grafana</h2>
+          </div>
+        </div>
+        <div class="card-panel-body">
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
+            Grafana está disponible en <code>/obs/</code> del mismo dominio del proxy nginx —
+            no requiere SSH tunnel ni puerto adicional.
+          </p>
+
+          <div style="background:var(--bg-subtle);border-radius:6px;padding:10px 12px;font-size:12px;margin-bottom:12px">
+            <p style="font-weight:600;margin:0 0 6px">URL de acceso</p>
+            <div x-data="{c:false}" style="position:relative">
+              <code style="font-size:12px;word-break:break-all">http://IP_O_DOMINIO_VPS/obs/</code>
+              <button @click="navigator.clipboard.writeText(window.location.origin+'/obs/');c=true;setTimeout(()=>c=false,2000)"
+                      style="background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px;margin-left:6px">
+                <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+              </button>
+            </div>
+          </div>
+
+          <div style="background:var(--bg-subtle);border-radius:6px;padding:10px 12px;font-size:12px;margin-bottom:16px">
+            <p style="font-weight:600;margin:0 0 4px">Credenciales por defecto</p>
+            <p style="margin:0;color:var(--text-secondary)">
+              Usuario: <code>admin</code> &nbsp;/&nbsp; Contraseña: valor de <code>GRAFANA_ADMIN_PASSWORD</code> en <code>.env.prod</code>
+            </p>
+          </div>
+
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 12px;font-size:11px;color:#1e40af;margin-bottom:16px">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Dominio configurado como site en WardNode:</strong> añade la location
+            <code>/obs/</code> en <em>Nginx extras</em> del site. Ver instrucciones abajo.
+          </div>
+
+          <a href="/obs/" target="_blank"
+             :class="grafanaOk ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-outline-secondary'"
+             style="font-size:12px">
+            <i class="bi bi-box-arrow-up-right me-1"></i>
+            Abrir Grafana
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {# ── Fuentes de logs activas ── #}
+    <div class="col-lg-6">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-list-ul" style="color:var(--accent)"></i>
+            <h2 class="card-panel-title">Fuentes de logs</h2>
+          </div>
+        </div>
+        <div class="card-panel-body">
+          <div style="display:flex;flex-direction:column;gap:10px">
+
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
+              <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
+              <div>
+                <p style="font-size:12px;font-weight:600;margin:0">nginx / proxy</p>
+                <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Fluent Bit → Loki</p>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
+              <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
+              <div>
+                <p style="font-size:12px;font-weight:600;margin:0">ModSecurity audit</p>
+                <p style="font-size:11px;color:var(--text-muted);margin:0">JSON en volumen <code>modsecurity_logs</code> → Loki</p>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
+              <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
+              <div>
+                <p style="font-size:12px;font-weight:600;margin:0">Flask / consola</p>
+                <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Fluent Bit → Loki</p>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
+              <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
+              <div>
+                <p style="font-size:12px;font-weight:600;margin:0">SSH auth.log</p>
+                <p style="font-size:11px;color:var(--text-muted);margin:0">bind mount <code>/var/log/auth.log</code> → Loki</p>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
+              <i class="bi {{ 'bi-check-circle-fill' if module_cs_enabled else 'bi-dash-circle' }}" style="color:{{ '#16a34a' if module_cs_enabled else 'var(--text-muted)' }};flex-shrink:0"></i>
+              <div>
+                <p style="font-size:12px;font-weight:600;margin:0">CrowdSec</p>
+                <p style="font-size:11px;color:var(--text-muted);margin:0">
+                  {% if module_cs_enabled %}via journald / auth.log (cubierto por SSH auth.log){% else %}Requiere módulo CS activo{% endif %}
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  {# ── Instrucciones de despliegue ── #}
+  <div class="card-panel mt-4">
+    <div class="card-panel-header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <i class="bi bi-terminal" style="color:var(--accent)"></i>
+        <h2 class="card-panel-title">Despliegue en el VPS</h2>
+      </div>
+    </div>
+    <div class="card-panel-body">
+      <ol style="padding-left:20px;margin:0;display:flex;flex-direction:column;gap:18px">
+
+        <li style="font-size:13px">
+          <p style="font-weight:600;margin:0 0 4px">Copiar archivos de configuración al VPS</p>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 6px">
+            El directorio <code>observability/</code> debe estar junto a <code>docker-compose.vps.yml</code>:
+          </p>
+          <div x-data="{c:false}" style="position:relative">
+            <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">scp -r observability/ usuario@IP_VPS:/ruta/wardnode/</pre>
+            <button @click="navigator.clipboard.writeText('scp -r observability/ usuario@IP_VPS:/ruta/wardnode/');c=true;setTimeout(()=>c=false,2000)"
+                    style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">
+              <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+            </button>
+          </div>
+        </li>
+
+        <li style="font-size:13px">
+          <p style="font-weight:600;margin:0 0 4px">Configurar contraseña de Grafana</p>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 6px">
+            Añadir en <code>.env.prod</code> en el VPS:
+          </p>
+          <div x-data="{c:false}" style="position:relative">
+            <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">GRAFANA_ADMIN_PASSWORD=tu_contrasena_segura</pre>
+            <button @click="navigator.clipboard.writeText('GRAFANA_ADMIN_PASSWORD=tu_contrasena_segura');c=true;setTimeout(()=>c=false,2000)"
+                    style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">
+              <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+            </button>
+          </div>
+        </li>
+
+        <li style="font-size:13px">
+          <p style="font-weight:600;margin:0 0 4px">Iniciar el stack de observabilidad</p>
+          <div x-data="{c:false}" style="position:relative">
+            <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">docker compose -f docker-compose.vps.yml --profile obs up -d</pre>
+            <button @click="navigator.clipboard.writeText('docker compose -f docker-compose.vps.yml --profile obs up -d');c=true;setTimeout(()=>c=false,2000)"
+                    style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">
+              <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+            </button>
+          </div>
+          <p style="font-size:12px;color:var(--text-muted);margin:6px 0 0">
+            Reiniciar también los servicios existentes para activar el logging driver Fluent Bit:
+          </p>
+          <div x-data="{c:false}" style="position:relative;margin-top:6px">
+            <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">docker compose -f docker-compose.vps.yml up -d --force-recreate console proxy</pre>
+            <button @click="navigator.clipboard.writeText('docker compose -f docker-compose.vps.yml up -d --force-recreate console proxy');c=true;setTimeout(()=>c=false,2000)"
+                    style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">
+              <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+            </button>
+          </div>
+        </li>
+
+      </ol>
+    </div>
+  </div>
+
+  {# ── Escenario B: dominio con site configurado en WardNode ── #}
+  <div class="card-panel mt-4">
+    <div class="card-panel-header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <i class="bi bi-globe" style="color:var(--accent)"></i>
+        <h2 class="card-panel-title">Dominio con site activo en WardNode</h2>
+      </div>
+      <span style="font-size:11px;background:#fef9c3;color:#854d0e;border:1px solid #fde68a;border-radius:20px;padding:2px 10px">solo si aplica</span>
+    </div>
+    <div class="card-panel-body">
+      <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
+        Si el dominio ya está configurado como site protegido en <strong>Proxy &amp; WAF</strong>,
+        el catch-all del nginx-obs.conf no aplica. Agrega manualmente la location en
+        <em>Configuración del site → Nginx extras → Bloque server</em>:
+      </p>
+      <div x-data="{c:false}" style="position:relative">
+        <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">location /obs/ {
+    proxy_pass         http://grafana:3000/obs/;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade           $http_upgrade;
+    proxy_set_header   Connection        "upgrade";
+    proxy_read_timeout 300s;
+}</pre>
+        <button @click="navigator.clipboard.writeText('location /obs/ {\n    proxy_pass         http://grafana:3000/obs/;\n    proxy_set_header   Host              $host;\n    proxy_set_header   X-Real-IP         $remote_addr;\n    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;\n    proxy_set_header   X-Forwarded-Proto $scheme;\n    proxy_http_version 1.1;\n    proxy_set_header   Upgrade           $http_upgrade;\n    proxy_set_header   Connection        \"upgrade\";\n    proxy_read_timeout 300s;\n}');c=true;setTimeout(()=>c=false,2000)"
+                style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">
+          <i :class="c ? 'bi bi-check2 text-success' : 'bi bi-clipboard'"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function obsPanel() {
+  return {
+    lokiOk: null,
+    grafanaOk: null,
+    fluentbitOk: null,
+    loading: false,
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    async loadStatus() {
+      this.loading = true;
+      try {
+        const r = await fetch('{{ url_for("modules.obs_status") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() }
+        });
+        const d = await r.json();
+        this.lokiOk = d.loki === true;
+        this.grafanaOk = d.grafana === true;
+        this.fluentbitOk = d.fluentbit === true;
+      } catch (e) {
+        this.lokiOk = false;
+        this.grafanaOk = false;
+        this.fluentbitOk = false;
+      }
+      this.loading = false;
+    }
+  };
+}
+
+function obsRestart() {
+  return {
+    running: false,
+    stepText: '',
+    restartError: '',
+    _steps: [
+      'Verificando contenedores…',
+      'Iniciando servicios…',
+      'Esperando Loki…',
+      'Esperando Grafana…',
+      'Verificando conectividad…',
+    ],
+    _timer: null,
+
+    _startSteps() {
+      let i = 0;
+      this.stepText = this._steps[0];
+      this._timer = setInterval(() => {
+        i = (i + 1) % this._steps.length;
+        this.stepText = this._steps[i];
+      }, 5000);
+    },
+
+    _stopSteps() {
+      clearInterval(this._timer);
+      this._timer = null;
+    },
+
+    async restart() {
+      this.running = true;
+      this.restartError = '';
+      this._startSteps();
+      try {
+        const r = await fetch('{{ url_for("modules.obs_activate") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': document.querySelector("meta[name='csrf-token']").content },
+        });
+        const d = await r.json();
+        if (d.ok) {
+          window.location.reload();
+        } else {
+          this.restartError = d.error || 'Error desconocido al reiniciar.';
+        }
+      } catch (e) {
+        this.restartError = 'Error de red al contactar el servidor.';
+      }
+      this._stopSteps();
+      this.running = false;
+    },
+  };
+}
+</script>
+<style>
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+[x-cloak] { display: none !important; }
+</style>
+{% endblock %}

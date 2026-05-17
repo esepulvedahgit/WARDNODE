@@ -1,0 +1,744 @@
+{% extends "base.html" %}
+
+{% block title %}WardNode WF — Firewall | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a class="bc-link" href="{{ url_for('modules.index') }}">Módulos</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">WF · Firewall</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page"
+     x-data="wfPanel()"
+     x-init="loadStatus()"
+     @wf-install-success.window="loadStatus()"
+     @wf-init-success.window="loadStatus()"
+     @wf-rules-changed.window="loadStatus()">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+        <i class="bi bi-shield-fill-exclamation" style="color:var(--accent)"></i>
+        WardNode WF
+      </h1>
+      <p class="text-secondary mb-0 small">Administración del firewall UFW del host.</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span x-show="agentOk === true && initialized === true" x-cloak class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">
+        <i class="bi bi-shield-check-fill me-1" style="font-size:9px"></i>Política activa: deny incoming
+      </span>
+      <span x-show="agentOk === true && initialized === false" x-cloak class="badge-mode badge-off">
+        <i class="bi bi-exclamation-triangle-fill me-1" style="font-size:9px"></i>Sin política de bloqueo
+      </span>
+      <span x-show="agentOk === true && initialized === null" x-cloak class="badge-mode badge-block" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0">
+        <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Agente conectado
+      </span>
+      <span x-show="agentOk === false" style="display:none" class="badge-mode badge-off">
+        <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Agente no disponible
+      </span>
+      <span x-show="agentOk === null" style="display:none" class="badge-mode" style="color:var(--text-muted)">
+        <span class="spinner-border spinner-border-sm me-1" style="width:10px;height:10px"></span>Verificando…
+      </span>
+      <button @click="loadStatus()" class="btn btn-sm btn-outline-secondary" :disabled="loading">
+        <i class="bi bi-arrow-clockwise" :class="{'spin': loading}"></i>
+      </button>
+    </div>
+  </div>
+
+  {# ── Setup del agente (no disponible) ── #}
+  <div x-show="agentOk === false" x-cloak>
+  <div x-data="wfSetup()">
+
+    {# Banner de error #}
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;display:flex;gap:10px;align-items:flex-start;margin-bottom:20px">
+      <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-danger);font-size:18px;flex-shrink:0;margin-top:1px"></i>
+      <div>
+        <p style="font-weight:600;margin:0 0 2px;font-size:13px">Agente WF no disponible</p>
+        <p style="font-size:12px;color:var(--text-secondary);margin:0" x-text="agentError"></p>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">
+          Ruta del socket en el contenedor: <code style="font-size:11px">{{ socket_path }}</code> &nbsp;·&nbsp;
+          En el host: <code style="font-size:11px">/run/wardnode/wardnode-wf.sock</code>
+        </p>
+      </div>
+    </div>
+
+    {# ── Instalación via SSH ── #}
+    <div>
+      <div class="card-panel mb-4">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-key-fill" style="color:var(--accent)"></i>
+            <h2 class="card-panel-title">Instalar agente via SSH</h2>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-size:11px;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;border-radius:20px;padding:2px 10px">
+              <i class="bi bi-person-lock me-1"></i>Conecta como: <strong>root</strong>
+            </span>
+            <span style="font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:20px;padding:2px 10px">
+              Clave nunca almacenada
+            </span>
+          </div>
+        </div>
+        <div class="card-panel-body">
+
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 16px">
+            Proporciona las credenciales SSH de tu VPS. El panel copiará los archivos del agente y ejecutará
+            <code>install.sh</code> de forma automática. La clave privada solo se usa para esta operación y no se guarda.
+          </p>
+
+          <div class="row g-3" style="max-width:560px">
+            <div class="col-4">
+              <label class="form-label" style="font-size:12px;font-weight:600">Puerto SSH</label>
+              <input class="form-control form-control-sm" type="number" x-model="sshPort"
+                     placeholder="22" min="1" max="65535" :disabled="installing">
+            </div>
+            <div class="col-12">
+              <label class="form-label" style="font-size:12px;font-weight:600">Clave privada SSH (PEM)</label>
+              <textarea class="form-control form-control-sm" rows="6" x-model="sshKey"
+                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                        style="font-family:monospace;font-size:11px;resize:vertical"
+                        :disabled="installing"></textarea>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                Formatos soportados: OpenSSH, RSA, Ed25519, ECDSA. La clave se envía de forma segura (HTTPS) y no se almacena.
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
+            <button @click="runInstall()" :disabled="installing || !sshKey"
+                    class="btn btn-sm btn-primary">
+              <span x-show="installing" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+              <i x-show="!installing" class="bi bi-play-fill me-1"></i>
+              <span x-text="installing ? 'Instalando…' : 'Instalar agente'"></span>
+            </button>
+            <span x-show="installing" style="font-size:12px;color:var(--text-muted)">
+              Esto puede tardar hasta 60 segundos…
+            </span>
+          </div>
+
+          {# Output log #}
+          <div x-show="installOutput !== null" x-cloak style="margin-top:16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span x-show="installOk === true" style="font-size:12px;font-weight:600;color:#16a34a">
+                <i class="bi bi-check-circle-fill me-1"></i>Instalación completada
+              </span>
+              <span x-show="installOk === false" style="font-size:12px;font-weight:600;color:var(--c-danger)">
+                <i class="bi bi-x-circle-fill me-1"></i>Error durante la instalación
+              </span>
+            </div>
+            <div x-show="installError" style="font-size:12px;color:var(--c-danger);margin-bottom:6px" x-text="installError"></div>
+            <pre x-show="installOutput" x-text="installOutput"
+                 style="font-size:11px;background:var(--bg-subtle);padding:12px;border-radius:6px;margin:0;overflow-x:auto;white-space:pre-wrap;max-height:320px;overflow-y:auto"></pre>
+            <div x-show="installOk === true && agentOk === null" style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:12px;color:var(--text-muted)">
+                <span class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px"></span>
+                Verificando conexión con el agente…
+              </span>
+            </div>
+            <div x-show="installOk === true && agentOk === false" x-cloak style="margin-top:12px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px 12px">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i>
+              Agente instalado pero UFW no responde. Revisa:
+              <code style="font-size:11px;margin-left:4px">journalctl -u wardnode-wf -n 30</code>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    {# Reintentar #}
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+      <button @click="loadStatus()" :disabled="loading" class="btn btn-sm btn-outline-secondary">
+        <span x-show="loading" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+        <i x-show="!loading" class="bi bi-arrow-clockwise me-1"></i>
+        Reintentar conexión
+      </button>
+      <span style="font-size:12px;color:var(--text-muted)">
+        Una vez instalado el agente, haz clic para verificar.
+      </span>
+    </div>
+
+  </div>
+  </div>
+
+  {# ── Inicialización obligatoria del firewall ── #}
+  <div x-show="agentOk === true && initialized === false" x-cloak style="margin-bottom:24px">
+  <div x-data="wfInit()">
+
+    <div style="background:#fffbeb;border:2px solid #fcd34d;border-radius:10px;padding:20px 24px">
+      <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:18px">
+        <div style="background:#fef3c7;border-radius:8px;padding:10px;flex-shrink:0">
+          <i class="bi bi-shield-exclamation" style="font-size:22px;color:#b45309"></i>
+        </div>
+        <div>
+          <p style="font-weight:700;font-size:14px;margin:0 0 4px;color:#92400e">Configuración inicial obligatoria</p>
+          <p style="font-size:12px;color:#78350f;margin:0;line-height:1.5">
+            El firewall está activo pero sin política de bloqueo. Hasta completar este paso, todo el
+            tráfico entrante está <strong>PERMITIDO por defecto</strong>. Añadir reglas en este estado
+            no tiene efecto de seguridad real.
+          </p>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #fde68a;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+        <p style="font-size:12px;font-weight:600;color:#78350f;margin:0 0 8px">Se aplicará automáticamente:</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
+          <div style="font-size:12px;color:#374151;display:flex;align-items:center;gap:6px">
+            <i class="bi bi-check2-circle" style="color:#16a34a;flex-shrink:0"></i>Bloquear todo el tráfico entrante
+          </div>
+          <div style="font-size:12px;color:#374151;display:flex;align-items:center;gap:6px">
+            <i class="bi bi-check2-circle" style="color:#16a34a;flex-shrink:0"></i>Permitir todo el tráfico saliente
+          </div>
+          <div style="font-size:12px;color:#374151;display:flex;align-items:center;gap:6px">
+            <i class="bi bi-check2-circle" style="color:#16a34a;flex-shrink:0"></i>Mantener SSH abierto (puerto configurado)
+          </div>
+          <div style="font-size:12px;color:#374151;display:flex;align-items:center;gap:6px">
+            <i class="bi bi-check2-circle" style="color:#16a34a;flex-shrink:0"></i>Abrir puertos 80 y 443 (HTTP/S)
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#78350f;display:block;margin-bottom:4px">
+            Puerto SSH actual <span style="font-weight:400;color:#92400e">(para no quedar sin acceso)</span>
+          </label>
+          <input class="form-control form-control-sm" type="number" x-model="sshPort"
+                 placeholder="22" min="1" max="65535"
+                 style="width:100px;border-color:#fcd34d"
+                 :disabled="running">
+        </div>
+        <button @click="runInit()" :disabled="running || !sshPort"
+                style="background:#b45309;border:none;color:#fff;border-radius:6px;padding:7px 18px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer"
+                :style="running ? 'opacity:0.7;cursor:not-allowed' : ''">
+          <span x-show="running" class="spinner-border spinner-border-sm" style="width:13px;height:13px"></span>
+          <i x-show="!running" class="bi bi-shield-lock-fill"></i>
+          <span x-text="running ? 'Inicializando…' : 'Inicializar firewall'"></span>
+        </button>
+        <div x-show="ok === false" x-cloak>
+          <span style="font-size:12px;color:var(--c-danger);font-weight:600">
+            <i class="bi bi-x-circle-fill me-1"></i><span x-text="error"></span>
+          </span>
+        </div>
+      </div>
+
+      <div x-show="output" x-cloak style="margin-top:14px">
+        <pre x-text="output"
+             style="font-size:11px;background:#fef3c7;border:1px solid #fde68a;padding:10px 12px;border-radius:6px;margin:0;overflow-x:auto;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:#374151"></pre>
+      </div>
+    </div>
+
+  </div>
+  </div>
+
+  <div class="row g-4">
+
+    {# ── Columna izquierda: acciones ── #}
+    <div class="col-lg-5">
+
+      {# Permitir puerto #}
+      <div class="card-panel mb-4">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-check-circle-fill" style="color:#16a34a"></i>
+            <h2 class="card-panel-title">Permitir</h2>
+          </div>
+        </div>
+        <div class="card-panel-body">
+          <div x-data="wfAction('allow')" class="vstack gap-3">
+            <div class="btn-group btn-group-sm w-100" role="group">
+              <input type="radio" class="btn-check" name="allow_type" id="allow_port_tab" value="port"
+                     x-model="targetType" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="allow_port_tab">Puerto</label>
+              <input type="radio" class="btn-check" name="allow_type" id="allow_ip_tab" value="ip"
+                     x-model="targetType" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="allow_ip_tab">IP / CIDR</label>
+            </div>
+
+            <template x-if="targetType === 'port'">
+              <div class="row g-2">
+                <div class="col-7">
+                  <input class="form-control form-control-sm" type="number" min="1" max="65535"
+                         placeholder="Puerto (ej: 8080)" x-model="port">
+                </div>
+                <div class="col-5">
+                  <select class="form-select form-select-sm" x-model="proto">
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                    <option value="any">Ambos</option>
+                  </select>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="targetType === 'ip'">
+              <input class="form-control form-control-sm" type="text"
+                     placeholder="IP o CIDR (ej: 203.0.113.0/24)" x-model="ip">
+            </template>
+
+            <div x-show="initialized === false" x-cloak
+                 style="font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px">
+              <i class="bi bi-lock-fill"></i>Inicializa el firewall primero para poder añadir reglas
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button @click="submit()" :disabled="running || !agentOk || initialized === false"
+                      class="btn btn-sm btn-success">
+                <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+                <i x-show="!running" class="bi bi-check2 me-1"></i>
+                Permitir
+              </button>
+              <span x-show="result === true" class="text-success" style="font-size:12px">
+                <i class="bi bi-check-circle-fill"></i> Regla añadida
+              </span>
+              <span x-show="result === false" class="text-danger" style="font-size:12px" x-text="errMsg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# Bloquear puerto/IP #}
+      <div class="card-panel mb-4">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-x-circle-fill" style="color:var(--c-danger)"></i>
+            <h2 class="card-panel-title">Bloquear</h2>
+          </div>
+        </div>
+        <div class="card-panel-body">
+          <div x-data="wfAction('deny')" class="vstack gap-3">
+            <div class="btn-group btn-group-sm w-100" role="group">
+              <input type="radio" class="btn-check" name="deny_type" id="deny_port_tab" value="port"
+                     x-model="targetType" autocomplete="off" checked>
+              <label class="btn btn-outline-secondary" for="deny_port_tab">Puerto</label>
+              <input type="radio" class="btn-check" name="deny_type" id="deny_ip_tab" value="ip"
+                     x-model="targetType" autocomplete="off">
+              <label class="btn btn-outline-secondary" for="deny_ip_tab">IP / CIDR</label>
+            </div>
+
+            <template x-if="targetType === 'port'">
+              <div class="row g-2">
+                <div class="col-7">
+                  <input class="form-control form-control-sm" type="number" min="1" max="65535"
+                         placeholder="Puerto (ej: 22)" x-model="port">
+                </div>
+                <div class="col-5">
+                  <select class="form-select form-select-sm" x-model="proto">
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                    <option value="any">Ambos</option>
+                  </select>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="targetType === 'ip'">
+              <input class="form-control form-control-sm" type="text"
+                     placeholder="IP o CIDR (ej: 198.51.100.5)" x-model="ip">
+            </template>
+
+            <div x-show="initialized === false" x-cloak
+                 style="font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px">
+              <i class="bi bi-lock-fill"></i>Inicializa el firewall primero para poder añadir reglas
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button @click="submit()" :disabled="running || !agentOk || initialized === false"
+                      class="btn btn-sm btn-danger">
+                <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+                <i x-show="!running" class="bi bi-shield-x me-1"></i>
+                Bloquear
+              </button>
+              <span x-show="result === true" class="text-success" style="font-size:12px">
+                <i class="bi bi-check-circle-fill"></i> Regla añadida
+              </span>
+              <span x-show="result === false" class="text-danger" style="font-size:12px" x-text="errMsg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# IPv6 — toggle global #}
+      <div class="card-panel mb-4" x-show="agentOk === true" x-cloak>
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-globe2" style="color:#7c3aed"></i>
+            <h2 class="card-panel-title">IPv6</h2>
+          </div>
+          <span x-show="ipv6Enabled === true" class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;font-size:10px">Habilitado</span>
+          <span x-show="ipv6Enabled === false" class="badge-mode badge-off" style="font-size:10px">Deshabilitado</span>
+          <span x-show="ipv6Enabled === null" style="font-size:11px;color:var(--text-muted)">…</span>
+        </div>
+        <div class="card-panel-body">
+          <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:7px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#6b21a8;line-height:1.6">
+            <i class="bi bi-exclamation-triangle-fill me-1" style="color:#9333ea"></i>
+            <strong>Configuración global — afecta a todos los sitios.</strong>
+            Deshabilitar IPv6 en UFW no bloquea el tráfico IPv6; lo deja pasar
+            <em>sin firewall</em>. Solo deshabilita si el servidor no tiene
+            conectividad IPv6 activa.
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button @click="setIpv6(true)"
+                    :disabled="ipv6Running || ipv6Enabled === true"
+                    class="btn btn-sm btn-outline-success">
+              <span x-show="ipv6Running && ipv6Target === true" class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px"></span>
+              <i x-show="!(ipv6Running && ipv6Target === true)" class="bi bi-toggle-on me-1"></i>
+              Habilitar
+            </button>
+            <button @click="setIpv6(false)"
+                    :disabled="ipv6Running || ipv6Enabled === false"
+                    class="btn btn-sm btn-outline-warning">
+              <span x-show="ipv6Running && ipv6Target === false" class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px"></span>
+              <i x-show="!(ipv6Running && ipv6Target === false)" class="bi bi-toggle-off me-1"></i>
+              Deshabilitar
+            </button>
+          </div>
+          <div x-show="ipv6Error" x-cloak style="margin-top:8px;font-size:12px;color:var(--c-danger)" x-text="ipv6Error"></div>
+          <div x-show="ipv6Result" x-cloak style="margin-top:8px;font-size:12px;color:#16a34a">
+            <i class="bi bi-check-circle-fill me-1"></i><span x-text="ipv6Result"></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    {# ── Columna derecha: reglas activas ── #}
+    <div class="col-lg-7">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-list-check" style="color:var(--accent)"></i>
+            <h2 class="card-panel-title">Reglas activas</h2>
+          </div>
+          <span style="font-size:11px;color:var(--text-muted)" x-text="rules.length + ' regla' + (rules.length !== 1 ? 's' : '')"></span>
+        </div>
+        <div class="card-panel-body" style="padding-top:8px">
+
+          <div x-show="loading && rules.length === 0" style="padding:40px 0;text-align:center">
+            <span class="spinner-border spinner-border-sm" style="color:var(--text-muted)"></span>
+          </div>
+
+          <div x-show="!loading && agentOk && rules.length === 0" style="padding:40px 0;text-align:center;color:var(--text-muted)">
+            <i class="bi bi-shield-check" style="font-size:32px;display:block;margin-bottom:10px"></i>
+            <p style="font-size:13px;margin:0">Sin reglas UFW configuradas.</p>
+          </div>
+
+          <div x-show="rules.length > 0" x-cloak>
+            <div class="table-responsive">
+              <table class="data-table" style="font-size:12px">
+                <thead>
+                  <tr>
+                    <th style="width:40px">#</th>
+                    <th>Regla</th>
+                    <th style="width:60px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="rule in rules" :key="rule.num">
+                    <tr>
+                      <td class="t-mono t-dim" x-text="rule.num"></td>
+                      <td class="t-mono" style="word-break:break-all" x-text="rule.text"></td>
+                      <td style="text-align:right">
+                        <button @click="deleteRule(rule.num)"
+                                :disabled="deletingNum === rule.num"
+                                class="btn btn-xs btn-outline-danger"
+                                style="padding:2px 8px;font-size:11px"
+                                title="Eliminar regla">
+                          <span x-show="deletingNum === rule.num" class="spinner-border spinner-border-sm" style="width:10px;height:10px"></span>
+                          <i x-show="deletingNum !== rule.num" class="bi bi-trash3"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div x-show="rawOutput && agentOk" x-cloak style="margin-top:12px">
+            <details>
+              <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">Ver salida completa de ufw</summary>
+              <pre style="font-size:11px;background:var(--bg-subtle);padding:12px;border-radius:6px;margin-top:8px;overflow-x:auto;white-space:pre-wrap" x-text="rawOutput"></pre>
+            </details>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function wfPanel() {
+  return {
+    agentOk: null,
+    agentError: '',
+    loading: false,
+    rules: [],
+    rawOutput: '',
+    deletingNum: null,
+    initialized: null,
+    defaultsOutput: '',
+    ipv6Enabled: null,
+    ipv6Running: false,
+    ipv6Target: null,
+    ipv6Error: '',
+    ipv6Result: '',
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    async loadStatus() {
+      this.loading = true;
+      try {
+        const r = await fetch('{{ url_for("modules.wf_status") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() }
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.agentOk = true;
+          this.rawOutput = d.output || '';
+          this.rules = this._parseRules(d.output || '');
+          this.initialized = d.initialized ?? true;
+          this.defaultsOutput = d.defaults_output || '';
+          this.loadIpv6();
+        } else {
+          this.agentOk = false;
+          const raw = d.output || '';
+          const lastLines = raw.split('\n').filter(l => l.trim()).slice(-2).join(' — ');
+          this.agentError = d.error || lastLines || 'Error desconocido';
+        }
+      } catch (e) {
+        this.agentOk = false;
+        this.agentError = 'Error de red al contactar el servidor';
+      }
+      this.loading = false;
+    },
+
+    _parseRules(output) {
+      const rules = [];
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const m = line.match(/^\[\s*(\d+)\]\s+(.+)$/);
+        if (m) {
+          rules.push({ num: m[1], text: m[2].trim() });
+        }
+      }
+      return rules;
+    },
+
+    async loadIpv6() {
+      try {
+        const r = await fetch('{{ url_for("modules.wf_ipv6_status") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() }
+        });
+        const d = await r.json();
+        if (d.ok) this.ipv6Enabled = d.ipv6;
+      } catch (_) {}
+    },
+
+    async setIpv6(enabled) {
+      this.ipv6Running = true;
+      this.ipv6Target = enabled;
+      this.ipv6Error = '';
+      this.ipv6Result = '';
+      const body = new URLSearchParams({ enabled: enabled.toString() });
+      try {
+        const r = await fetch('{{ url_for("modules.wf_set_ipv6") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString()
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.ipv6Enabled = enabled;
+          this.ipv6Result = enabled ? 'IPv6 habilitado en UFW.' : 'IPv6 deshabilitado — el tráfico IPv6 omite el firewall.';
+        } else {
+          this.ipv6Error = d.error || 'Error desconocido';
+        }
+      } catch (e) {
+        this.ipv6Error = 'Error de red';
+      }
+      this.ipv6Running = false;
+      this.ipv6Target = null;
+    },
+
+    async deleteRule(num) {
+      if (!confirm('¿Eliminar regla #' + num + '?')) return;
+      this.deletingNum = num;
+      const body = new URLSearchParams({ rule_num: num });
+      try {
+        const r = await fetch('{{ url_for("modules.wf_delete") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString()
+        });
+        const d = await r.json();
+        if (d.ok) {
+          await this.loadStatus();
+        } else {
+          alert('Error: ' + (d.error || 'desconocido'));
+        }
+      } catch (e) {
+        alert('Error de red');
+      }
+      this.deletingNum = null;
+    }
+  };
+}
+
+function wfSetup() {
+  return {
+    sshPort: '22',
+    sshKey: '',
+    installing: false,
+    installOk: null,
+    installError: '',
+    installOutput: null,
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    async runInstall() {
+      this.installing = true;
+      this.installOk = null;
+      this.installError = '';
+      this.installOutput = null;
+      const body = new URLSearchParams({
+        ssh_port: this.sshPort,
+        ssh_key:  this.sshKey,
+      });
+      try {
+        const r = await fetch('{{ url_for("modules.wf_install") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        const d = await r.json();
+        this.installOk = d.ok;
+        this.installOutput = d.output || null;
+        this.installError = d.error || '';
+        if (d.ok) {
+          // Esperar a que el agente termine de iniciar y luego verificar automáticamente
+          setTimeout(() => this.$dispatch('wf-install-success'), 3000);
+        }
+      } catch (e) {
+        this.installOk = false;
+        this.installError = 'Error de red al contactar el servidor';
+        this.installOutput = null;
+      }
+      this.installing = false;
+    },
+  };
+}
+
+function wfInit() {
+  return {
+    sshPort: '22',
+    running: false,
+    ok: null,
+    error: '',
+    output: '',
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    async runInit() {
+      this.running = true;
+      this.ok = null;
+      this.error = '';
+      this.output = '';
+      const body = new URLSearchParams({ ssh_port: this.sshPort });
+      try {
+        const r = await fetch('{{ url_for("modules.wf_init") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        const d = await r.json();
+        this.ok = d.ok;
+        this.output = d.output || '';
+        this.error = d.error || '';
+        if (d.ok) {
+          setTimeout(() => this.$dispatch('wf-init-success'), 1500);
+        }
+      } catch (e) {
+        this.ok = false;
+        this.error = 'Error de red al contactar el servidor';
+      }
+      this.running = false;
+    }
+  };
+}
+
+function wfAction(action) {
+  return {
+    action,
+    targetType: 'port',
+    port: '',
+    proto: 'tcp',
+    ip: '',
+    running: false,
+    result: null,
+    errMsg: '',
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    async submit() {
+      this.running = true;
+      this.result = null;
+      this.errMsg = '';
+
+      const body = new URLSearchParams({ type: this.targetType });
+      if (this.targetType === 'port') {
+        body.append('port', this.port);
+        body.append('proto', this.proto);
+      } else {
+        body.append('ip', this.ip);
+      }
+
+      const url = this.action === 'allow'
+        ? '{{ url_for("modules.wf_allow") }}'
+        : '{{ url_for("modules.wf_deny") }}';
+
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString()
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.result = true;
+          this.port = '';
+          this.ip = '';
+          this.$dispatch('wf-rules-changed');
+        } else {
+          this.result = false;
+          this.errMsg = d.error || 'Error desconocido';
+        }
+      } catch (e) {
+        this.result = false;
+        this.errMsg = 'Error de red';
+      }
+      this.running = false;
+    }
+  };
+}
+</script>
+<style>
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+[x-cloak] { display: none !important; }
+</style>
+{% endblock %}

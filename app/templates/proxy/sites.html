@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}Proxy & WAF | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Proxy &amp; WAF</span>
+{% endblock %}
+
+{% block page_actions %}
+  {% if not current_user.has_role('reader') %}
+  <button class="btn btn-sm btn-primary" type="button"
+          data-bs-toggle="offcanvas" data-bs-target="#newSiteCanvas">
+    <i class="bi bi-plus-lg me-1"></i>Nuevo sitio
+  </button>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Proxy &amp; WAF</h1>
+      <p class="text-secondary mb-0 small">
+        {{ sites | length }} sitio{% if sites | length != 1 %}s{% endif %} registrado{% if sites | length != 1 %}s{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <div class="card-panel">
+    <div class="card-panel-body" style="padding-top:8px">
+      {% if sites %}
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Sitio</th>
+              <th>Dominio</th>
+              <th>Upstream</th>
+              <th>WAF</th>
+              <th>TLS</th>
+              <th>Req/s</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for site in sites %}
+            <tr>
+              <td style="font-weight:600">
+                {{ site.name }}
+                {% if site.is_console %}
+                  <span class="badge-mode badge-block ms-1" style="font-size:.68rem;background:#eff6ff;color:#1e40af;border-color:#bfdbfe">Consola</span>
+                {% endif %}
+              </td>
+              <td class="t-mono t-blue">{{ site.domain }}</td>
+              <td class="t-mono t-dim" style="font-size:11px">{{ site.upstream_url }}</td>
+              <td>
+                {% if site.waf_enabled %}
+                  <span class="badge-mode badge-block">Bloqueo</span>
+                {% else %}
+                  <span class="badge-mode badge-off">Off</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if site.letsencrypt_enabled %}
+                  <span class="badge-mode badge-block" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0">Let's Encrypt</span>
+                {% elif site.custom_certificate_path %}
+                  <span class="badge-mode" style="background:#eff6ff;color:#1e40af;border-color:#bfdbfe">Custom</span>
+                {% else %}
+                  <span class="badge-mode badge-off">HTTP</span>
+                {% endif %}
+              </td>
+              <td class="t-mono t-dim">
+                {% if site.traffic_policy and site.traffic_policy.rate_limit_enabled %}
+                  {{ site.traffic_policy.requests_per_second }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td style="text-align:right">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('proxy.site_detail', site_id=site.id) }}">
+                  Configurar <i class="bi bi-sliders ms-1"></i>
+                </a>
+                {% if not current_user.has_role('reader') and not site.is_console %}
+                <form method="post" action="{{ url_for('proxy.delete_site', site_id=site.id) }}"
+                      style="display:inline" x-data
+                      @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')) $el.submit()">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger ms-1" title="Eliminar sitio">
+                    <i class="bi bi-trash3"></i>
+                  </button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div style="padding:48px 0;text-align:center;color:var(--text-muted)">
+        <i class="bi bi-shield-slash" style="font-size:36px;display:block;margin-bottom:12px"></i>
+        <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">Sin sitios registrados</p>
+        <p style="font-size:12px;margin:0">
+          Usa el botón <strong>Nuevo sitio</strong> para comenzar a proteger un dominio.
+        </p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{# ── GeoIP Blocklist ──────────────────────────────────────────────── #}
+{% if not current_user.has_role('reader') %}
+<div class="card-panel mt-4">
+  <div class="card-panel-header">
+    <div style="display:flex;align-items:center;gap:8px">
+      <i class="bi bi-geo-alt-fill" style="color:var(--c-danger)"></i>
+      <h2 class="card-panel-title">Bloqueo por país (GeoIP)</h2>
+    </div>
+    <span style="font-size:11px;color:var(--text-muted)">
+      {{ blocklist | length }} país{% if blocklist | length != 1 %}es{% endif %} bloqueado{% if blocklist | length != 1 %}s{% endif %}
+      · se aplica al regenerar Nginx
+    </span>
+  </div>
+  <div class="card-panel-body">
+    <div class="row g-4">
+      <div class="col-md-5">
+        <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
+          Bloquea todo el tráfico entrante de un país a nivel Nginx (<code>return 444</code>). Los cambios se aplican automáticamente con <code>nginx -s reload</code>.
+        </p>
+        <form method="post" action="{{ url_for('proxy.geo_blocklist_add') }}" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <select class="form-select form-select-sm" name="country_code" required>
+            <option value="">Seleccionar país…</option>
+            {% for code, name in country_names.items() | sort(attribute='1') %}
+              {% if blocklist | selectattr('country_code', 'equalto', code) | list | length == 0 %}
+              <option value="{{ code }}">{{ name }} ({{ code }})</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn btn-sm btn-danger" style="white-space:nowrap">
+            <i class="bi bi-plus-lg me-1"></i>Bloquear
+          </button>
+        </form>
+      </div>
+      <div class="col-md-7">
+        {% if blocklist %}
+        <div class="table-responsive">
+          <table class="data-table" style="font-size:12px">
+            <thead>
+              <tr>
+                <th style="width:56px">Código</th>
+                <th>País</th>
+                <th style="width:56px">Estado</th>
+                <th style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for entry in blocklist %}
+              <tr>
+                <td class="t-mono t-blue">{{ entry.country_code }}</td>
+                <td>{{ entry.country_name }}</td>
+                <td>
+                  {% if entry.enabled %}
+                    <span class="sev-badge sev-badge-critical" style="font-size:10px">activo</span>
+                  {% else %}
+                    <span class="sev-badge sev-badge-low" style="font-size:10px">inactivo</span>
+                  {% endif %}
+                </td>
+                <td style="text-align:right">
+                  <form method="post" action="{{ url_for('proxy.geo_blocklist_remove', code=entry.country_code) }}"
+                        x-data
+                        @submit.prevent="if(confirm('¿Eliminar bloqueo para {{ entry.country_name }}?')) $el.submit()">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-xs btn-outline-danger" style="padding:2px 8px;font-size:11px">
+                      <i class="bi bi-trash3"></i>
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">
+          <i class="bi bi-globe2" style="font-size:24px;display:block;margin-bottom:8px"></i>
+          Sin países bloqueados.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Offcanvas: nuevo sitio ───────────────────────────────────────── #}
+<div class="offcanvas offcanvas-end" tabindex="-1" id="newSiteCanvas" style="width:400px">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title">
+      <i class="bi bi-plus-circle me-2" style="color:var(--accent)"></i>Nuevo sitio
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    <form method="post" action="{{ url_for('proxy.create_site') }}" class="vstack gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label class="form-label" for="name">Nombre del sitio</label>
+        <input class="form-control" id="name" name="name" placeholder="Portal clientes" required>
+      </div>
+      <div>
+        <label class="form-label" for="domain">Dominio</label>
+        <input class="form-control" id="domain" name="domain" placeholder="app.example.com" required>
+      </div>
+      <div>
+        <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
+        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" checked>
+        <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled">
+        <label class="form-check-label" for="letsencrypt_enabled">Usar Let's Encrypt</label>
+      </div>
+      <div class="row g-2">
+        <div class="col-12">
+          <label class="form-label" for="custom_certificate_path">Certificado (opcional)</label>
+          <input class="form-control" id="custom_certificate_path" name="custom_certificate_path" placeholder="/etc/nginx/certs/fullchain.pem">
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="custom_certificate_key_path">Llave privada (opcional)</label>
+          <input class="form-control" id="custom_certificate_key_path" name="custom_certificate_key_path" placeholder="/etc/nginx/certs/privkey.pem">
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit">
+        <i class="bi bi-check2 me-1"></i>Guardar sitio
+      </button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

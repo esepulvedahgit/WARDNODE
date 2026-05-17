@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Crear admin | WardNode{% endblock %}
+
+{% block content %}
+<section class="auth-panel panel mx-auto">
+  <h1 class="h4 mb-3">Crear admin inicial</h1>
+  <form method="post" action="{{ url_for('auth.create_initial_admin') }}" class="vstack gap-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div>
+      <label class="form-label" for="name">Nombre</label>
+      <input class="form-control" id="name" name="name" autocomplete="name" required>
+    </div>
+    <div>
+      <label class="form-label" for="email">Correo</label>
+      <input class="form-control" id="email" name="email" type="email" autocomplete="email" required>
+    </div>
+    <div>
+      <label class="form-label" for="password">Contrasena</label>
+      <input class="form-control" id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+    </div>
+    <div>
+      <label class="form-label" for="password_confirm">Confirmar contrasena</label>
+      <input class="form-control" id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="12" required>
+    </div>
+    <button class="btn btn-primary" type="submit">Crear admin</button>
+  </form>
+</section>
+{% endblock %}
+

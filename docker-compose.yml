@@ -1,0 +1,140 @@
+services:
+  console:
+    build: .
+    container_name: wardnode-console
+    env_file:
+      - .env
+    environment:
+      WF_SOCKET_PATH: /app/sockets/wardnode-wf.sock
+    ports:
+      - "5000:5000"
+    volumes:
+      - proxy_generated:/app/generated/nginx
+      - geoip_data:/app/data/geoip
+      - /var/run/docker.sock:/var/run/docker.sock
+      # En Linux: descomentar para conectar con el agente WF del host
+      # - /run/wardnode:/app/sockets:rw
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wardnode_internal
+    command: sh -c "flask init-db && flask ensure-geoip && flask run --host=0.0.0.0 --port=5000"
+
+  proxy:
+    build:
+      context: ./proxy
+    container_name: wardnode-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - proxy_generated:/etc/nginx/generated:ro
+      - geoip_data:/etc/nginx/geoip:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
+      - ./certs:/etc/nginx/certs:ro
+      - proxy_logs:/var/log/nginx
+      - modsecurity_logs:/var/log
+      - ./observability/nginx-obs.conf:/etc/nginx/conf.d/obs.conf:ro
+    depends_on:
+      - console
+    networks:
+      - wardnode_internal
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles:
+      - certbot
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
+    entrypoint: certbot
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - wardnode_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── WardNode OBS — Observabilidad (perfil opcional) ──────────────────
+  fluent-bit:
+    image: fluent/fluent-bit:3.3
+    container_name: wardnode-fluent-bit
+    restart: unless-stopped
+    profiles:
+      - obs
+    ports:
+      - "127.0.0.1:24224:24224"
+    volumes:
+      - modsecurity_logs:/var/log/modsec:ro
+      - /var/log/auth.log:/var/log/auth.log:ro
+      - ./observability/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./observability/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - fluent_bit_db:/var/fluent-bit/db
+    depends_on:
+      - loki
+    networks:
+      - wardnode_internal
+
+  loki:
+    image: grafana/loki:3.4
+    container_name: wardnode-loki
+    restart: unless-stopped
+    profiles:
+      - obs
+    command: -config.file=/etc/loki/config.yaml
+    volumes:
+      - loki_data:/loki
+      - ./observability/loki.yaml:/etc/loki/config.yaml:ro
+    networks:
+      - wardnode_internal
+
+  grafana:
+    image: grafana/grafana:11.5
+    container_name: wardnode-grafana
+    restart: unless-stopped
+    profiles:
+      - obs
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-wardnode}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/obs/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_LOG_LEVEL: warn
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+    networks:
+      - wardnode_internal
+
+volumes:
+  postgres_data:
+  proxy_generated:
+  geoip_data:
+  proxy_logs:
+  modsecurity_logs:
+  letsencrypt:
+  certbot_challenges:
+  loki_data:
+  grafana_data:
+  fluent_bit_db:
+
+networks:
+  wardnode_internal:
+    driver: bridge

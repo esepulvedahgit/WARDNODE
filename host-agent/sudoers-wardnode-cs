@@ -1,0 +1,4 @@
+# WardNode CS Agent — acceso a cscli sin contraseña
+Defaults:wardnode-wf !requiretty
+wardnode-wf ALL=(root) NOPASSWD: /usr/bin/cscli
+wardnode-wf ALL=(root) NOPASSWD: /opt/wardnode/wardnode-cs-control.sh

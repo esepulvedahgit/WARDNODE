@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+
+{% block title %}{{ site.domain }} | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a class="bc-root" href="{{ url_for('proxy.dashboard') }}" style="color:var(--text-muted);text-decoration:none">Proxy &amp; WAF</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">{{ site.name }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="site-config-page">
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1">{{ site.name }}</h1>
+    <p class="text-secondary mb-0"><code>{{ site.domain }}</code> protege <code>{{ site.upstream_url }}</code></p>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('proxy.dashboard') }}">Volver</a>
+</div>
+
+<div class="row g-4 site-config-grid">
+  <section class="col-xxl-8 col-xl-7">
+    <div class="panel crs-filter-panel" x-data="{ selected: '' }">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+        <div>
+          <h2 class="h5 mb-1">Categorias y subcategorias CRS</h2>
+          <p class="text-secondary mb-0 small">Filtra por familia para ajustar solo las reglas relacionadas.</p>
+        </div>
+        <span class="badge text-bg-light border">{{ site.rule_settings|length }} reglas</span>
+      </div>
+      <form method="post" action="{{ url_for('proxy.update_site_rules', site_id=site.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="crs-config-layout">
+          <div class="crs-filter-box">
+            {% set families = [] %}
+            {% for setting in site.rule_settings|sort(attribute='category.name') %}
+              {% set family = setting.category.key.split('-')[0] %}
+              {% if family not in families %}
+                {% set _ = families.append(family) %}
+              {% endif %}
+            {% endfor %}
+            <label class="form-label" for="crs-family-filter">Subcategoria</label>
+            <select class="form-select" id="crs-family-filter" x-model="selected">
+              <option value="">Reglas</option>
+              {% for family in families %}
+                <option value="{{ family }}">{{ family|upper }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="crs-rules-viewport">
+            <div class="crs-empty-state" x-show="selected === ''">
+              Selecciona la categoria.
+            </div>
+            <div class="vstack gap-3" x-show="selected !== ''">
+          {% for setting in site.rule_settings|sort(attribute='category.name') %}
+            {% set family = setting.category.key.split('-')[0] %}
+            <label class="rule-toggle crs-rule-row" data-family="{{ family }}" x-show="selected === '{{ family }}'" x-transition>
+              <input
+                class="form-check-input"
+                type="checkbox"
+                name="category_ids"
+                value="{{ setting.category_id }}"
+                {% if setting.enabled %}checked{% endif %}
+              >
+              <span>
+                <strong>{{ setting.category.name }}</strong>
+                <small>{{ setting.category.description }}</small>
+                <code>{{ setting.category.crs_tag }}</code>
+              </span>
+            </label>
+          {% endfor %}
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit">Guardar categorias</button>
+      </form>
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="h5 mb-3">Reglas personalizadas ModSecurity</h2>
+      <form method="post" action="{{ url_for('proxy.update_site_custom_rules', site_id=site.id) }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% for rule in site.custom_rules %}
+          <div class="rule-card">
+            <input type="hidden" name="rule_ids" value="{{ rule.id }}">
+            <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+              <input class="form-control" name="rule_name_{{ rule.id }}" value="{{ rule.name }}" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" name="enabled_rule_ids" value="{{ rule.id }}" {% if rule.enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+              </div>
+            </div>
+            <textarea class="form-control font-monospace" name="rule_text_{{ rule.id }}" rows="5" {% if current_user.has_role('reader') %}disabled{% endif %} required>{{ rule.rule_text }}</textarea>
+          </div>
+        {% endfor %}
+        {% if not current_user.has_role('reader') %}
+          <div class="rule-card">
+            <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+              <input class="form-control" name="new_rule_name" placeholder="Bloquear user-agent sospechoso">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" name="new_rule_enabled" checked>
+              </div>
+            </div>
+            <textarea class="form-control font-monospace" name="new_rule_text" rows="6" placeholder='SecRule REQUEST_HEADERS:User-Agent "@contains badbot" "id:1000001,phase:1,deny,status:403,msg:&quot;Bad bot&quot;"'></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Validar y guardar reglas</button>
+        {% elif not site.custom_rules %}
+          <p class="text-secondary mb-0">Sin reglas personalizadas.</p>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="h5 mb-3">Cabeceras de seguridad</h2>
+      <form method="post" action="{{ url_for('proxy.update_site_security_headers', site_id=site.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="table-responsive">
+          <table class="table align-middle security-headers-table">
+            <thead>
+              <tr>
+                <th>Activa</th>
+                <th>Header</th>
+                <th>Valor</th>
+                <th>Always</th>
+                <th>Tipo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for header in site.security_headers %}
+                <tr>
+                  <td>
+                    <input type="hidden" name="header_ids" value="{{ header.id }}">
+                    <input class="form-check-input" type="checkbox" name="enabled_header_ids" value="{{ header.id }}" {% if header.enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+                  </td>
+                  <td>
+                    <input class="form-control form-control-sm" name="header_name_{{ header.id }}" value="{{ header.name }}" pattern="[A-Za-z0-9!#$%&'*+.^_`|~-]+" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+                  </td>
+                  <td>
+                    <input class="form-control form-control-sm" name="header_value_{{ header.id }}" value="{{ header.value }}" maxlength="1000" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+                  </td>
+                  <td>
+                    <input class="form-check-input" type="checkbox" name="always_header_ids" value="{{ header.id }}" {% if header.always %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+                  </td>
+                  <td>
+                    <span class="badge text-bg-{{ 'primary' if header.is_default else 'secondary' }}">{{ 'Default' if header.is_default else 'Custom' }}</span>
+                  </td>
+                </tr>
+              {% endfor %}
+              {% if not current_user.has_role('reader') %}
+                {% for index in range(3) %}
+                  <tr>
+                    <td>
+                      <input class="form-check-input" type="checkbox" name="custom_header_enabled" value="{{ index }}">
+                    </td>
+                    <td>
+                      <input class="form-control form-control-sm" name="custom_header_name" placeholder="X-Custom-Header" pattern="[A-Za-z0-9!#$%&'*+.^_`|~-]+">
+                    </td>
+                    <td>
+                      <input class="form-control form-control-sm" name="custom_header_value" placeholder="valor" maxlength="1000">
+                    </td>
+                    <td>
+                      <input class="form-check-input" type="checkbox" name="custom_header_always" value="{{ index }}" checked>
+                    </td>
+                    <td><span class="badge text-bg-secondary">Nuevo</span></td>
+                  </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+        {% if not current_user.has_role('reader') %}
+          <button class="btn btn-primary" type="submit">Guardar cabeceras</button>
+        {% endif %}
+      </form>
+    </div>
+  </section>
+
+  <section class="col-xxl-4 col-xl-5">
+    <div class="panel">
+      <h2 class="h5 mb-3">Politica de trafico</h2>
+      <form method="post" action="{{ url_for('proxy.update_site_traffic_policy', site_id=site.id) }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="rate_limit_enabled" name="rate_limit_enabled" {% if site.traffic_policy.rate_limit_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+          <label class="form-check-label" for="rate_limit_enabled">Mitigar DoS / brute force con limit_req</label>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label" for="requests_per_second">Requests por segundo</label>
+            <input class="form-control" id="requests_per_second" name="requests_per_second" type="number" min="1" max="5000" value="{{ site.traffic_policy.requests_per_second }}" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="burst">Burst</label>
+            <input class="form-control" id="burst" name="burst" type="number" min="0" max="20000" value="{{ site.traffic_policy.burst }}" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+          </div>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="nodelay" name="nodelay" {% if site.traffic_policy.nodelay %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+          <label class="form-check-label" for="nodelay">Aplicar nodelay</label>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="conn_limit_enabled" name="conn_limit_enabled" {% if site.traffic_policy.conn_limit_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+          <label class="form-check-label" for="conn_limit_enabled">Limitar conexiones concurrentes</label>
+        </div>
+        <div>
+          <label class="form-label" for="max_connections">Conexiones maximas</label>
+          <input class="form-control" id="max_connections" name="max_connections" type="number" min="1" max="50000" value="{{ site.traffic_policy.max_connections }}" {% if current_user.has_role('reader') %}disabled{% endif %} required>
+        </div>
+        <div>
+          <label class="form-label" for="key_strategy">Clave de aplicacion</label>
+          <select class="form-select" id="key_strategy" name="key_strategy" {% if current_user.has_role('reader') %}disabled{% endif %}>
+            <option value="ip" {% if site.traffic_policy.key_strategy == 'ip' %}selected{% endif %}>IP remota</option>
+            <option value="forwarded_for" {% if site.traffic_policy.key_strategy == 'forwarded_for' %}selected{% endif %}>X-Forwarded-For</option>
+          </select>
+        </div>
+        {% if not current_user.has_role('reader') %}
+          <button class="btn btn-primary" type="submit">Guardar politica</button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="h5 mb-3">TLS y certificados</h2>
+
+      {# Estado del certificado Let's Encrypt #}
+      {% if site.letsencrypt_enabled %}
+      <div x-data="certProvision({{ site.id }}, '{{ site.letsencrypt_status }}', {{ site.letsencrypt_error | tojson }})"
+           class="mb-3 p-3 rounded" style="background:var(--bg-secondary)">
+        <div class="d-flex align-items-center justify-content-between gap-3">
+          <div class="d-flex align-items-center gap-2">
+            <template x-if="status === 'active'">
+              <i class="bi bi-shield-check-fill text-success"></i>
+            </template>
+            <template x-if="status === 'pending'">
+              <i class="bi bi-hourglass-split text-warning"></i>
+            </template>
+            <template x-if="status === 'error'">
+              <i class="bi bi-x-circle-fill text-danger"></i>
+            </template>
+            <span class="fw-semibold small"
+                  :class="status === 'active' ? 'text-success' : status === 'error' ? 'text-danger' : 'text-warning'"
+                  x-text="status === 'active' ? 'Certificado activo' : status === 'error' ? 'Error al obtener certificado' : 'Certificado pendiente'">
+            </span>
+          </div>
+          {% if not current_user.has_role('reader') %}
+          <button @click="obtain()" :disabled="running"
+                  class="btn btn-sm"
+                  :class="status === 'active' ? 'btn-outline-secondary' : 'btn-primary'">
+            <span x-show="running" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!running && status !== 'active'" class="bi bi-lock-fill me-1"></i>
+            <i x-show="!running && status === 'active'" class="bi bi-arrow-repeat me-1"></i>
+            <span x-text="running ? 'Obteniendo...' : status === 'active' ? 'Renovar' : 'Obtener certificado'"></span>
+          </button>
+          {% endif %}
+        </div>
+        <div x-show="status === 'error' && errorMsg" class="mt-2">
+          <p class="text-danger small mb-0" style="word-break:break-word" x-text="errorMsg"></p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% set tls_active = (site.letsencrypt_enabled and site.letsencrypt_status == 'active') or (site.custom_certificate_path and site.custom_certificate_key_path) %}
+      <form method="post" action="{{ url_for('proxy.update_site_tls', site_id=site.id) }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled" {% if site.letsencrypt_enabled %}checked{% endif %}>
+          <label class="form-check-label" for="letsencrypt_enabled">Usar Let's Encrypt</label>
+        </div>
+        <div>
+          <label class="form-label" for="custom_certificate_path">Certificado personalizado</label>
+          <input class="form-control" id="custom_certificate_path" name="custom_certificate_path" value="{{ site.custom_certificate_path or '' }}">
+        </div>
+        <div>
+          <label class="form-label" for="custom_certificate_key_path">Llave privada personalizada</label>
+          <input class="form-control" id="custom_certificate_key_path" name="custom_certificate_key_path" value="{{ site.custom_certificate_key_path or '' }}">
+        </div>
+
+        <hr style="margin:4px 0;border-color:var(--border)">
+
+        <div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch"
+                   id="force_https" name="force_https"
+                   {% if site.force_https %}checked{% endif %}
+                   {% if current_user.has_role('reader') %}disabled{% endif %}>
+            <label class="form-check-label fw-medium" for="force_https">Forzar HTTPS</label>
+          </div>
+          <div class="form-text" style="padding-left:2.5rem">
+            {% if site.force_https and tls_active %}
+              <i class="bi bi-arrow-right-circle-fill text-success me-1"></i>Activo — HTTP redirige a HTTPS (<code>301</code>)
+            {% elif site.force_https and not tls_active %}
+              <i class="bi bi-clock text-warning me-1"></i>Se aplicará cuando el certificado esté activo
+            {% else %}
+              HTTP y HTTPS responden de forma independiente
+            {% endif %}
+          </div>
+        </div>
+
+        {% if not current_user.has_role('reader') %}
+        <button class="btn btn-primary" type="submit">Guardar TLS</button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="panel mt-4" x-data="{ preview: false }">
+      <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <svg width="20" height="23" viewBox="0 0 100 114" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:{% if site.bot_protection.enabled %}#3b82f6{% else %}#94a3b8{% endif %}">
+            <path d="M50 5 L92 20 L92 58 C92 82 74 99 50 110 C26 99 8 82 8 58 L8 20 Z" stroke="currentColor" stroke-width="3.5" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M50 17 L80 29 L80 58 C80 76 66 91 50 100 C34 91 20 76 20 58 L20 29 Z" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.4" stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="50" cy="65" r="5.5" fill="currentColor"/>
+            <line x1="46" y1="61" x2="30" y2="43" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="54" y1="61" x2="70" y2="43" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="50" y1="70.5" x2="50" y2="87" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+          </svg>
+          <h2 class="h5 mb-0">Protección contra bots</h2>
+        </div>
+        {% if site.bot_protection.enabled %}
+          <span class="badge-running">activa</span>
+        {% else %}
+          <span class="badge-offline">inactiva</span>
+        {% endif %}
+      </div>
+
+      <p class="text-secondary small mb-3">
+        Cuando está activa, los visitantes nuevos deben resolver un desafío matemático antes de acceder al sitio.
+        La cookie <code>wn_bot</code> valida la sesión durante 1 hora.
+      </p>
+
+      {% if not current_user.has_role('reader') %}
+      <form method="post" action="{{ url_for('proxy.update_site_bot_protection', site_id=site.id) }}" class="d-flex align-items-center justify-content-between gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" role="switch"
+                 id="bot_protection_enabled" name="bot_protection_enabled"
+                 {% if site.bot_protection.enabled %}checked{% endif %}
+                 onchange="this.form.submit()">
+          <label class="form-check-label" for="bot_protection_enabled">
+            {% if site.bot_protection.enabled %}Desactivar protección{% else %}Activar protección{% endif %}
+          </label>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                @click="preview = !preview" x-text="preview ? 'Ocultar vista previa' : 'Ver desafío'"></button>
+      </form>
+      {% endif %}
+
+      <div x-show="preview" x-transition style="display:none" class="mt-3">
+        <div style="border-radius:10px;overflow:hidden;border:1px solid var(--card-border)">
+          <iframe src="{{ url_for('proxy.bot_challenge_preview') }}" style="width:100%;height:420px;border:none;display:block"
+                  title="Vista previa del desafío"></iframe>
+        </div>
+        <p class="small text-secondary mt-2 mb-0">
+          <i class="bi bi-info-circle me-1"></i>
+          Esta es la pantalla que verán los visitantes al acceder al sitio protegido.
+        </p>
+      </div>
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="h5 mb-3">Nginx extra</h2>
+      <form method="post" action="{{ url_for('proxy.update_site_nginx_extra', site_id=site.id) }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="nginx_extra_enabled" name="enabled" {% if site.nginx_extra_config.enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+          <label class="form-check-label" for="nginx_extra_enabled">Habilitar configuracion extra</label>
+        </div>
+        <div>
+          <label class="form-label" for="server_snippet">Directivas en server</label>
+          <textarea class="form-control font-monospace" id="server_snippet" name="server_snippet" rows="5" placeholder="client_max_body_size 20m;" {% if current_user.has_role('reader') %}disabled{% endif %}>{{ site.nginx_extra_config.server_snippet }}</textarea>
+        </div>
+        <div>
+          <label class="form-label" for="location_snippet">Directivas en location /</label>
+          <textarea class="form-control font-monospace" id="location_snippet" name="location_snippet" rows="7" placeholder="proxy_set_header Upgrade $http_upgrade;&#10;proxy_set_header Connection &quot;upgrade&quot;;&#10;proxy_buffering off;" {% if current_user.has_role('reader') %}disabled{% endif %}>{{ site.nginx_extra_config.location_snippet }}</textarea>
+        </div>
+        {% if not current_user.has_role('reader') %}
+          <button class="btn btn-primary" type="submit">Validar y guardar Nginx extra</button>
+        {% endif %}
+      </form>
+    </div>
+  </section>
+</div>
+</div>
+
+{% if not current_user.has_role('reader') %}
+<div class="row g-4 mt-0">
+  <div class="col-12">
+    {% if site.is_console %}
+    <div class="panel" style="border-color:var(--border)">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-terminal-fill text-primary"></i>
+        <h2 class="h5 mb-0">Sitio de consola</h2>
+      </div>
+      <p class="text-secondary small mb-0">
+        Este sitio está vinculado al panel de administración. Para desvincularlo ve a
+        <a href="{{ url_for('proxy.settings') }}">Ajustes → Acceso al panel</a>.
+      </p>
+    </div>
+    {% else %}
+    <div class="panel border-danger" style="border-color:var(--c-danger)!important">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-exclamation-triangle-fill text-danger"></i>
+        <h2 class="h5 mb-0 text-danger">Zona de peligro</h2>
+      </div>
+      <p class="text-secondary small mb-3">
+        Eliminar este sitio borrará permanentemente todas sus reglas, headers, políticas de tráfico y configuraciones asociadas. Esta acción no se puede deshacer.
+      </p>
+      <form method="post" action="{{ url_for('proxy.delete_site', site_id=site.id) }}"
+            x-data
+            @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')) $el.submit()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-danger btn-sm">
+          <i class="bi bi-trash3 me-1"></i>Eliminar sitio
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function certProvision(siteId, initialStatus, initialError) {
+  return {
+    status:   initialStatus,
+    errorMsg: initialError,
+    running:  false,
+    async obtain() {
+      this.running = true;
+      try {
+        const csrf = document.querySelector("meta[name='csrf-token']").content;
+        const r = await fetch(`/proxy/sites/${siteId}/provision-cert`, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf }
+        });
+        const d = await r.json();
+        this.status   = d.ok ? 'active' : 'error';
+        this.errorMsg = d.ok ? null : (d.error || 'Error desconocido');
+      } catch (e) {
+        this.status   = 'error';
+        this.errorMsg = 'Error de red';
+      }
+      this.running = false;
+    }
+  };
+}
+</script>
+{% endblock %}

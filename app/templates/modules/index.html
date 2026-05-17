@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Módulos | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Módulos</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Módulos</h1>
+      <p class="text-secondary mb-0 small">Activa funcionalidades opcionales del sistema.</p>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    {% for module in modules %}
+    {% set enabled = states[module.id] %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card-panel h-100" style="position:relative">
+
+        {# ── Overlay de carga para activación OBS ── #}
+        {% if module.id == 'obs' and not enabled %}
+        <div x-data="obsActivate()" style="display:contents">
+          <div x-show="running" x-cloak
+               style="position:absolute;inset:0;background:rgba(255,255,255,0.95);border-radius:inherit;z-index:10;
+                      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px">
+            <div class="spinner-border" style="color:var(--accent);width:28px;height:28px"></div>
+            <p style="font-size:12px;font-weight:600;margin:0;color:var(--text-primary);text-align:center" x-text="stepText"></p>
+            <p style="font-size:11px;color:var(--text-muted);margin:0;text-align:center;max-width:220px">
+              El primer arranque descarga imágenes y puede tardar hasta 90 s.
+            </p>
+          </div>
+
+          <div class="card-panel-body" style="padding:24px">
+            <div style="display:flex;align-items:flex-start;gap:16px">
+              <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                          background:var(--bg-subtle);color:var(--text-muted);border:1px solid var(--border-color)">
+                <i class="bi {{ module.icon }}" style="font-size:20px"></i>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <h2 style="font-size:15px;font-weight:600;margin:0">{{ module.name }}</h2>
+                  <span class="badge-mode badge-off" style="font-size:10px">inactivo</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.5">{{ module.description }}</p>
+                <div x-show="errorMsg" x-cloak
+                     style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:var(--c-danger);line-height:1.5">
+                  <p style="margin:0 0 3px 0;font-weight:600" x-text="errorStep ? 'Error en: ' + errorStep : 'Error al activar'"></p>
+                  <p style="margin:0;word-break:break-word" x-text="errorMsg"></p>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button @click="activate()" :disabled="running"
+                          class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+                    <i x-show="!running" class="bi bi-toggle-off me-1"></i>
+                    <span x-text="running ? 'Activando…' : 'Activar'"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% else %}
+
+        <div class="card-panel-body" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                        {% if enabled %}background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe{% else %}background:var(--bg-subtle);color:var(--text-muted);border:1px solid var(--border-color){% endif %}">
+              <i class="bi {{ module.icon }}" style="font-size:20px"></i>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <h2 style="font-size:15px;font-weight:600;margin:0">{{ module.name }}</h2>
+                {% if enabled %}
+                  <span class="badge-mode badge-block" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0;font-size:10px">activo</span>
+                {% else %}
+                  <span class="badge-mode badge-off" style="font-size:10px">inactivo</span>
+                {% endif %}
+              </div>
+              <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.5">{{ module.description }}</p>
+
+              {% if module.id == 'cs' %}
+              <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:11px 13px;margin-bottom:14px;font-size:11px;line-height:1.6">
+                {% if enabled %}
+                <p style="margin:0 0 5px 0;color:var(--text-secondary)">
+                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
+                  <strong>Desactivar detiene CrowdSec y el bouncer en el host</strong> — las reglas iptables activas se eliminan.
+                  Al reactivar, los servicios se reanudan automáticamente.
+                </p>
+                {% else %}
+                <p style="margin:0 0 5px 0;color:var(--text-secondary)">
+                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
+                  Requiere WardNode WF activo. Al activar, instalarás CrowdSec en el host desde el panel.
+                </p>
+                {% endif %}
+                <details>
+                  <summary style="cursor:pointer;color:var(--text-muted);font-size:11px;user-select:none">
+                    ▸ Cómo desinstalar CrowdSec completamente del host
+                  </summary>
+                  <pre style="margin:8px 0 0 0;padding:10px 12px;background:#1a1a2e;color:#a8d8a8;border-radius:6px;font-size:10px;overflow-x:auto;white-space:pre;line-height:1.7"># Desinstalar paquetes
+sudo apt-get purge -y crowdsec crowdsec-firewall-bouncer-iptables
+sudo apt-get autoremove -y
+
+# Eliminar sudoers y script de control
+sudo rm -f /etc/sudoers.d/wardnode-cs
+sudo rm -f /opt/wardnode/wardnode-cs-control.sh</pre>
+                </details>
+              </div>
+              {% endif %}
+
+              {% if module.id == 'wf' %}
+              <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:11px 13px;margin-bottom:14px;font-size:11px;line-height:1.6">
+                {% if not enabled %}
+                <p style="margin:0 0 7px 0;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px;color:#92400e">
+                  <i class="bi bi-exclamation-triangle-fill me-1" style="color:#f97316"></i>
+                  <strong>Antes de activar:</strong> asegúrate de que el puerto 22 (SSH) esté abierto en el firewall del host.
+                  El panel te pedirá confirmarlo al inicializar UFW, pero si ya existe una regla de bloqueo activa
+                  podrías perder el acceso remoto.
+                </p>
+                <p style="margin:0;color:var(--text-secondary)">
+                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
+                  Al activar, instalarás el agente en el host desde el panel.
+                  El agente gestiona UFW sin exponer SSH al contenedor.
+                </p>
+                {% else %}
+                <p style="margin:0 0 5px 0;color:var(--text-secondary)">
+                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
+                  <strong>Desactivar solo oculta el panel</strong> — el agente seguirá ejecutándose en el host.
+                  Puedes reactivar en cualquier momento sin reinstalar.
+                </p>
+                {% endif %}
+                <details style="margin-top:{% if not enabled %}8{% else %}5{% endif %}px">
+                  <summary style="cursor:pointer;color:var(--text-muted);font-size:11px;user-select:none">
+                    ▸ Cómo eliminar el agente completamente del host
+                  </summary>
+                  <pre style="margin:8px 0 0 0;padding:10px 12px;background:#1a1a2e;color:#a8d8a8;border-radius:6px;font-size:10px;overflow-x:auto;white-space:pre;line-height:1.7"># Detener y eliminar el servicio
+sudo systemctl disable --now wardnode-wf
+sudo rm /etc/systemd/system/wardnode-wf.service
+sudo systemctl daemon-reload
+
+# Eliminar archivos del agente y sudoers
+sudo rm -rf /opt/wardnode
+sudo rm -f /etc/sudoers.d/wardnode-wf
+sudo rm -f /etc/sudoers.d/wardnode-cs
+sudo rm -f /etc/tmpfiles.d/wardnode.conf
+
+# Eliminar usuario y grupo del sistema
+sudo userdel wardnode-wf
+sudo groupdel wardnode-wf
+
+# Limpiar socket (si existe)
+sudo rm -rf /run/wardnode</pre>
+                </details>
+              </div>
+              {% endif %}
+
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                {% if enabled %}
+                <a href="{{ url_for(module.endpoint) }}" class="btn btn-sm btn-primary" style="font-size:12px">
+                  <i class="bi bi-arrow-right-circle me-1"></i>Abrir
+                </a>
+                {% endif %}
+                <form method="post" action="{{ url_for('modules.toggle', name=module.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm {% if enabled %}btn-outline-danger{% else %}btn-outline-secondary{% endif %}" style="font-size:12px">
+                    {% if enabled %}
+                      <i class="bi bi-toggle-on me-1"></i>Desactivar
+                    {% else %}
+                      <i class="bi bi-toggle-off me-1"></i>Activar
+                    {% endif %}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% endif %}
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function obsActivate() {
+  return {
+    running: false,
+    stepText: '',
+    errorMsg: '',
+    errorStep: '',
+    _phases: [
+      { delay: 0,    text: 'Verificando contenedores existentes…' },
+      { delay: 4000, text: 'Iniciando servicios de observabilidad…' },
+      { delay: 14000, text: 'Esperando que Loki arranque…' },
+      { delay: 30000, text: 'Esperando que Grafana arranque…' },
+      { delay: 55000, text: 'Verificando conectividad entre servicios…' },
+      { delay: 75000, text: 'El primer arranque puede tardar — por favor espera…' },
+    ],
+    _timers: [],
+
+    _startPhases() {
+      this.stepText = this._phases[0].text;
+      this._phases.slice(1).forEach(p => {
+        const t = setTimeout(() => { this.stepText = p.text; }, p.delay);
+        this._timers.push(t);
+      });
+    },
+
+    _clearPhases() {
+      this._timers.forEach(t => clearTimeout(t));
+      this._timers = [];
+    },
+
+    async activate() {
+      this.running = true;
+      this.errorMsg = '';
+      this.errorStep = '';
+      this._startPhases();
+      try {
+        const r = await fetch('{{ url_for("modules.obs_activate") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': document.querySelector("meta[name='csrf-token']").content },
+        });
+        const d = await r.json();
+        if (d.ok) {
+          window.location.reload();
+        } else {
+          this.errorMsg = d.error || 'Error desconocido al activar el módulo.';
+          this.errorStep = d.step || '';
+        }
+      } catch (e) {
+        this.errorMsg = 'Error de red al contactar el servidor.';
+      }
+      this._clearPhases();
+      this.running = false;
+    },
+  };
+}
+</script>
+<style>[x-cloak] { display: none !important; }</style>
+{% endblock %}

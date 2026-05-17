@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Eventos WAF | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Eventos</span>
+{% endblock %}
+
+{% block page_actions %}
+  <form method="post" action="{{ url_for('proxy.create_demo_event') }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-sm btn-outline-secondary" type="submit">
+      <i class="bi bi-lightning-charge me-1"></i>Evento demo
+    </button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  {# ── Header + filtros ───────────────────────────────────────────── #}
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Eventos WAF</h1>
+      <p class="text-secondary mb-0 small">Todos los dominios · últimos {{ events | length }} registros</p>
+    </div>
+    <div class="events-filters">
+      {# Severidad #}
+      <div class="events-sev-tabs">
+        <a href="{{ url_for('proxy.events_list', action=action or None) }}"
+           class="sev-tab {% if not severity %}sev-tab-active{% endif %}">
+          Todos <span class="sev-count">{{ counts.all }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity='critical', action=action or None) }}"
+           class="sev-tab sev-tab-critical {% if severity == 'critical' %}sev-tab-active{% endif %}">
+          Critical <span class="sev-count">{{ counts.critical }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity='high', action=action or None) }}"
+           class="sev-tab sev-tab-high {% if severity == 'high' %}sev-tab-active{% endif %}">
+          High <span class="sev-count">{{ counts.high }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity='warning', action=action or None) }}"
+           class="sev-tab sev-tab-warning {% if severity == 'warning' %}sev-tab-active{% endif %}">
+          Medium <span class="sev-count">{{ counts.warning }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity='low', action=action or None) }}"
+           class="sev-tab sev-tab-low {% if severity == 'low' %}sev-tab-active{% endif %}">
+          Low <span class="sev-count">{{ counts.low }}</span>
+        </a>
+      </div>
+      {# Acción WAF #}
+      <div class="events-sev-tabs">
+        <a href="{{ url_for('proxy.events_list', severity=severity or None) }}"
+           class="sev-tab {% if not action %}sev-tab-active{% endif %}">
+          Todos <span class="sev-count">{{ counts.all }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity=severity or None, action='block') }}"
+           class="sev-tab sev-tab-block {% if action == 'block' %}sev-tab-active{% endif %}">
+          Bloqueados <span class="sev-count">{{ counts.block }}</span>
+        </a>
+        <a href="{{ url_for('proxy.events_list', severity=severity or None, action='detect') }}"
+           class="sev-tab sev-tab-detect {% if action == 'detect' %}sev-tab-active{% endif %}">
+          Detectados <span class="sev-count">{{ counts.detect }}</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {# ── Events table ───────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-body" style="padding-top:8px">
+      {% if events %}
+      <div class="table-responsive">
+        <table class="data-table events-table">
+          <thead>
+            <tr>
+              <th style="width:140px">Fecha / Hora</th>
+              <th>Dominio</th>
+              <th>IP origen</th>
+              <th>Acción atacante</th>
+              <th>Acción WAF</th>
+              <th style="width:100px">Severidad</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in events %}
+            <tr>
+              <td class="t-mono t-dim" style="white-space:nowrap">
+                {{ event.created_at.strftime('%Y-%m-%d') }}<br>
+                <span style="font-size:11px">{{ event.created_at.strftime('%H:%M:%S') }}</span>
+              </td>
+              <td class="t-mono t-blue">{{ event.domain }}</td>
+              <td class="t-mono">{{ event.source_ip }}</td>
+              <td>
+                <span class="event-method event-method-{{ event.method | lower }}">{{ event.method }}</span>
+                <span class="event-path t-mono">{{ event.path | truncate(60, True, '…') }}</span>
+              </td>
+              <td>
+                {% if event.action == "block" %}
+                  <span class="action-badge action-badge-block">Bloqueado</span>
+                {% else %}
+                  <span class="action-badge action-badge-detect">Detectado</span>
+                {% endif %}
+                <span class="event-status">{{ event.status_code }}</span>
+                <span class="event-category">{{ event.category }}</span>
+                {% if event.rule_id %}
+                  <span class="event-rule t-mono t-dim">regla {{ event.rule_id }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% set sev = event.severity | lower %}
+                <span class="sev-badge sev-badge-{{ sev }}">
+                  {{ sev }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div style="padding:48px 0;text-align:center;color:var(--text-muted)">
+        <i class="bi bi-shield-check" style="font-size:36px;display:block;margin-bottom:12px;color:var(--c-success)"></i>
+        <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">Sin eventos registrados</p>
+        <p style="font-size:12px;margin:0">
+          {% if severity or action %}El filtro activo no tiene resultados.
+          {% else %}El WAF no ha registrado eventos aún.{% endif %}
+        </p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

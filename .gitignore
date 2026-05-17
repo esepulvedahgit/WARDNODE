@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.env.prod
+.venv/
+instance/
+migrations/
+generated/
+*.log
+data/geoip/*.mmdb
+dist/
+build/
+*.egg-info/

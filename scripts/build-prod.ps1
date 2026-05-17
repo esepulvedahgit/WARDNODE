@@ -1,0 +1,31 @@
+$ErrorActionPreference = "Stop"
+
+$Dist = "dist"
+New-Item -ItemType Directory -Force -Path $Dist | Out-Null
+
+Write-Host "==> Construyendo imagenes de produccion..." -ForegroundColor Cyan
+docker compose -f docker-compose.prod.yml build
+if ($LASTEXITCODE -ne 0) { Write-Error "docker build fallo"; exit 1 }
+
+Write-Host "==> Exportando wardnode-console:prod ..." -ForegroundColor Cyan
+docker save wardnode-console:prod -o "$Dist\wardnode-console.tar"
+if ($LASTEXITCODE -ne 0) { Write-Error "docker save console fallo"; exit 1 }
+
+Write-Host "==> Exportando wardnode-proxy:prod ..." -ForegroundColor Cyan
+docker save wardnode-proxy:prod -o "$Dist\wardnode-proxy.tar"
+if ($LASTEXITCODE -ne 0) { Write-Error "docker save proxy fallo"; exit 1 }
+
+Write-Host ""
+Write-Host "==> Listo. Archivos generados en $Dist\:" -ForegroundColor Green
+Get-ChildItem "$Dist\wardnode-*.tar" |
+    Select-Object Name, @{N="Tamanio"; E={ "{0:N1} MB" -f ($_.Length / 1MB) }} |
+    Format-Table -AutoSize
+
+Write-Host "Transferir al VPS con:" -ForegroundColor Yellow
+Write-Host "  scp $Dist\wardnode-console.tar $Dist\wardnode-proxy.tar docker-compose.vps.yml .env.prod.example usuario@VPS:~/wardnode/"
+Write-Host ""
+Write-Host "En el VPS:" -ForegroundColor Yellow
+Write-Host "  docker load -i wardnode-console.tar"
+Write-Host "  docker load -i wardnode-proxy.tar"
+Write-Host "  cp .env.prod.example .env.prod  # editar con secretos reales"
+Write-Host "  docker compose -f docker-compose.vps.yml up -d"

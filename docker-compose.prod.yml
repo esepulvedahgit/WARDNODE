@@ -1,0 +1,12 @@
+# Usado SOLO en la máquina de desarrollo para construir y etiquetar imágenes.
+# Comando: docker compose -f docker-compose.prod.yml build
+# Luego exportar con: bash scripts/build-prod.sh
+services:
+  console:
+    build: .
+    image: wardnode-console:prod
+
+  proxy:
+    build:
+      context: ./proxy
+    image: wardnode-proxy:prod

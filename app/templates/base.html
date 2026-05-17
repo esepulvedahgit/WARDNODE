@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}WardNode{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/favicon.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% if current_user.is_authenticated %}layout-app{% else %}layout-auth{% endif %}">
+
+{# Open the correct outer wrapper depending on auth state #}
+{% if current_user.is_authenticated %}
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <img src="{{ url_for('static', filename='img/logo 2.png') }}" alt="WardNode" class="sidebar-logo">
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <span class="nav-group-label">Operación</span>
+        <a class="nav-link-item {% if request.endpoint == 'proxy.dashboard' %}active{% endif %}"
+           href="{{ url_for('proxy.dashboard') }}">
+          <i class="bi bi-grid-1x2-fill"></i><span>Overview</span>
+        </a>
+        <a class="nav-link-item {% if request.endpoint in ('proxy.sites_list', 'proxy.site_detail') %}active{% endif %}"
+           href="{{ url_for('proxy.sites_list') }}">
+          <i class="bi bi-shield-shaded"></i><span>Proxy &amp; WAF</span>
+        </a>
+        <a class="nav-link-item {% if request.endpoint == 'proxy.events_list' %}active{% endif %}"
+           href="{{ url_for('proxy.events_list') }}">
+          <i class="bi bi-bell-fill"></i><span>Eventos</span>
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <span class="nav-group-label">Plataforma</span>
+        {% if current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint and 'cs' not in request.endpoint %}active{% endif %}"
+           href="{{ url_for('modules.index') }}">
+          <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
+        </a>
+        {% if module_wf_enabled %}
+        <a class="nav-link-item {% if request.endpoint and 'wf' in request.endpoint %}active{% endif %}"
+           href="{{ url_for('modules.wf_index') }}"
+           style="padding-left:2rem">
+          <i class="bi bi-shield-fill-exclamation"></i><span>WF · Firewall</span>
+        </a>
+        {% endif %}
+        {% if module_cs_enabled %}
+        <a class="nav-link-item {% if request.endpoint and 'cs' in request.endpoint %}active{% endif %}"
+           href="{{ url_for('modules.cs_index') }}"
+           style="padding-left:2rem">
+          <i class="bi bi-shield-shaded"></i><span>CS · CrowdSec</span>
+        </a>
+        {% endif %}
+        {% if module_obs_enabled %}
+        <a class="nav-link-item {% if request.endpoint and 'obs' in request.endpoint %}active{% endif %}"
+           href="{{ url_for('modules.obs_index') }}"
+           style="padding-left:2rem">
+          <i class="bi bi-bar-chart-line-fill"></i><span>OBS · Grafana</span>
+        </a>
+        {% endif %}
+        {% else %}
+        <a class="nav-link-item nav-link-dim" href="#" tabindex="-1">
+          <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
+          <span class="nav-pill-soon">admin</span>
+        </a>
+        {% endif %}
+        <a class="nav-link-item nav-link-dim" href="#" tabindex="-1">
+          <i class="bi bi-layers-fill"></i><span>Contenedores</span>
+          <span class="nav-pill-soon">pronto</span>
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <span class="nav-group-label">Administración</span>
+        {% if current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint == 'auth.users' %}active{% endif %}"
+           href="{{ url_for('auth.users') }}">
+          <i class="bi bi-people-fill"></i><span>Usuarios</span>
+        </a>
+        {% endif %}
+        {% if current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint == 'proxy.settings' %}active{% endif %}"
+           href="{{ url_for('proxy.settings') }}">
+          <i class="bi bi-gear-fill"></i><span>Ajustes</span>
+        </a>
+        {% endif %}
+        <a class="nav-link-item {% if request.endpoint == 'auth.profile' %}active{% endif %}"
+           href="{{ url_for('auth.profile') }}">
+          <i class="bi bi-person-fill"></i><span>Mi perfil</span>
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="user-avatar">{{ current_user.name[0] | upper }}</div>
+        <div class="user-info">
+          <span class="user-name">{{ current_user.name }}</span>
+          <span class="user-role">{{ current_user.role }}</span>
+        </div>
+        <form method="post" action="{{ url_for('auth.logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn-logout" type="submit" title="Cerrar sesión">
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main-wrapper">
+    <header class="topbar">
+      <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menú">
+        <i class="bi bi-list"></i>
+      </button>
+      <nav class="topbar-breadcrumb" aria-label="breadcrumb">
+        <span class="bc-root">WardNode</span>
+        {% block breadcrumb %}{% endblock %}
+      </nav>
+      <div class="topbar-actions">
+        {% block page_actions %}{% endblock %}
+      </div>
+    </header>
+    <main class="main-content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash-item flash-{{ category }}">
+                <i class="bi {% if category == 'success' %}bi-check-circle-fill{% elif category == 'danger' %}bi-exclamation-triangle-fill{% else %}bi-info-circle-fill{% endif %}"></i>
+                <span>{{ message }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+{% else %}
+<div class="auth-shell">
+  <div class="auth-brand">
+    <img src="{{ url_for('static', filename='img/logo login.png') }}" alt="WardNode" class="auth-logo">
+  </div>
+  <div class="auth-main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div style="width:100%;max-width:440px;margin-bottom:1rem">
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }} mb-2">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+{% endif %}
+
+{# ── Single content block ────────────────────────────────────────── #}
+{% block content %}{% endblock %}
+
+{# Close the correct wrapper #}
+{% if current_user.is_authenticated %}
+    </main>
+  </div>
+</div>
+{% else %}
+  </div>
+</div>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+
+{% if current_user.is_authenticated %}
+<div id="session-timeout-overlay" class="session-timeout-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="session-timeout-title">
+  <div class="session-timeout-card">
+    <div class="session-timeout-icon">
+      <i class="bi bi-shield-exclamation"></i>
+    </div>
+    <p class="session-timeout-title" id="session-timeout-title">Sesión a punto de cerrar</p>
+    <p class="session-timeout-desc">La sesión se cerrará por inactividad en</p>
+    <div class="session-timeout-counter" id="session-countdown">15</div>
+    <p class="session-timeout-desc">segundos</p>
+    <button class="btn btn-primary session-timeout-btn" id="session-continue-btn">
+      <i class="bi bi-shield-check me-2"></i>Continuar sesión
+    </button>
+  </div>
+</div>
+<script>
+(function () {
+  var IDLE_MS   = 240 * 1000;
+  var WARN_MS   = 225 * 1000;
+  var WARN_SECS = 15;
+  var overlay   = document.getElementById('session-timeout-overlay');
+  var countdown = document.getElementById('session-countdown');
+  var continueBtn = document.getElementById('session-continue-btn');
+  var warnTimer   = null;
+  var idleTimer   = null;
+  var tickTimer   = null;
+  var secsLeft    = WARN_SECS;
+
+  function showWarning() {
+    secsLeft = WARN_SECS;
+    countdown.textContent = secsLeft;
+    overlay.style.display = 'flex';
+    continueBtn.focus();
+    tickTimer = setInterval(function () {
+      secsLeft -= 1;
+      countdown.textContent = secsLeft;
+      if (secsLeft <= 0) doLogout();
+    }, 1000);
+  }
+
+  function hideWarning() {
+    overlay.style.display = 'none';
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+
+  function doLogout() {
+    clearInterval(tickTimer);
+    var form = document.querySelector('form[action*="logout"]');
+    if (form) { form.submit(); } else { window.location.href = '{{ url_for("auth.login") }}'; }
+  }
+
+  function resetTimer() {
+    clearTimeout(warnTimer);
+    clearTimeout(idleTimer);
+    if (overlay.style.display !== 'none') hideWarning();
+    warnTimer = setTimeout(showWarning, WARN_MS);
+    idleTimer = setTimeout(doLogout,    IDLE_MS);
+  }
+
+  continueBtn.addEventListener('click', resetTimer);
+
+  ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'].forEach(function (evt) {
+    document.addEventListener(evt, resetTimer, { passive: true });
+  });
+
+  resetTimer();
+})();
+</script>
+{% endif %}
+</body>
+</html>

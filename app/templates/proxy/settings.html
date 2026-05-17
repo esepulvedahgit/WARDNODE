@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+
+{% block title %}Ajustes | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Ajustes</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  <div class="d-flex align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Ajustes</h1>
+      <p class="text-secondary mb-0 small">Configuración del sistema</p>
+    </div>
+  </div>
+
+  {% if not encryption_ready %}
+  <div class="flash-item flash-warning mb-4" style="align-items:flex-start">
+    <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px;flex-shrink:0"></i>
+    <div>
+      <strong>WARDNODE_SECRET_KEY no configurado</strong>
+      <p class="mb-1 mt-1" style="font-size:.85rem">
+        Sin esta clave no es posible cifrar credenciales. Genera una y agrégala a tu <code>.env</code>:
+      </p>
+      <code style="font-size:.78rem;word-break:break-all">python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</code>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Acceso al panel (consola) ────────────────────────────────────── #}
+  <div class="card-panel mb-4">
+    <div class="card-panel-body">
+      <h2 class="h5 mb-1">Acceso al panel</h2>
+      <p class="text-secondary mb-4" style="font-size:.85rem">
+        Expone la consola de WardNode a través del proxy nginx con TLS y WAF.
+        Se crea un sitio protegido que redirige <code>dominio → http://console:puerto</code>.
+      </p>
+
+      {% if console_site %}
+        <div class="d-flex align-items-center gap-3 p-3 rounded mb-3" style="background:var(--bg-secondary)">
+          <div class="flex-grow-1">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="bi bi-terminal-fill text-primary"></i>
+              <span class="fw-semibold">{{ console_site.domain }}</span>
+              <span class="badge-mode badge-block" style="font-size:.7rem">Consola</span>
+            </div>
+            <div class="text-secondary" style="font-size:.8rem">
+              Upstream: <code>{{ console_site.upstream_url }}</code>
+              &nbsp;·&nbsp;
+              {% if console_site.letsencrypt_status == "active" %}
+                <i class="bi bi-shield-check-fill text-success me-1"></i>TLS activo
+              {% elif console_site.letsencrypt_enabled %}
+                <i class="bi bi-hourglass-split text-warning me-1"></i>Cert pendiente
+              {% else %}
+                <i class="bi bi-unlock text-secondary me-1"></i>Sin TLS
+              {% endif %}
+            </div>
+          </div>
+          <a href="{{ url_for('proxy.site_detail', site_id=console_site.id) }}"
+             class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-sliders me-1"></i>Configurar TLS y WAF
+          </a>
+        </div>
+
+        <details class="mt-2">
+          <summary class="text-secondary" style="font-size:.83rem;cursor:pointer">Cambiar dominio o puerto</summary>
+          <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3 mt-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-7">
+              <label class="form-label fw-medium" for="console_domain">Dominio</label>
+              <input type="text" id="console_domain" name="console_domain"
+                     class="form-control" value="{{ console_site.domain }}"
+                     placeholder="panel.tudominio.com" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-medium" for="console_port">Puerto</label>
+              <input type="number" id="console_port" name="console_port"
+                     class="form-control" value="{{ console_site.upstream_url.split(':')[-1] }}"
+                     min="1" max="65535" placeholder="5000">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-primary w-100">Actualizar</button>
+            </div>
+          </form>
+        </details>
+
+      {% else %}
+        <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-md-7">
+            <label class="form-label fw-medium" for="console_domain">Dominio</label>
+            <input type="text" id="console_domain" name="console_domain"
+                   class="form-control" placeholder="panel.tudominio.com" required>
+            <div class="form-text">El registro DNS A debe apuntar a la IP del VPS.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium" for="console_port">Puerto interno</label>
+            <input type="number" id="console_port" name="console_port"
+                   class="form-control" value="5000" min="1" max="65535">
+            <div class="form-text">Dejar en 5000 salvo que hayas cambiado el compose.</div>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button type="submit" class="btn btn-sm btn-primary w-100">Crear sitio</button>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── SMTP ────────────────────────────────────────────────────────── #}
+  <div class="card-panel mb-4">
+    <div class="card-panel-body">
+      <h2 class="h5 mb-1">Correo / SMTP</h2>
+      <p class="text-secondary mb-4" style="font-size:.85rem">
+        Servidor de correo para enviar el enlace de recuperación de contraseña.
+        Usuario y contraseña se almacenan cifrados. Requiere <code>WARDNODE_SECRET_KEY</code>.
+      </p>
+
+      <form method="post" action="{{ url_for('proxy.settings_save_smtp') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-7">
+            <label class="form-label fw-medium" for="smtp_host">Servidor (host)</label>
+            <input type="text" id="smtp_host" name="smtp_host"
+                   class="form-control font-mono" value="{{ smtp_host }}"
+                   placeholder="smtp.gmail.com">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium" for="smtp_port">Puerto</label>
+            <input type="number" id="smtp_port" name="smtp_port"
+                   class="form-control font-mono" value="{{ smtp_port }}"
+                   min="1" max="65535" placeholder="587">
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <div class="form-check form-switch mt-2 ms-1">
+              <input class="form-check-input" type="checkbox" role="switch"
+                     id="smtp_use_tls" name="smtp_use_tls"
+                     {% if smtp_use_tls %}checked{% endif %}>
+              <label class="form-check-label fw-medium" for="smtp_use_tls">STARTTLS</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="smtp_username">Usuario</label>
+            <input type="password" id="smtp_username" name="smtp_username"
+                   class="form-control font-mono"
+                   placeholder="Nuevo valor…"
+                   autocomplete="new-password">
+            <div class="form-text">
+              {% if smtp_username_masked %}
+                <i class="bi bi-check-circle-fill text-success me-1"></i>Configurado
+                <span class="font-mono ms-1" style="letter-spacing:.05em">{{ smtp_username_masked }}</span>
+              {% else %}
+                <i class="bi bi-dash-circle text-secondary me-1"></i>No configurado
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="smtp_password">Contraseña</label>
+            <input type="password" id="smtp_password" name="smtp_password"
+                   class="form-control font-mono"
+                   placeholder="Nuevo valor…"
+                   autocomplete="new-password">
+          </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="smtp_from">Dirección remitente (From)</label>
+            <input type="email" id="smtp_from" name="smtp_from"
+                   class="form-control" value="{{ smtp_from }}"
+                   placeholder="noreply@tudominio.com">
+            <div class="form-text">Si se deja en blanco se usa el usuario SMTP.</div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <button type="submit" class="btn btn-sm btn-primary"
+                  {% if not encryption_ready %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
+            <i class="bi bi-floppy-fill me-1"></i>Guardar SMTP
+          </button>
+
+          {% if smtp_host %}
+          <div x-data="{running:false,ok:null,err:null}" style="display:contents">
+            <button type="button"
+                    @click="running=true;ok=null;err=null;
+                      fetch('{{ url_for('proxy.settings_smtp_test') }}',{
+                        method:'POST',
+                        headers:{'X-CSRFToken':'{{ csrf_token() }}'}
+                      }).then(r=>r.json()).then(d=>{ok=d.ok;err=d.error||null}).catch(e=>{ok=false;err='Error de red'}).finally(()=>running=false)"
+                    :disabled="running"
+                    class="btn btn-sm btn-outline-secondary">
+              <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:.85rem;height:.85rem"></span>
+              <i x-show="!running" class="bi bi-send me-1"></i>
+              <span x-text="running ? 'Enviando…' : 'Probar conexión'"></span>
+            </button>
+            <span x-show="ok === true" class="text-success" style="font-size:.85rem">
+              <i class="bi bi-check-circle-fill me-1"></i>Email enviado
+            </span>
+            <span x-show="ok === false" class="text-danger" style="font-size:.85rem" x-text="err"></span>
+          </div>
+          {% endif %}
+
+          {% if not encryption_ready %}
+          <span class="text-secondary" style="font-size:.83rem">Requiere <code>WARDNODE_SECRET_KEY</code> en .env</span>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-panel mb-4">
+    <div class="card-panel-body">
+      <h2 class="h5 mb-1">GeoIP — MaxMind</h2>
+      <p class="text-secondary mb-4" style="font-size:.85rem">
+        Credenciales para descargar GeoLite2-Country. Las credenciales se almacenan cifradas en la base de datos.
+        <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener noreferrer">Registro gratuito</a>.
+      </p>
+
+      <form method="post" action="{{ url_for('proxy.settings_save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="account_id">Account ID</label>
+            <input type="password" id="account_id" name="account_id"
+                   class="form-control font-mono"
+                   placeholder="Nuevo valor…"
+                   autocomplete="new-password">
+            <div class="form-text">
+              {% if account_id_masked %}
+                <i class="bi bi-check-circle-fill text-success me-1"></i>Configurado
+                <span class="font-mono ms-1" style="letter-spacing:.05em">{{ account_id_masked }}</span>
+              {% else %}
+                <i class="bi bi-dash-circle text-secondary me-1"></i>No configurado
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="license_key">License Key</label>
+            <input type="password" id="license_key" name="license_key"
+                   class="form-control font-mono"
+                   placeholder="Nuevo valor…"
+                   autocomplete="new-password">
+            <div class="form-text">
+              {% if license_configured %}
+                <i class="bi bi-check-circle-fill text-success me-1"></i>Configurada
+              {% else %}
+                <i class="bi bi-dash-circle text-secondary me-1"></i>No configurada
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3">
+          <button type="submit" class="btn btn-sm btn-primary"
+                  {% if not encryption_ready %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
+            <i class="bi bi-floppy-fill me-1"></i>Guardar credenciales
+          </button>
+          {% if not encryption_ready %}
+          <span class="text-secondary" style="font-size:.83rem">Requiere <code>WARDNODE_SECRET_KEY</code> en .env</span>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card-panel">
+    <div class="card-panel-body">
+      <h2 class="h5 mb-3">Cómo configurar</h2>
+      <ol style="padding-left:1.25rem;font-size:.875rem;line-height:2;color:var(--text-2,#555)">
+        <li>Generar la clave de cifrado (una sola vez en el anfitrión):</li>
+      </ol>
+      <pre class="p-2 rounded mb-3" style="background:var(--bg-surface,#f4f4f5);font-size:.775rem;overflow-x:auto">python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</pre>
+      <ol start="2" style="padding-left:1.25rem;font-size:.875rem;line-height:2;color:var(--text-2,#555)">
+        <li>Agregar el resultado a <code>.env</code>: <code>WARDNODE_SECRET_KEY=&lt;resultado&gt;</code></li>
+        <li>Reiniciar el servicio console: <code>docker compose restart console</code></li>
+        <li>Ingresar Account ID y License Key en el formulario de arriba y guardar.</li>
+        <li>Las credenciales quedan cifradas en la DB — solo <code>WARDNODE_SECRET_KEY</code> necesita protección.</li>
+      </ol>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

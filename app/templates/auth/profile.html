@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Mi perfil | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Mi perfil</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page" style="max-width:640px">
+
+  <div class="mb-4">
+    <h1 class="h3 mb-1">Mi perfil</h1>
+    <p class="text-secondary mb-0 small">Información de tu cuenta y seguridad.</p>
+  </div>
+
+  {# ── Info ──────────────────────────────────────────────────────────── #}
+  <div class="card-panel mb-4">
+    <div class="card-panel-body">
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <div style="width:48px;height:48px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.25rem;font-weight:700;flex-shrink:0">
+          {{ current_user.name[0] | upper }}
+        </div>
+        <div>
+          <div class="fw-semibold">{{ current_user.name }}</div>
+          <div class="text-secondary" style="font-size:.875rem">{{ current_user.email }}</div>
+        </div>
+        <span class="badge-mode {% if current_user.role == 'admin' %}badge-block{% else %}badge-off{% endif %} ms-auto" style="font-size:.72rem">
+          {{ current_user.role }}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  {# ── MFA ───────────────────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <i class="bi bi-shield-lock-fill" style="color:var(--accent)"></i>
+        <h2 class="card-panel-title">Autenticación de dos factores (TOTP)</h2>
+      </div>
+      {% if current_user.totp_enabled %}
+        <span class="badge-mode badge-block" style="font-size:.72rem;background:#f0fdf4;color:#166534;border-color:#bbf7d0">
+          <i class="bi bi-check-circle-fill me-1"></i>Activo
+        </span>
+      {% else %}
+        <span class="badge-mode badge-off" style="font-size:.72rem">Inactivo</span>
+      {% endif %}
+    </div>
+    <div class="card-panel-body">
+
+      {% if current_user.totp_enabled %}
+
+        <p class="text-secondary mb-4" style="font-size:.875rem">
+          El segundo factor está activo. Al iniciar sesión se pedirá el código de tu aplicación autenticadora.
+          Para desactivarlo confirma tu contraseña.
+        </p>
+        <form method="post" action="{{ url_for('auth.mfa_disable') }}"
+              x-data
+              @submit.prevent="if(confirm('¿Desactivar la autenticación de dos factores?\n\nTu cuenta quedará protegida solo por contraseña.')) $el.submit()">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2 align-items-end">
+            <div class="col-sm-6">
+              <label class="form-label" for="dis_password">Contraseña actual</label>
+              <input type="password" id="dis_password" name="password"
+                     class="form-control" autocomplete="current-password"
+                     placeholder="••••••••••••" required>
+            </div>
+            <div class="col-sm-auto">
+              <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-shield-slash me-1"></i>Desactivar MFA
+              </button>
+            </div>
+          </div>
+        </form>
+
+      {% else %}
+
+        <p class="text-secondary mb-4" style="font-size:.875rem">
+          Añade un segundo factor de autenticación. Necesitarás una aplicación como
+          <strong>Google Authenticator</strong>, <strong>Authy</strong> o <strong>1Password</strong>.
+        </p>
+        <form method="post" action="{{ url_for('auth.mfa_setup_start') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-shield-lock me-1"></i>Activar MFA
+          </button>
+        </form>
+
+      {% endif %}
+
+    </div>
+  </div>
+
+</div>
+{% endblock %}

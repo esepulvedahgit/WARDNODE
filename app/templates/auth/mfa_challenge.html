@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Verificación en dos pasos | WardNode{% endblock %}
+
+{% block content %}
+<section class="auth-panel panel mx-auto">
+  <div class="text-center mb-3">
+    <i class="bi bi-shield-lock-fill" style="font-size:2rem;color:var(--accent)"></i>
+  </div>
+  <h1 class="h4 mb-1 text-center">Verificación en dos pasos</h1>
+  <p class="text-secondary text-center mb-4" style="font-size:.875rem">
+    Ingresa el código de 6 dígitos de tu aplicación autenticadora.
+  </p>
+  <form method="post" action="{{ url_for('auth.mfa_verify') }}" class="vstack gap-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div>
+      <label class="form-label" for="code">Código OTP</label>
+      <input class="form-control font-mono text-center"
+             id="code" name="code"
+             type="text" inputmode="numeric" pattern="\d{6}"
+             maxlength="6" autocomplete="one-time-code"
+             placeholder="000000" autofocus required>
+    </div>
+    <button class="btn btn-primary" type="submit">Verificar</button>
+  </form>
+  <div class="text-center mt-3">
+    <a href="{{ url_for('auth.login') }}" class="text-secondary" style="font-size:.83rem">
+      <i class="bi bi-arrow-left me-1"></i>Volver al inicio de sesión
+    </a>
+  </div>
+</section>
+{% endblock %}

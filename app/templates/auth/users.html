@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Usuarios | WardNode{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+  <section class="col-lg-5">
+    <div class="panel">
+      <h1 class="h5 mb-3">Crear usuario</h1>
+      <form method="post" action="{{ url_for('auth.create_user_post') }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div>
+          <label class="form-label" for="name">Nombre</label>
+          <input class="form-control" id="name" name="name" autocomplete="name" required>
+        </div>
+        <div>
+          <label class="form-label" for="email">Correo</label>
+          <input class="form-control" id="email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div>
+          <label class="form-label" for="role">Rol</label>
+          <select class="form-select" id="role" name="role" required>
+            {% for role in roles %}
+              <option value="{{ role }}">{{ role }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="password">Contrasena</label>
+          <input class="form-control" id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+        </div>
+        <div>
+          <label class="form-label" for="password_confirm">Confirmar contrasena</label>
+          <input class="form-control" id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="12" required>
+        </div>
+        <button class="btn btn-primary" type="submit">Crear usuario</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="col-lg-7">
+    <div class="panel">
+      <h2 class="h5 mb-3">Usuarios</h2>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>Correo</th>
+              <th>Nombre</th>
+              <th>Rol</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for user in users %}
+              <tr>
+                <td><code>{{ user.email }}</code></td>
+                <td>{{ user.name }}</td>
+                <td><span class="badge text-bg-secondary">{{ user.role }}</span></td>
+                <td>{{ 'Activo' if user.is_active else 'Inactivo' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
