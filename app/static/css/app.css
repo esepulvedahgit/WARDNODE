@@ -444,24 +444,24 @@ code, pre, .font-mono {
 
 .site-config-grid { --bs-gutter-x: 2rem; --bs-gutter-y: 2rem; }
 
-.crs-config-layout {
-  display: grid; grid-template-columns: minmax(160px,220px) minmax(0,1fr);
-  gap: 1.25rem; align-items: start;
+/* ── CRS accordion ──────────────────────────────────────────────────── */
+.crs-accordion-btn {
+  display: flex; align-items: center; gap: .5rem;
+  width: 100%; padding: .6rem .75rem;
+  background: #f8fafc; border: 1px solid #e4e8ee;
+  border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  text-align: left; transition: background .15s, border-color .15s;
 }
-
-.crs-filter-box {
-  position: sticky; top: 1rem; background: #fbfcfd;
-  border: 1px solid #e4e8ee; border-radius: 8px; padding: .875rem;
+.crs-accordion-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.crs-accordion-btn[aria-expanded="true"] {
+  background: #eff6ff; border-color: #bfdbfe;
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
 }
-
-.crs-rule-row { min-height: 86px; }
-.crs-rules-viewport { min-height: 430px; max-height: 430px; overflow-y: auto; padding-right: .25rem; }
-
-.crs-empty-state {
-  min-height: 430px; display: grid; place-items: center;
-  color: #687385; background: #fbfcfd;
-  border: 1px dashed #cbd3df; border-radius: 8px;
-  text-align: center; padding: 1rem;
+.crs-accordion-body {
+  border: 1px solid #bfdbfe; border-top: none;
+  border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+  padding: .75rem; display: flex; flex-direction: column; gap: .5rem;
 }
 
 /* ── Events page ────────────────────────────────────────────────────── */
@@ -626,8 +626,7 @@ code, pre, .font-mono {
   .main-content { padding: 16px; }
   .topbar { padding: 0 16px; }
   .dash-col-aside { grid-template-columns: 1fr; }
-  .crs-config-layout { grid-template-columns: 1fr; }
-  .crs-filter-box { position: static; }
+  .crs-accordion-btn { font-size: 12px; }
 }
 
 @media (max-width: 480px) {

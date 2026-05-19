@@ -17,6 +17,7 @@ from app.auth.services import (
     create_user,
     find_usable_password_reset_token,
 )
+from app.audit.helpers import log_audit
 from app.extensions import db, limiter
 from app.models import ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER, ROLES, User
 
@@ -90,6 +91,9 @@ def login_post():
     email = request.form["email"].strip().lower()
     user = User.query.filter_by(email=email, is_active=True).first()
     if user is None or not user.check_password(request.form["password"]):
+        log_audit("auth.login_fail", resource_type="auth", resource_name=email,
+                  severity="warning", status="failure",
+                  actor_email=email)
         flash("Credenciales invalidas.", "danger")
         return redirect(url_for("auth.login"))
 
@@ -101,11 +105,14 @@ def login_post():
     user.last_login_at = datetime.now(timezone.utc)
     db.session.commit()
     login_user(user)
+    log_audit("auth.login", resource_type="auth", resource_name=email,
+              actor_email=user.email, actor_id=user.id)
     return redirect(_safe_redirect_target(request.args.get("next")) or url_for("proxy.dashboard"))
 
 
 @bp.post("/logout")
 def logout():
+    log_audit("auth.logout", resource_type="auth")
     logout_user()
     flash("Sesion cerrada.", "success")
     return redirect(url_for("auth.login"))
@@ -202,12 +209,15 @@ def create_user_post():
         flash("Rol invalido.", "danger")
         return redirect(url_for("auth.users"))
 
+    new_email = request.form["email"]
     create_user(
-        email=request.form["email"],
+        email=new_email,
         name=request.form["name"],
         password=password,
         role=role,
     )
+    log_audit("auth.user_create", resource_type="auth", resource_name=new_email,
+              detail={"role": role})
     flash("Usuario creado.", "success")
     return redirect(url_for("auth.users"))
 
@@ -246,6 +256,7 @@ def mfa_verify():
     user.last_login_at = datetime.now(timezone.utc)
     db.session.commit()
     login_user(user)
+    log_audit("auth.mfa_ok", resource_type="auth", actor_email=user.email, actor_id=user.id)
     return redirect(_safe_redirect_target(next_url) or url_for("proxy.dashboard"))
 
 

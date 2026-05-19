@@ -5,6 +5,7 @@ from pathlib import Path
 
 from flask import Flask
 
+from app.audit.routes import bp as audit_bp
 from app.auth.routes import bp as auth_bp
 from app.config import Config
 from app.extensions import csrf, db, limiter, login_manager, migrate
@@ -30,6 +31,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(proxy_bp)
     app.register_blueprint(modules_bp)
+    app.register_blueprint(audit_bp)
 
     @app.context_processor
     def inject_module_states():

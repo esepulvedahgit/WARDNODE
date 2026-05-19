@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+
+{% block title %}Auditoría | WardNode{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Auditoría</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  {# ── Encabezado ── #}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+        <i class="bi bi-clipboard-data-fill" style="color:var(--accent)"></i>
+        Panel de Auditoría
+      </h1>
+      <p class="text-secondary mb-0 small">Eventos del sistema, acciones de usuarios y reportes de seguridad.</p>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <a href="{{ url_for('audit.export_csv', days=days) }}" download
+         class="btn btn-sm btn-outline-secondary"
+         style="display:flex;align-items:center;gap:5px;font-size:12px">
+        <i class="bi bi-download"></i> Exportar CSV ({{ days }}d)
+      </a>
+    </div>
+  </div>
+
+  {# ── KPI cards ── #}
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+      <div class="card-panel" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Eventos hoy</div>
+        <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ total_24h }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-panel" style="padding:16px 20px;{% if failures_24h > 0 %}border-color:#fca5a5{% endif %}">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fallos</div>
+        <div style="font-size:28px;font-weight:700;color:{% if failures_24h > 0 %}var(--c-danger){% else %}var(--text-primary){% endif %};line-height:1">{{ failures_24h }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-panel" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Acciones usuarios</div>
+        <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ user_actions_24h }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-panel" style="padding:16px 20px">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Eventos sistema</div>
+        <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ system_events_24h }}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Gráficos ── #}
+  <div class="row g-3 mb-4">
+    {# Timeline 7 días #}
+    <div class="col-12 col-lg-8">
+      <div class="card-panel" style="padding:20px 24px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:16px">
+          Actividad últimos 7 días
+        </div>
+        <canvas id="timelineChart" height="90"></canvas>
+      </div>
+    </div>
+    {# Donut categorías #}
+    <div class="col-12 col-lg-4">
+      <div class="card-panel" style="padding:20px 24px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:16px">
+          Eventos por categoría <span style="font-size:11px;color:var(--text-muted);font-weight:400">(7 días)</span>
+        </div>
+        {% if cat_labels %}
+        <canvas id="catChart" height="140"></canvas>
+        {% else %}
+        <div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:12px">
+          Sin datos aún
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Top actores #}
+  {% if actor_rows %}
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-6">
+      <div class="card-panel" style="padding:20px 24px">
+        <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:16px">
+          Top usuarios activos <span style="font-size:11px;color:var(--text-muted);font-weight:400">(7 días)</span>
+        </div>
+        <canvas id="actorChart" height="100"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Filtros + tabla ── #}
+  <div class="card-panel">
+    <div class="card-panel-header" style="flex-wrap:wrap;gap:10px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-primary)">
+        Registro de eventos
+        <span style="font-size:12px;font-weight:400;color:var(--text-muted);margin-left:6px">
+          {{ total_rows }} resultado{{ 's' if total_rows != 1 else '' }}
+        </span>
+      </div>
+      <form method="get" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <select name="days" class="form-select form-select-sm" style="width:auto;font-size:12px"
+                onchange="this.form.submit()">
+          {% for d in [1, 7, 14, 30, 90] %}
+          <option value="{{ d }}" {% if days == d %}selected{% endif %}>{{ d }} días</option>
+          {% endfor %}
+        </select>
+        <select name="severity" class="form-select form-select-sm" style="width:auto;font-size:12px"
+                onchange="this.form.submit()">
+          <option value="" {% if not severity_f %}selected{% endif %}>Todas las severidades</option>
+          <option value="info"     {% if severity_f == 'info' %}selected{% endif %}>Info</option>
+          <option value="warning"  {% if severity_f == 'warning' %}selected{% endif %}>Warning</option>
+          <option value="error"    {% if severity_f == 'error' %}selected{% endif %}>Error</option>
+          <option value="critical" {% if severity_f == 'critical' %}selected{% endif %}>Critical</option>
+        </select>
+        <input type="text" name="action" class="form-control form-control-sm"
+               style="width:160px;font-size:12px" placeholder="Filtrar acción…"
+               value="{{ action_f }}">
+        <button type="submit" class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+          <i class="bi bi-funnel-fill"></i>
+        </button>
+        {% if severity_f or action_f or days != 7 %}
+        <a href="{{ url_for('audit.index') }}" class="btn btn-sm btn-outline-danger" style="font-size:12px">
+          <i class="bi bi-x"></i>
+        </a>
+        {% endif %}
+      </form>
+    </div>
+    <div class="card-panel-body" style="padding:0;overflow-x:auto">
+      {% if events %}
+      <table class="table table-sm mb-0" style="font-size:12px;min-width:780px">
+        <thead style="background:var(--bg-subtle);position:sticky;top:0">
+          <tr>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap">Timestamp (UTC)</th>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color)">Actor</th>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color)">Acción</th>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color)">Recurso</th>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color)">IP</th>
+            <th style="padding:8px 12px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border-color)">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ev in events %}
+          <tr style="border-bottom:1px solid var(--border-color)">
+            <td style="padding:7px 12px;color:var(--text-muted);white-space:nowrap;font-family:var(--font-mono,monospace);font-size:11px">
+              {{ ev.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+            </td>
+            <td style="padding:7px 12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {% if ev.actor_id %}
+                <span style="display:inline-flex;align-items:center;gap:4px">
+                  <i class="bi bi-person-fill" style="color:var(--accent);font-size:10px"></i>
+                  {{ ev.actor_email }}
+                </span>
+              {% else %}
+                <span style="color:var(--text-muted)">
+                  <i class="bi bi-gear-fill" style="font-size:10px"></i> sistema
+                </span>
+              {% endif %}
+            </td>
+            <td style="padding:7px 12px;white-space:nowrap">
+              {# Severidad badge + acción #}
+              {% set sev_colors = {
+                'info':     ('#eff6ff','#1d4ed8'),
+                'warning':  ('#fffbeb','#b45309'),
+                'error':    ('#fef2f2','#b91c1c'),
+                'critical': ('#fdf4ff','#7e22ce'),
+              } %}
+              {% set sc = sev_colors.get(ev.severity, ('#f1f5f9','#475569')) %}
+              <span style="background:{{ sc[0] }};color:{{ sc[1] }};border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600;margin-right:6px">
+                {{ ev.severity }}
+              </span>
+              <code style="font-size:11px;background:transparent">{{ ev.action }}</code>
+            </td>
+            <td style="padding:7px 12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              {% if ev.resource_name %}
+                <span style="font-size:11px;color:var(--text-muted)">{{ ev.resource_type }}/</span>{{ ev.resource_name }}
+              {% elif ev.resource_type %}
+                <span style="color:var(--text-muted)">{{ ev.resource_type }}</span>
+              {% else %}—{% endif %}
+            </td>
+            <td style="padding:7px 12px;color:var(--text-muted);font-family:var(--font-mono,monospace);font-size:11px;white-space:nowrap">
+              {{ ev.ip_address or '—' }}
+            </td>
+            <td style="padding:7px 12px;white-space:nowrap">
+              {% if ev.status == 'success' %}
+                <span style="background:#f0fdf4;color:#166534;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">ok</span>
+              {% else %}
+                <span style="background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">fail</span>
+              {% endif %}
+              {% if ev._detail_obj %}
+                <span title="{{ ev.detail }}" style="cursor:help;margin-left:4px;color:var(--text-muted);font-size:11px">
+                  <i class="bi bi-info-circle-fill"></i>
+                </span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:48px 24px;text-align:center;color:var(--text-muted)">
+        <i class="bi bi-clipboard-x" style="font-size:32px;display:block;margin-bottom:8px"></i>
+        Sin eventos registrados para los filtros seleccionados.
+      </div>
+      {% endif %}
+    </div>
+
+    {# Paginación #}
+    {% if total_pages > 1 %}
+    <div class="card-panel-footer" style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border-color)">
+      <span style="font-size:12px;color:var(--text-muted)">
+        Página {{ page }} de {{ total_pages }} · {{ total_rows }} registros
+      </span>
+      <div style="display:flex;gap:4px">
+        {% if page > 1 %}
+        <a href="{{ url_for('audit.index', days=days, severity=severity_f, action=action_f, page=page - 1) }}"
+           class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+          <i class="bi bi-chevron-left"></i>
+        </a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="{{ url_for('audit.index', days=days, severity=severity_f, action=action_f, page=page + 1) }}"
+           class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+          <i class="bi bi-chevron-right"></i>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+{% block scripts %}
+<script>
+(function () {
+  const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+
+  Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+  Chart.defaults.font.size   = 11;
+  Chart.defaults.color       = textColor;
+
+  // ── Timeline ──────────────────────────────────────────────────
+  new Chart(document.getElementById('timelineChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ tl_labels | tojson }},
+      datasets: [
+        {
+          label: 'Info',
+          data: {{ tl_info | tojson }},
+          backgroundColor: '#3b82f6',
+          borderRadius: 3,
+          stack: 'a',
+        },
+        {
+          label: 'Warning',
+          data: {{ tl_warning | tojson }},
+          backgroundColor: '#f59e0b',
+          borderRadius: 3,
+          stack: 'a',
+        },
+        {
+          label: 'Error/Critical',
+          data: {{ tl_error | tojson }},
+          backgroundColor: '#ef4444',
+          borderRadius: 3,
+          stack: 'a',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, padding: 14 } },
+        tooltip: { mode: 'index' },
+      },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: textColor } },
+        y: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, stepSize: 1, precision: 0 },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+
+  {% if cat_labels %}
+  // ── Donut categorías ─────────────────────────────────────────
+  new Chart(document.getElementById('catChart'), {
+    type: 'doughnut',
+    data: {
+      labels: {{ cat_labels | tojson }},
+      datasets: [{
+        data: {{ cat_values | tojson }},
+        backgroundColor: ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4'],
+        borderWidth: 2,
+        borderColor: isDark ? '#1e293b' : '#ffffff',
+        hoverOffset: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      cutout: '68%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10, font: { size: 11 } } },
+      },
+    },
+  });
+  {% endif %}
+
+  {% if actor_rows %}
+  // ── Top actores ───────────────────────────────────────────────
+  new Chart(document.getElementById('actorChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ actor_rows | map(attribute=0) | list | tojson }},
+      datasets: [{
+        label: 'Acciones',
+        data: {{ actor_rows | map(attribute=1) | list | tojson }},
+        backgroundColor: '#6366f1',
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.raw} acciones` } },
+      },
+      scales: {
+        x: {
+          grid: { color: gridColor },
+          ticks: { color: textColor, precision: 0, stepSize: 1 },
+          beginAtZero: true,
+        },
+        y: { grid: { display: false }, ticks: { color: textColor } },
+      },
+    },
+  });
+  {% endif %}
+})();
+</script>
+{% endblock %}
+{% endblock %}

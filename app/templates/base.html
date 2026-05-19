@@ -97,6 +97,12 @@
           <i class="bi bi-gear-fill"></i><span>Ajustes</span>
         </a>
         {% endif %}
+        {% if current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('audit.') %}active{% endif %}"
+           href="{{ url_for('audit.index') }}">
+          <i class="bi bi-clipboard-data-fill"></i><span>Auditoría</span>
+        </a>
+        {% endif %}
         <a class="nav-link-item {% if request.endpoint == 'auth.profile' %}active{% endif %}"
            href="{{ url_for('auth.profile') }}">
           <i class="bi bi-person-fill"></i><span>Mi perfil</span>

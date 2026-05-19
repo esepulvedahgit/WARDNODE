@@ -1,3 +1,9 @@
+import base64
+import hashlib
+import hmac as _hmac_mod
+import json as _json
+import random
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -397,14 +403,62 @@ def _safe_name(value: str) -> str:
     return "".join(char if char.isalnum() else "-" for char in value).strip("-")
 
 
+def _make_challenge(secret: str) -> dict:
+    """Generate a server-side HMAC-signed challenge (question, shuffled choices, token).
+
+    The token encodes the correct answer, signed with the app SECRET_KEY.
+    The correct answer is NOT exposed in the HTML/JS — only the choices are.
+    """
+    op = random.choice(["+", "-", "*"])
+    if op == "+":
+        a, b = random.randint(5, 20), random.randint(3, 15)
+        answer = a + b
+        question = f"{a} + {b}"
+    elif op == "-":
+        a = random.randint(12, 30)
+        b = random.randint(3, a - 3)
+        answer = a - b
+        question = f"{a} \u2212 {b}"   # − (unicode minus)
+    else:
+        a, b = random.randint(2, 9), random.randint(2, 9)
+        answer = a * b
+        question = f"{a} \xd7 {b}"    # × (unicode times)
+
+    # Sign the correct answer — answer is never sent to the client in plain text
+    payload = base64.urlsafe_b64encode(_json.dumps({"a": answer}).encode()).decode()
+    sig = _hmac_mod.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    token = f"{payload}.{sig}"
+
+    choices: set[int] = {answer}
+    while len(choices) < 3:
+        delta = random.choice([-3, -2, -1, 1, 2, 3])
+        c = answer + delta
+        if c > 0:
+            choices.add(c)
+    shuffled = list(choices)
+    random.shuffle(shuffled)
+
+    return {"question": question, "choices": shuffled, "token": token}
+
+
 def _render_bot_challenge_location() -> str:
-    return """
-    location /_wn_challenge/ {
+    console_url = current_app.config.get("WN_CONSOLE_URL", "http://console:5000").rstrip("/")
+    return f"""
+    location = /_wn_challenge/verify {{
+        proxy_pass {console_url}/proxy/bot-verify;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 10s;
+    }}
+
+    location /_wn_challenge/ {{
         alias /etc/nginx/generated/challenge/;
         index challenge.html;
         try_files $uri /challenge.html =404;
         add_header Cache-Control "no-cache, no-store, must-revalidate" always;
-    }
+    }}
 """
 
 
@@ -413,7 +467,21 @@ def _render_bot_check() -> str:
 
 
 def _build_challenge_html() -> str:
-    return """<!DOCTYPE html>
+    """Build the bot challenge page with a server-side generated question.
+
+    The correct answer is signed server-side (HMAC-SHA256) and never exposed
+    in plain text in the HTML/JS. The user's choice is submitted via form POST
+    to /_wn_challenge/verify (proxied to Flask), which sets the HttpOnly cookie.
+    """
+    secret = current_app.config.get("SECRET_KEY", "change-me")
+    challenge = _make_challenge(secret)
+
+    # json.dumps produces valid JS literals; replace < > to prevent </script> injection
+    choices_js = _json.dumps(challenge["choices"]).replace("<", r"\u003c").replace(">", r"\u003e")
+    question_js = _json.dumps(challenge["question"]).replace("<", r"\u003c").replace(">", r"\u003e")
+    token_js = _json.dumps(challenge["token"]).replace("<", r"\u003c").replace(">", r"\u003e")
+
+    return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -423,9 +491,9 @@ def _build_challenge_html() -> str:
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
-  body {
+  body {{
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -439,9 +507,9 @@ def _build_challenge_html() -> str:
     font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
     color: #e2e8f0;
     padding: 24px;
-  }
+  }}
 
-  .card {
+  .card {{
     background: rgba(255,255,255,.04);
     border: 1px solid rgba(255,255,255,.08);
     border-radius: 16px;
@@ -450,95 +518,92 @@ def _build_challenge_html() -> str:
     width: 100%;
     text-align: center;
     backdrop-filter: blur(8px);
-  }
+  }}
 
-  /* ── Logo ── */
-  .logo-wrap {
+  .logo-wrap {{
     position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     margin-bottom: 32px;
-  }
+  }}
 
-  .logo-glow {
+  .logo-glow {{
     position: absolute;
     width: 160px;
     height: 160px;
     border-radius: 50%;
     background: radial-gradient(circle, rgba(59,130,246,.25) 0%, transparent 70%);
     animation: glow-pulse 3s ease-in-out infinite;
-  }
+  }}
 
-  @keyframes glow-pulse {
-    0%, 100% { opacity: .6; transform: scale(1); }
-    50%       { opacity: 1;  transform: scale(1.12); }
-  }
+  @keyframes glow-pulse {{
+    0%, 100% {{ opacity: .6; transform: scale(1); }}
+    50%       {{ opacity: 1;  transform: scale(1.12); }}
+  }}
 
-  .logo-svg {
+  .logo-svg {{
     position: relative;
     z-index: 1;
     color: #fff;
     animation: logo-float 4s ease-in-out infinite;
     filter: drop-shadow(0 0 18px rgba(59,130,246,.5));
-  }
+  }}
 
-  @keyframes logo-float {
-    0%, 100% { transform: translateY(0); }
-    50%       { transform: translateY(-5px); }
-  }
+  @keyframes logo-float {{
+    0%, 100% {{ transform: translateY(0); }}
+    50%       {{ transform: translateY(-5px); }}
+  }}
 
-  /* ── Text ── */
-  .app-name {
+  .app-name {{
     font-size: 11px;
     font-weight: 600;
     letter-spacing: .12em;
     text-transform: uppercase;
     color: #3b82f6;
     margin-bottom: 8px;
-  }
+  }}
 
-  h1 {
+  h1 {{
     font-size: 20px;
     font-weight: 700;
     color: #f1f5f9;
     margin-bottom: 6px;
     letter-spacing: -.01em;
-  }
+  }}
 
-  .subtitle {
+  .subtitle {{
     font-size: 13px;
     color: #64748b;
     margin-bottom: 36px;
     line-height: 1.5;
-  }
+  }}
 
-  /* ── Challenge ── */
-  .challenge-label {
+  .challenge-label {{
     font-size: 11px;
     font-weight: 600;
     letter-spacing: .06em;
     text-transform: uppercase;
     color: #475569;
     margin-bottom: 12px;
-  }
+  }}
 
-  .equation {
+  .equation {{
     font-size: 32px;
     font-weight: 700;
     color: #e2e8f0;
     margin-bottom: 24px;
     letter-spacing: -.02em;
-  }
+  }}
 
-  .options {
+  .options {{
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 10px;
     margin-bottom: 28px;
-  }
+  }}
 
-  .opt-btn {
+  .opt-btn {{
     background: rgba(255,255,255,.06);
     border: 1px solid rgba(255,255,255,.1);
     border-radius: 10px;
@@ -549,59 +614,65 @@ def _build_challenge_html() -> str:
     padding: 16px 8px;
     cursor: pointer;
     transition: background .15s, border-color .15s, transform .1s;
-  }
+  }}
 
-  .opt-btn:hover {
+  .opt-btn:hover:not(:disabled) {{
     background: rgba(59,130,246,.15);
     border-color: rgba(59,130,246,.4);
     transform: translateY(-2px);
-  }
+  }}
 
-  .opt-btn.correct {
-    background: rgba(16,185,129,.15);
-    border-color: #10b981;
-    color: #6ee7b7;
+  .opt-btn:disabled {{ opacity: .5; cursor: not-allowed; }}
+
+  .opt-btn.pending {{
+    background: rgba(59,130,246,.15);
+    border-color: rgba(59,130,246,.4);
     animation: correct-pop .4s ease;
-  }
+  }}
 
-  .opt-btn.wrong {
+  .opt-btn.wrong {{
     background: rgba(239,68,68,.12);
     border-color: rgba(239,68,68,.4);
     color: #fca5a5;
     animation: shake .3s ease;
-  }
+  }}
 
-  @keyframes correct-pop {
-    0%   { transform: scale(1); }
-    40%  { transform: scale(1.08); }
-    100% { transform: scale(1); }
-  }
+  @keyframes correct-pop {{
+    0%   {{ transform: scale(1); }}
+    40%  {{ transform: scale(1.08); }}
+    100% {{ transform: scale(1); }}
+  }}
 
-  @keyframes shake {
-    0%,100% { transform: translateX(0); }
-    25%      { transform: translateX(-6px); }
-    75%      { transform: translateX(6px); }
-  }
+  @keyframes shake {{
+    0%,100% {{ transform: translateX(0); }}
+    25%      {{ transform: translateX(-6px); }}
+    75%      {{ transform: translateX(6px); }}
+  }}
 
-  .status-msg {
+  .status-msg {{
     font-size: 13px;
     color: #64748b;
     min-height: 20px;
     margin-bottom: 4px;
-  }
+  }}
 
-  /* ── Footer ── */
-  .footer {
+  .footer {{
     margin-top: 40px;
     font-size: 11px;
     color: #1e3a5f;
     letter-spacing: .04em;
-  }
+  }}
 
-  .footer strong { color: #243c5e; }
+  .footer strong {{ color: #243c5e; }}
 </style>
 </head>
 <body>
+
+<form id="challenge-form" method="POST" action="/_wn_challenge/verify" style="display:none">
+  <input type="hidden" id="token-field"  name="token"  value="">
+  <input type="hidden" id="ret-field"    name="ret"    value="">
+  <input type="hidden" id="choice-field" name="choice" value="">
+</form>
 
 <div class="card">
   <div class="logo-wrap">
@@ -630,76 +701,45 @@ def _build_challenge_html() -> str:
 <p class="footer">Protegido por <strong>WardNode</strong> · Bot Protection</p>
 
 <script>
-(function () {
-  const COOKIE_NAME  = "wn_bot";
-  const COOKIE_VALUE = "ward_cleared_v1";
-  const COOKIE_TTL   = 3600;
+(function () {{
+  const CHOICES  = {choices_js};
+  const QUESTION = {question_js};
+  const TOKEN    = {token_js};
 
-  const params = new URLSearchParams(window.location.search);
-  const returnTo = params.get("ret") || "/";
+  const params  = new URLSearchParams(window.location.search);
+  const rawRet  = params.get("ret") || "/";
+  /* Validate returnTo: must be a relative path, not a protocol-relative or absolute URL */
+  const safeRet = (rawRet.startsWith("/") && !rawRet.startsWith("//")) ? rawRet : "/";
+  const hasError = params.get("error") === "1";
 
-  /* If already cleared, go straight through */
-  if (document.cookie.split(";").some(c => c.trim().startsWith(COOKIE_NAME + "=" + COOKIE_VALUE))) {
-    window.location.replace(returnTo);
-    return;
-  }
+  document.getElementById("equation").textContent  = QUESTION + "  =  ?";
+  document.getElementById("ret-field").value        = safeRet;
+  document.getElementById("token-field").value      = TOKEN;
 
-  const POOL = [
-    { q: "7 + 8",  a: 15 },
-    { q: "12 − 4", a: 8  },
-    { q: "6 × 3",  a: 18 },
-    { q: "9 + 6",  a: 15 },
-    { q: "14 − 5", a: 9  },
-    { q: "4 × 7",  a: 28 },
-    { q: "11 + 7", a: 18 },
-    { q: "20 − 8", a: 12 },
-    { q: "3 × 9",  a: 27 },
-    { q: "8 + 13", a: 21 },
-  ];
-
-  const problem = POOL[Math.floor(Math.random() * POOL.length)];
-  document.getElementById("equation").textContent = problem.q + "  =  ?";
-
-  /* Generate 3 distinct choices (1 correct + 2 distractors) */
-  const choices = new Set([problem.a]);
-  while (choices.size < 3) {
-    const delta = (Math.floor(Math.random() * 4) + 1) * (Math.random() < 0.5 ? 1 : -1);
-    const candidate = problem.a + delta;
-    if (candidate > 0) choices.add(candidate);
-  }
-  const shuffled = [...choices].sort(() => Math.random() - 0.5);
-
-  const optionsEl = document.getElementById("options");
   const statusEl  = document.getElementById("status");
-  let locked = false;
+  const optionsEl = document.getElementById("options");
 
-  shuffled.forEach(val => {
+  if (hasError) {{
+    statusEl.textContent = "Incorrecto · intenta de nuevo.";
+    statusEl.style.color = "#ef4444";
+  }}
+
+  CHOICES.forEach(function(val) {{
     const btn = document.createElement("button");
+    btn.type      = "button";
     btn.className = "opt-btn";
     btn.textContent = val;
-    btn.addEventListener("click", () => {
-      if (locked) return;
-      if (val === problem.a) {
-        locked = true;
-        btn.classList.add("correct");
-        statusEl.textContent = "✓ Correcto · accediendo…";
-        statusEl.style.color = "#10b981";
-        document.cookie = COOKIE_NAME + "=" + COOKIE_VALUE +
-          "; Path=/; Max-Age=" + COOKIE_TTL + "; SameSite=Lax";
-        setTimeout(() => window.location.replace(returnTo), 800);
-      } else {
-        btn.classList.add("wrong");
-        statusEl.textContent = "Incorrecto · intenta de nuevo.";
-        statusEl.style.color = "#ef4444";
-        setTimeout(() => {
-          btn.classList.remove("wrong");
-          statusEl.textContent = "";
-        }, 1000);
-      }
-    });
+    btn.addEventListener("click", function() {{
+      document.querySelectorAll(".opt-btn").forEach(function(b) {{ b.disabled = true; }});
+      btn.classList.add("pending");
+      statusEl.textContent = "Verificando…";
+      statusEl.style.color = "#94a3b8";
+      document.getElementById("choice-field").value = val;
+      document.getElementById("challenge-form").submit();
+    }});
     optionsEl.appendChild(btn);
-  });
-})();
+  }});
+}})();
 </script>
 </body>
 </html>"""

@@ -1,10 +1,16 @@
+import base64
+import hashlib
+import hmac as _hmac_mod
+import json as _json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote as _url_quote
 
-from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from sqlalchemy import func
 
+from app.audit.helpers import log_audit
 from app.auth.decorators import roles_required
-from app.extensions import db, limiter
+from app.extensions import csrf, db, limiter
 from app.models import (
     AttackEvent,
     CustomModSecurityRule,
@@ -76,14 +82,14 @@ def dashboard():
     sites = Site.query.order_by(Site.domain).all()
     categories = RuleCategory.query.order_by(RuleCategory.name).all()
 
-    since_24h = datetime.utcnow() - timedelta(hours=24)
+    since_24h = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
     events_24h = AttackEvent.query.filter(AttackEvent.created_at >= since_24h).all()
 
     blocked_24h = sum(1 for e in events_24h if e.action == "block")
     unique_ips = db.session.query(func.count(func.distinct(AttackEvent.source_ip))).scalar() or 0
     waf_active = sum(1 for s in sites if s.waf_enabled)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     chart_labels, chart_attacks, chart_blocked = [], [], []
     for i in range(23, -1, -1):
         h_start = now - timedelta(hours=i + 1)
@@ -191,6 +197,8 @@ def create_site():
     ensure_site_security_headers(site)
     ensure_site_nginx_extra_config(site)
     _apply_nginx()
+    log_audit("site.create", resource_type="site", resource_name=site.domain,
+              detail={"upstream": site.upstream_url, "waf": site.waf_enabled})
     flash("Sitio agregado al proxy.", "success")
     return redirect(url_for("proxy.site_detail", site_id=site.id))
 
@@ -237,6 +245,8 @@ def update_site_waf(site_id):
     site.waf_enabled = bool(request.form.get("waf_enabled"))
     db.session.commit()
     _apply_nginx()
+    log_audit("site.waf_toggle", resource_type="site", resource_name=site.domain,
+              detail={"waf_enabled": site.waf_enabled})
     state = "activado (bloqueo)" if site.waf_enabled else "desactivado (solo detección)"
     flash(f"WAF {state}.", "success")
     return redirect(url_for("proxy.site_detail", site_id=site.id))
@@ -247,7 +257,11 @@ def update_site_waf(site_id):
 @limiter.limit("30 per minute")
 def update_site_rules(site_id):
     site = Site.query.get_or_404(site_id)
-    enabled_ids = {int(value) for value in request.form.getlist("category_ids")}
+    try:
+        enabled_ids = {int(v) for v in request.form.getlist("category_ids")}
+    except ValueError:
+        flash("IDs de categorías inválidos.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
     for setting in site.rule_settings:
         setting.enabled = setting.category_id in enabled_ids
     db.session.commit()
@@ -355,9 +369,13 @@ def update_site_security_headers(site_id):
 
     updates = []
     errors = []
-    enabled_ids = {int(value) for value in request.form.getlist("enabled_header_ids")}
-    always_ids = {int(value) for value in request.form.getlist("always_header_ids")}
-    header_ids = [int(value) for value in request.form.getlist("header_ids")]
+    try:
+        enabled_ids = {int(v) for v in request.form.getlist("enabled_header_ids")}
+        always_ids  = {int(v) for v in request.form.getlist("always_header_ids")}
+        header_ids  = [int(v) for v in request.form.getlist("header_ids")]
+    except ValueError:
+        flash("IDs de headers inválidos.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
 
     headers_by_id = {header.id: header for header in site.security_headers}
     for header_id in header_ids:
@@ -426,8 +444,13 @@ def update_site_custom_rules(site_id):
     site = Site.query.get_or_404(site_id)
     updates = []
     errors = []
-    enabled_ids = {int(value) for value in request.form.getlist("enabled_rule_ids")}
-    rule_ids = [int(value) for value in request.form.getlist("rule_ids")]
+    try:
+        enabled_ids = {int(v) for v in request.form.getlist("enabled_rule_ids")}
+        rule_ids    = [int(v) for v in request.form.getlist("rule_ids")]
+    except ValueError:
+        flash("IDs de reglas inválidos.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
+
     rules_by_id = {rule.id: rule for rule in site.custom_rules}
 
     for rule_id in rule_ids:
@@ -508,7 +531,11 @@ def render_configs():
     rendered_files = render_nginx_configs()
     ok, err = reload_nginx()
     if ok:
+        log_audit("system.nginx_render", resource_type="system", resource_name="nginx",
+                  detail={"files": len(rendered_files)})
         return jsonify({"ok": True, "files": len(rendered_files)})
+    log_audit("system.nginx_render", resource_type="system", resource_name="nginx",
+              severity="error", status="failure", detail={"error": err})
     return jsonify({"ok": False, "error": err or "No se pudo recargar nginx"}), 500
 
 
@@ -564,9 +591,12 @@ def delete_site(site_id):
         flash("El sitio de la consola no puede eliminarse desde aquí. Desvinculalo desde Ajustes.", "danger")
         return redirect(url_for("proxy.site_detail", site_id=site.id))
     name = site.name
+    domain = site.domain
     db.session.delete(site)
     db.session.commit()
     _apply_nginx()
+    log_audit("site.delete", resource_type="site", resource_name=domain,
+              detail={"name": name}, severity="warning")
     flash(f'Sitio "{name}" eliminado correctamente.', "success")
     return redirect(url_for("proxy.dashboard"))
 
@@ -799,8 +829,13 @@ def settings_save_syslog():
     facility = request.form.get("syslog_facility", "local7")
     sources  = ",".join(request.form.getlist("syslog_sources"))
 
+    import re as _re
     if enabled == "1" and not host:
         flash("El host del servidor syslog es requerido.", "danger")
+        return redirect(url_for("proxy.settings"))
+    # Allowlist: hostname chars, IPv4 dots, IPv6 colons/brackets — no whitespace or control chars
+    if host and not _re.fullmatch(r"[A-Za-z0-9.\-_:\[\]]{1,253}", host):
+        flash("Host syslog inválido. Use un hostname o dirección IP válida.", "danger")
         return redirect(url_for("proxy.settings"))
     if protocol not in ("udp", "tcp"):
         protocol = "udp"
@@ -838,6 +873,8 @@ def settings_save_syslog():
 @roles_required(ROLE_ADMIN)
 @limiter.limit("10 per minute")
 def settings_syslog_test():
+    import ipaddress
+    import re as _re
     import socket
     import time
 
@@ -848,12 +885,28 @@ def settings_syslog_test():
 
     if not host:
         return jsonify({"ok": False, "error": "Host requerido"})
+
+    # Same allowlist as the save route: hostname/IPv4/IPv6 chars only
+    if not _re.fullmatch(r"[A-Za-z0-9.\-_:\[\]]{1,253}", host):
+        return jsonify({"ok": False, "error": "Host inválido"})
+
     try:
         port = int(port_str)
         if not (1 <= port <= 65535):
             raise ValueError
     except (ValueError, TypeError):
         return jsonify({"ok": False, "error": "Puerto inválido"})
+
+    # Resolve and block loopback / cloud-metadata targets
+    try:
+        resolved = socket.getaddrinfo(host, port)
+        for *_, sockaddr in resolved:
+            ip_str = sockaddr[0]
+            addr = ipaddress.ip_address(ip_str)
+            if addr.is_loopback or addr.is_link_local:
+                return jsonify({"ok": False, "error": "Host no permitido"})
+    except (socket.gaierror, ValueError):
+        return jsonify({"ok": False, "error": f"No se pudo resolver el host: {host}"})
 
     try:
         t0 = time.monotonic()
@@ -869,6 +922,63 @@ def settings_syslog_test():
         return jsonify({"ok": True, "latency_ms": ms})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
+
+
+def _verify_challenge(token: str, choice: int) -> bool:
+    """Verify a server-issued HMAC-signed challenge token against the submitted choice."""
+    try:
+        secret = current_app.config.get("SECRET_KEY", "")
+        b64, sig = token.rsplit(".", 1)
+        expected = _hmac_mod.new(secret.encode(), b64.encode(), hashlib.sha256).hexdigest()[:32]
+        if not _hmac_mod.compare_digest(expected, sig):
+            return False
+        b64c = b64.rstrip("=")
+        padded = b64c + "=" * ((-len(b64c)) % 4)
+        data = _json.loads(base64.urlsafe_b64decode(padded))
+        return int(data["a"]) == choice
+    except Exception:
+        return False
+
+
+@bp.post("/bot-verify")
+@csrf.exempt  # CSRF protection is provided by the HMAC-signed challenge token
+@limiter.limit("10 per minute")
+def bot_verify():
+    """Verify bot-challenge answer and set HttpOnly cookie on success.
+
+    This endpoint is proxied from the protected site's nginx via:
+        location = /_wn_challenge/verify { proxy_pass ...; }
+    """
+    token     = request.form.get("token", "")
+    choice_s  = request.form.get("choice", "")
+    ret       = request.form.get("ret", "/")
+
+    # Validate returnTo — must be a relative path (prevent open redirect)
+    if not ret.startswith("/") or ret.startswith("//"):
+        ret = "/"
+
+    try:
+        choice = int(choice_s)
+    except (ValueError, TypeError):
+        abort(400)
+
+    if not _verify_challenge(token, choice):
+        # Wrong answer: redirect back to challenge with error flag
+        safe_ret = _url_quote(ret, safe="/")
+        return redirect(f"/_wn_challenge/?ret={safe_ret}&error=1")
+
+    resp = redirect(ret)
+    is_https = request.headers.get("X-Forwarded-Proto", "http") == "https"
+    resp.set_cookie(
+        "wn_bot",
+        "ward_cleared_v1",
+        max_age=3600,
+        path="/",
+        httponly=True,
+        secure=is_https,
+        samesite="Lax",
+    )
+    return resp
 
 
 def _apply_nginx() -> None:

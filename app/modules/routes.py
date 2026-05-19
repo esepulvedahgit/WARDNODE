@@ -6,6 +6,7 @@ import time
 from flask import jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from app.audit.helpers import log_audit
 from app.auth.decorators import roles_required
 from app.extensions import db
 from app.models import AppConfig, ROLE_ADMIN
@@ -91,7 +92,10 @@ def toggle(name: str):
             # Si falla al iniciar (e.g. CS no instalado aún) no mostramos nada —
             # el panel CS mostrará el formulario de instalación normalmente.
 
-    AppConfig.set(module["config_key"], "0" if current else "1")
+    new_state = not current
+    AppConfig.set(module["config_key"], "1" if new_state else "0")
+    log_audit("module.toggle", resource_type="module", resource_name=name,
+              detail={"enabled": new_state})
     return redirect(url_for("modules.index"))
 
 
@@ -255,6 +259,8 @@ def wf_install():
         except EncryptionNotConfigured:
             key_stored = False
 
+        log_audit("module.wf_install", resource_type="module", resource_name="wardnode-wf",
+                  detail={"port": ssh_port_raw, "key_stored": key_stored})
         # Limpiar flag de hardening si es una reinstalación (el host puede haber cambiado)
         AppConfig.set("wf_ssh_hardened", "0")
 
@@ -352,8 +358,23 @@ def wf_generate_key():
         except EncryptionNotConfigured:
             key_stored = False
 
+        # Hardening SSH opcional — aplicar mientras la sesión con password sigue activa
+        ssh_hardened = False
+        if request.form.get("harden_ssh") == "1":
+            harden_cmd = (
+                "grep -qE '^\\s*PermitRootLogin' /etc/ssh/sshd_config "
+                "&& sed -i 's/^\\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config "
+                "|| echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; "
+                "systemctl reload sshd"
+            )
+            _, h_out, h_err = client.exec_command(harden_cmd, timeout=15)
+            if h_out.channel.recv_exit_status() == 0:
+                AppConfig.set("wf_ssh_hardened", "1")
+                ssh_hardened = True
+
         return jsonify({
             "ok": True,
+            "ssh_hardened": ssh_hardened,
             "warning": None if key_stored else (
                 "WARDNODE_SECRET_KEY no configurada — la clave SSH NO fue almacenada. "
                 "Configura la variable y reinstala para habilitar auto-reutilización en CS."
@@ -523,12 +544,14 @@ def wf_harden_ssh():
             "|| echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; "
             "systemctl reload sshd && echo 'SSH hardening aplicado'"
         )
-        _, stdout, _ = client.exec_command(harden_cmd, timeout=15)
+        _, stdout, stderr_ch = client.exec_command(harden_cmd, timeout=15)
         exit_code = stdout.channel.recv_exit_status()
-        output = stdout.read().decode("utf-8", errors="replace").strip()
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr_ch.read().decode("utf-8", errors="replace").strip()
+        output = f"{out}\n{err}".strip() if err else out
 
         if exit_code != 0:
-            return jsonify({"ok": False, "error": f"Falló al modificar sshd_config: {output}"}), 500
+            return jsonify({"ok": False, "error": f"Falló al modificar sshd_config: {output or 'sin detalle (revisar stderr del host)'}"}), 500
 
         AppConfig.set("wf_ssh_hardened", "1")
         return jsonify({"ok": True, "output": output})
@@ -892,8 +915,13 @@ def sys_restart(target: str):
             client = docker_sdk.from_env()
             container = client.containers.get(container_name)
             container.restart(timeout=30)
+            log_audit("system.container_restart", resource_type="system",
+                      resource_name=container_name)
             return jsonify({"ok": True})
         except Exception as e:
+            log_audit("system.container_restart", resource_type="system",
+                      resource_name=container_name, severity="error", status="failure",
+                      detail={"error": str(e)})
             return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": False, "error": "Target desconocido"}), 400

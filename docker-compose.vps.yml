@@ -19,6 +19,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /run/wardnode:/app/sockets:rw
       - ${WARDNODE_PROJECT_DIR:-/opt/wardnode}:${WARDNODE_PROJECT_DIR:-/opt/wardnode}:ro
+      - obs_alloy_config:/tmp/obs/alloy
+      - obs_loki_config:/tmp/obs/loki
+      - obs_prometheus_config:/tmp/obs/prometheus
+      - obs_grafana_provisioning:/tmp/obs/grafana_provisioning
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
     extra_hosts:
@@ -31,7 +35,14 @@ services:
     command:
       - sh
       - -c
-      - "flask db-setup && flask ensure-geoip && gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 --access-logfile - --error-logfile - wsgi:app"
+      - >-
+        mkdir -p /tmp/obs/alloy /tmp/obs/loki /tmp/obs/prometheus /tmp/obs/grafana_provisioning &&
+        cp /app/observability/alloy/config.alloy /tmp/obs/alloy/config.alloy &&
+        cp /app/observability/loki.yaml /tmp/obs/loki/config.yaml &&
+        cp /app/observability/prometheus.yml /tmp/obs/prometheus/prometheus.yml &&
+        cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
+        flask db-setup && flask ensure-geoip &&
+        gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 --access-logfile - --error-logfile - wsgi:app
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:5000/status || exit 1"]
       interval: 30s
@@ -97,7 +108,7 @@ services:
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     volumes:
-      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - obs_alloy_config:/etc/alloy:ro
       - alloy_data:/var/lib/alloy/data
       - proxy_logs:/var/log/nginx:ro
       - modsecurity_logs:/var/log/modsec:ro
@@ -106,8 +117,12 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     depends_on:
-      - loki
-      - prometheus
+      console:
+        condition: service_healthy
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_started
     networks:
       - wardnode_internal
 
@@ -120,7 +135,10 @@ services:
     command: -config.file=/etc/loki/config.yaml
     volumes:
       - loki_data:/loki
-      - ./observability/loki.yaml:/etc/loki/config.yaml:ro
+      - obs_loki_config:/etc/loki:ro
+    depends_on:
+      console:
+        condition: service_healthy
     networks:
       - wardnode_internal
 
@@ -145,9 +163,12 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - obs_grafana_provisioning:/etc/grafana/provisioning:ro
     depends_on:
-      - loki
+      console:
+        condition: service_healthy
+      loki:
+        condition: service_started
     networks:
       - wardnode_internal
 
@@ -163,8 +184,11 @@ services:
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-remote-write-receiver"
     volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - obs_prometheus_config:/etc/prometheus:ro
       - prometheus_data:/prometheus
+    depends_on:
+      console:
+        condition: service_healthy
     networks:
       - wardnode_internal
 
@@ -199,6 +223,10 @@ volumes:
   grafana_data:
   alloy_data:
   prometheus_data:
+  obs_alloy_config:
+  obs_loki_config:
+  obs_prometheus_config:
+  obs_grafana_provisioning:
 
 networks:
   wardnode_internal:

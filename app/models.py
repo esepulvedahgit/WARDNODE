@@ -238,6 +238,37 @@ class GeoBlocklistEntry(db.Model, TimestampMixin):
     enabled = db.Column(db.Boolean, default=True, nullable=False)
 
 
+class AuditLog(db.Model):
+    """Registro inmutable de eventos del sistema y acciones de usuario."""
+    __tablename__ = "audit_log"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    created_at   = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    actor_email  = db.Column(db.String(255), nullable=False, default="sistema")
+    actor_id     = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    action        = db.Column(db.String(80),  nullable=False, index=True)
+    resource_type = db.Column(db.String(40),  nullable=True)
+    resource_name = db.Column(db.String(255), nullable=True)
+    detail        = db.Column(db.Text,        nullable=True)   # JSON opcional
+    ip_address    = db.Column(db.String(80),  nullable=True)
+    severity      = db.Column(db.String(20),  nullable=False, default="info")
+    # info · warning · error · critical
+    status        = db.Column(db.String(20),  nullable=False, default="success")
+    # success · failure
+
+    actor = db.relationship("User", foreign_keys=[actor_id], lazy="select")
+
+
 class AppConfig(db.Model, TimestampMixin):
     __tablename__ = "app_config"
     id = db.Column(db.Integer, primary_key=True)

@@ -124,6 +124,18 @@
                         <i class="bi bi-shield-lock me-1"></i>Solo se usa para instalar la llave pública. No se almacena.
                       </div>
                     </div>
+                    <div class="col-12">
+                      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:10px 12px;display:flex;align-items:flex-start;gap:10px">
+                        <input class="form-check-input mt-0" type="checkbox" x-model="hardenSSH"
+                               id="hardenSSHCheck" :disabled="generating"
+                               style="flex-shrink:0;margin-top:2px">
+                        <label for="hardenSSHCheck" style="font-size:12px;cursor:pointer;line-height:1.4">
+                          <span style="font-weight:600;color:#166534">Deshabilitar login root por contraseña SSH</span><br>
+                          <span style="color:#15803d">Aplica <code style="font-size:11px">PermitRootLogin prohibit-password</code> al finalizar.
+                          El acceso por llave sigue funcionando.</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
                   <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
                     <button @click="generateKey()" :disabled="generating || !sshPassword"
@@ -136,8 +148,12 @@
                   <div x-show="genError" x-cloak style="margin-top:10px;font-size:12px;color:var(--c-danger)">
                     <i class="bi bi-x-circle-fill me-1"></i><span x-text="genError"></span>
                   </div>
-                  <div x-show="genOk" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
+                  <div x-show="genOk && !genSshHardened" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
                     <i class="bi bi-check-circle-fill me-1"></i>Llave generada e instalada en el servidor. Ahora haz clic en "Instalar agente" para continuar.
+                  </div>
+                  <div x-show="genOk && genSshHardened" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
+                    <i class="bi bi-check-circle-fill me-1"></i>Llave generada e instalada. Hardening SSH aplicado.
+                    Ahora haz clic en "Instalar agente" para continuar.
                   </div>
                   <div x-show="genWarning" x-cloak style="margin-top:8px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px 12px">
                     <i class="bi bi-exclamation-triangle-fill me-1"></i><span x-text="genWarning"></span>
@@ -196,8 +212,8 @@
             </div>
           </div>
 
-          {# ── Hardening SSH (mostrar tras install exitoso) ── #}
-          <div x-show="installOk === true" x-cloak style="margin-top:16px">
+          {# ── Hardening SSH (mostrar tras install exitoso, solo si no fue aplicado ya) ── #}
+          <div x-show="installOk === true && !hardenDone" x-cloak style="margin-top:16px">
             <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:14px 16px">
               <div style="display:flex;align-items:flex-start;gap:10px">
                 <i class="bi bi-shield-lock-fill" style="color:#b45309;font-size:18px;flex-shrink:0;margin-top:1px"></i>
@@ -722,6 +738,8 @@ function wfSetup() {
     genOk: false,
     genError: '',
     genWarning: '',
+    hardenSSH: true,
+    genSshHardened: false,
     hardenRunning: false,
     hardenDone: false,
     hardenError: '',
@@ -754,10 +772,12 @@ function wfSetup() {
     async generateKey() {
       this.generating = true;
       this.genOk = false;
+      this.genSshHardened = false;
       this.genError = '';
       const body = new URLSearchParams({
-        ssh_port: this.sshPort,
+        ssh_port:   this.sshPort,
         ssh_password: this.sshPassword,
+        harden_ssh: this.hardenSSH ? '1' : '0',
       });
       try {
         const r = await fetch('{{ url_for("modules.wf_generate_key") }}', {
@@ -768,8 +788,13 @@ function wfSetup() {
         const d = await r.json();
         if (d.ok) {
           this.genOk = true;
+          this.genSshHardened = d.ssh_hardened || false;
           this.genWarning = d.warning || '';
           this.sshPassword = '';
+          // Si el hardening ya fue aplicado, marcar también el estado del banner
+          if (d.ssh_hardened) {
+            this.hardenDone = true;
+          }
         } else {
           this.genError = d.error || 'Error desconocido';
         }
