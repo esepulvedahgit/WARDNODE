@@ -21,7 +21,12 @@
 
 <div class="row g-4 site-config-grid">
   <section class="col-xxl-8 col-xl-7">
-    <div class="panel crs-filter-panel" x-data="{ selected: '' }">
+    <div class="panel crs-filter-panel" x-data="{
+      selected: '',
+      toggleAll(state) {
+        this.$el.querySelectorAll('input[name=category_ids]').forEach(cb => cb.checked = state);
+      }
+    }">
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
         <div>
           <h2 class="h5 mb-1">Categorias y subcategorias CRS</h2>
@@ -47,6 +52,16 @@
                 <option value="{{ family }}">{{ family|upper }}</option>
               {% endfor %}
             </select>
+            {% if not current_user.has_role('reader') %}
+            <div class="d-flex gap-2 mt-3">
+              <button type="button" class="btn btn-sm btn-outline-success w-50" @click="toggleAll(true)">
+                <i class="bi bi-check2-all me-1"></i>Activar todas
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-danger w-50" @click="toggleAll(false)">
+                <i class="bi bi-x-lg me-1"></i>Desactivar todas
+              </button>
+            </div>
+            {% endif %}
           </div>
           <div class="crs-rules-viewport">
             <div class="crs-empty-state" x-show="selected === ''">
@@ -177,6 +192,27 @@
 
   <section class="col-xxl-4 col-xl-5">
     <div class="panel">
+      <h2 class="h5 mb-3">Estado del WAF</h2>
+      <form method="post" action="{{ url_for('proxy.update_site_waf', site_id=site.id) }}" class="vstack gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" {% if site.waf_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+          <label class="form-check-label fw-medium" for="waf_enabled">Bloqueo WAF activo</label>
+        </div>
+        <div class="form-text" style="padding-left:2.5rem;margin-top:-8px">
+          {% if site.waf_enabled %}
+            <i class="bi bi-shield-fill-check text-success me-1"></i>SecRuleEngine <code>On</code> — las peticiones maliciosas se bloquean.
+          {% else %}
+            <i class="bi bi-shield text-secondary me-1"></i>SecRuleEngine <code>DetectionOnly</code> — solo registra, no bloquea.
+          {% endif %}
+        </div>
+        {% if not current_user.has_role('reader') %}
+          <button class="btn btn-primary btn-sm" type="submit">Guardar</button>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="panel mt-4">
       <h2 class="h5 mb-3">Politica de trafico</h2>
       <form method="post" action="{{ url_for('proxy.update_site_traffic_policy', site_id=site.id) }}" class="vstack gap-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

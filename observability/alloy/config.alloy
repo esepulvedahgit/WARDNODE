@@ -1,0 +1,156 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// WardNode Observability — Grafana Alloy
+//
+// Recolecta logs de NGINX, ModSecurity v3 y CrowdSec → Loki
+// Recolecta métricas del host (unix exporter) y CrowdSec → Prometheus
+//
+// Labels de Loki en uso (baja cardinalidad):
+//   job, service, waf
+// Campos de alta cardinalidad (src_ip, uri, rule_id…) se mantienen dentro
+// del JSON del log y se consultan con parsers LogQL, no como labels.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Salidas ──────────────────────────────────────────────────────────────────
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+prometheus.remote_write "prometheus" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// ── Logs: ModSecurity v3 (SecAuditLogFormat JSON) ────────────────────────────
+// El volumen modsecurity_logs se monta en /var/log/modsec en el contenedor
+// de Alloy. ModSecurity escribe modsec_audit.log en la raíz del volumen.
+
+local.file_match "modsecurity" {
+  path_targets = [{
+    "__path__" = "/var/log/modsec/modsec_audit.log",
+    "job"      = "modsecurity",
+    "service"  = "nginx",
+    "waf"      = "modsecurity",
+  }]
+}
+
+loki.source.file "modsecurity" {
+  targets    = local.file_match.modsecurity.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── Logs: NGINX access (formato json_combined) ────────────────────────────────
+
+local.file_match "nginx_access" {
+  path_targets = [{
+    "__path__" = "/var/log/nginx/access.json",
+    "job"      = "nginx_access",
+    "service"  = "nginx",
+  }]
+}
+
+loki.source.file "nginx_access" {
+  targets    = local.file_match.nginx_access.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── Logs: NGINX error log ─────────────────────────────────────────────────────
+
+local.file_match "nginx_error" {
+  path_targets = [{
+    "__path__" = "/var/log/nginx/error.log",
+    "job"      = "nginx_error",
+    "service"  = "nginx",
+  }]
+}
+
+loki.source.file "nginx_error" {
+  targets    = local.file_match.nginx_error.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── Logs: CrowdSec ────────────────────────────────────────────────────────────
+// Bind mount desde el host: /var/log/crowdsec/crowdsec.log
+
+local.file_match "crowdsec" {
+  path_targets = [{
+    "__path__" = "/var/log/crowdsec/crowdsec.log",
+    "job"      = "crowdsec",
+    "service"  = "crowdsec",
+  }]
+}
+
+loki.source.file "crowdsec" {
+  targets    = local.file_match.crowdsec.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── Métricas del host (reemplaza node-exporter) ───────────────────────────────
+// Requiere montajes: /proc:/host/proc:ro  /sys:/host/sys:ro  /:/rootfs:ro
+// Colectores deshabilitados: los que no aplican a este servidor.
+
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/rootfs"
+
+  disable_collectors = [
+    "arp",
+    "bcache",
+    "bonding",
+    "btrfs",
+    "cpufreq",
+    "drbd",
+    "fibrechannel",
+    "infiniband",
+    "ipvs",
+    "nfs",
+    "nfsd",
+    "nvme",
+    "powersupplyclass",
+    "rapl",
+    "schedstat",
+    "selinux",
+    "softnet",
+    "tapestats",
+    "textfile",
+    "thermal_zone",
+    "udp_queues",
+    "zfs",
+  ]
+}
+
+prometheus.scrape "host_metrics" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+  job_name        = "node"
+  scrape_interval = "15s"
+}
+
+// ── Métricas: CrowdSec Prometheus endpoint ────────────────────────────────────
+// CrowdSec expone /metrics en el puerto 6060 (configurable con CROWDSEC_METRICS_ADDR).
+
+prometheus.scrape "crowdsec_metrics" {
+  targets = [{
+    "__address__" = "host.docker.internal:6060",
+  }]
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+  job_name        = "crowdsec"
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+}
+
+// ── Auto-observabilidad: métricas del propio Alloy ────────────────────────────
+
+prometheus.scrape "alloy_self" {
+  targets = [{
+    "__address__" = "127.0.0.1:12345",
+  }]
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+  job_name        = "alloy"
+  metrics_path    = "/metrics"
+  scrape_interval = "60s"
+}

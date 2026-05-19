@@ -29,7 +29,7 @@ _REASON_RE = re.compile(r"^[\w\-]{1,64}$")
 ACTIONS = {"status", "allow_port", "deny_port", "allow_ip", "deny_ip", "delete_rule",
            "check_defaults", "init_firewall",
            "cs_status", "cs_decisions", "cs_ban", "cs_unban",
-           "cs_stop_services", "cs_start_services",
+           "cs_stop_services", "cs_start_services", "cs_restart_services",
            "get_ipv6_status", "set_ipv6"}
 
 
@@ -137,6 +137,7 @@ def handle(cmd: dict) -> dict:
             _ufw("allow", f"{ssh_port}/tcp"),
             _ufw("allow", "80/tcp"),
             _ufw("allow", "443/tcp"),
+            _ufw("--force", "enable"),
         ]
         output = "\n".join(s.get("output", "") for s in steps)
         ok = all(s.get("ok") for s in steps)
@@ -145,7 +146,7 @@ def handle(cmd: dict) -> dict:
     if action == "cs_status":
         version = _cscli("version")
         if not version.get("ok"):
-            return {"ok": False, "error": version.get("error", "CrowdSec no instalado — ejecuta la instalación desde el panel")}
+            return {"ok": False, "error": version.get("error", "CrowdSec no disponible — reinstala el agente WF desde el panel")}
         svc = subprocess.run(
             ["systemctl", "is-active", "crowdsec"],
             capture_output=True, text=True,
@@ -202,6 +203,23 @@ def handle(cmd: dict) -> dict:
                     return {"ok": False, "error": f"Fallo en '{act} {tgt}'", "output": "\n".join(outputs)}
             except subprocess.TimeoutExpired:
                 return {"ok": False, "error": f"Timeout al ejecutar '{act} {tgt}'"}
+            except FileNotFoundError:
+                return {"ok": False, "error": "Script de control CS no encontrado — reinstala el agente WF"}
+        return {"ok": True, "output": "\n".join(o for o in outputs if o)}
+
+    if action == "cs_restart_services":
+        outputs = []
+        for tgt in ["crowdsec", "bouncer"]:
+            try:
+                r = subprocess.run(
+                    ["/opt/wardnode/wardnode-cs-control.sh", "restart", tgt],
+                    capture_output=True, text=True, timeout=30,
+                )
+                outputs.append((r.stdout or r.stderr).strip())
+                if r.returncode != 0:
+                    return {"ok": False, "error": f"Fallo al reiniciar '{tgt}'", "output": "\n".join(outputs)}
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "error": f"Timeout al reiniciar '{tgt}'"}
             except FileNotFoundError:
                 return {"ok": False, "error": "Script de control CS no encontrado — reinstala el agente WF"}
         return {"ok": True, "output": "\n".join(o for o in outputs if o)}

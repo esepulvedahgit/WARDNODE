@@ -168,8 +168,8 @@ def _render_site_config(site: Site) -> str:
 {custom_rules}
     ';
 
-    access_log /dev/stdout combined;
-    error_log /dev/stderr warn;
+    access_log /var/log/nginx/access.json json_combined;
+    error_log /var/log/nginx/error.log warn;
 
 {security_header_directives}
 {server_extra}
@@ -226,8 +226,8 @@ def _render_site_config(site: Site) -> str:
 {custom_rules}
     ';
 
-    access_log /dev/stdout combined;
-    error_log /dev/stderr warn;
+    access_log /var/log/nginx/access.json json_combined;
+    error_log /var/log/nginx/error.log warn;
 
 {security_header_directives}
 {server_extra}
@@ -354,7 +354,9 @@ def provision_letsencrypt(site: Site, email: str) -> tuple[bool, str]:
     from app.proxy.geoip_blocklist import reload_nginx
 
     render_nginx_configs()
-    reload_nginx()
+    ok_reload, err_reload = reload_nginx()
+    if not ok_reload:
+        return False, f"Nginx no recargó para servir el challenge ACME: {err_reload}"
 
     try:
         import docker as docker_sdk

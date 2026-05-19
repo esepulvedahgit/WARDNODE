@@ -76,7 +76,7 @@ class Site(db.Model, TimestampMixin):
     name = db.Column(db.String(120), nullable=False)
     domain = db.Column(db.String(255), unique=True, nullable=False, index=True)
     upstream_url = db.Column(db.String(500), nullable=False)
-    waf_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    waf_enabled = db.Column(db.Boolean, default=False, nullable=False)
     letsencrypt_enabled = db.Column(db.Boolean, default=False, nullable=False)
     letsencrypt_status = db.Column(db.String(20), nullable=False, default="none")
     letsencrypt_error = db.Column(db.Text, nullable=True)
@@ -182,7 +182,7 @@ class RuleCategory(db.Model, TimestampMixin):
     name = db.Column(db.String(160), nullable=False)
     description = db.Column(db.Text, nullable=False, default="")
     crs_tag = db.Column(db.String(160), nullable=False)
-    enabled_by_default = db.Column(db.Boolean, default=True, nullable=False)
+    enabled_by_default = db.Column(db.Boolean, default=False, nullable=False)
 
     site_settings = db.relationship(
         "SiteRuleSetting",
@@ -249,6 +249,17 @@ class AppConfig(db.Model, TimestampMixin):
     def get(cls, key: str) -> str | None:
         row = db.session.execute(db.select(cls).filter_by(key=key)).scalar_one_or_none()
         return row.value if row else None
+
+    @classmethod
+    def get_secret(cls, key: str) -> str | None:
+        """Como get(), pero auto-descifra si la fila tiene encrypted=True."""
+        from app.encryption import decrypt_secret
+        row = db.session.execute(db.select(cls).filter_by(key=key)).scalar_one_or_none()
+        if row is None:
+            return None
+        if row.encrypted:
+            return decrypt_secret(row.value)
+        return row.value
 
     @classmethod
     def set(cls, key: str, value: str | None, encrypted: bool = False) -> None:

@@ -15,7 +15,8 @@ RUN apt-get update \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 1500 wardnode 2>/dev/null || true
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

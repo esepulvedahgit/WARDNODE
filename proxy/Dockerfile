@@ -37,3 +37,4 @@ RUN apt-get update \
 
 COPY modsecurity/modsecurity-override.conf /etc/modsecurity.d/zz-defenza-override.conf
 COPY conf.d/generated.conf /etc/nginx/templates/conf.d/generated.conf.template
+COPY conf.d/log-format.conf /etc/nginx/conf.d/00-log-format.conf

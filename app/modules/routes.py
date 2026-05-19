@@ -109,7 +109,8 @@ def _wf_required():
 def wf_index():
     if (r := _wf_required()):
         return r
-    return render_template("modules/wf.html", socket_path=SOCKET_PATH)
+    ssh_hardened = AppConfig.get("wf_ssh_hardened") == "1"
+    return render_template("modules/wf.html", socket_path=SOCKET_PATH, ssh_hardened=ssh_hardened)
 
 
 _SSH_USER_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
@@ -118,8 +119,49 @@ _AGENT_FILES = [
     "/app/host-agent/wardnode-wf-agent.py",
     "/app/host-agent/wardnode-wf.service",
     "/app/host-agent/wardnode-set-ipv6.sh",
+    "/app/host-agent/wardnode-cs-control.sh",
     "/app/host-agent/install.sh",
 ]
+
+
+def _make_ssh_client(ssh_host: str, ssh_port: int):
+    """Devuelve (client, stored_b64, policy) con política TOFU de host key.
+
+    Primera conexión: captura y almacena el fingerprint del host en AppConfig.
+    Conexiones posteriores: verifica contra el fingerprint almacenado y rechaza
+    si no coincide (posible MITM).
+    """
+    import base64
+    import paramiko as _pm
+
+    stored_b64 = AppConfig.get("wf_ssh_host_key")
+    client = _pm.SSHClient()
+
+    class _FirstUsePolicy(_pm.MissingHostKeyPolicy):
+        captured = None
+
+        def missing_host_key(self, c, h, k):
+            self.captured = k  # Captura para persistir después del connect
+
+    class _VerifyPolicy(_pm.MissingHostKeyPolicy):
+        def missing_host_key(self, c, hostname, key):
+            incoming = base64.b64encode(key.asbytes()).decode()
+            if incoming != stored_b64:
+                raise _pm.SSHException(
+                    f"Fingerprint del host '{hostname}:{ssh_port}' no coincide con el registrado. "
+                    "Si el host cambió su clave SSH, elimina 'wf_ssh_host_key' en la configuración de la app."
+                )
+
+    policy = _VerifyPolicy() if stored_b64 else _FirstUsePolicy()
+    client.set_missing_host_key_policy(policy)
+    return client, stored_b64, policy
+
+
+def _tofu_persist(stored_b64, policy) -> None:
+    """Si fue primera conexión TOFU, persiste el host key capturado en AppConfig."""
+    import base64
+    if stored_b64 is None and getattr(policy, "captured", None) is not None:
+        AppConfig.set("wf_ssh_host_key", base64.b64encode(policy.captured.asbytes()).decode())
 
 
 @bp.post("/wf/install")
@@ -131,12 +173,21 @@ def wf_install():
         return jsonify({"ok": False, "error": "Dependencia 'paramiko' no instalada en el contenedor."}), 500
 
     ssh_host = _SSH_HOST
-    ssh_port_raw = request.form.get("ssh_port", "22").strip() or "22"
     ssh_user = "root"
     ssh_key_text = request.form.get("ssh_key", "").strip()
 
     if not ssh_key_text:
+        try:
+            ssh_key_text = AppConfig.get_secret("wf_ssh_private_key") or ""
+        except Exception:
+            ssh_key_text = ""
+    if not ssh_key_text:
         return jsonify({"ok": False, "error": "Clave SSH requerida"}), 400
+
+    ssh_port_raw = request.form.get("ssh_port", "").strip()
+    if not ssh_port_raw:
+        ssh_port_raw = AppConfig.get("wf_ssh_port") or "22"
+
     try:
         ssh_port = int(ssh_port_raw)
         if not (1 <= ssh_port <= 65535):
@@ -154,11 +205,10 @@ def wf_install():
     if key is None:
         return jsonify({"ok": False, "error": "Clave SSH inválida o formato no reconocido (RSA, Ed25519, ECDSA)"}), 400
 
-    tmp_dir = f"/tmp/wardnode_install_{int(time.time())}"
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client, stored_b64, tofu_policy = _make_ssh_client(ssh_host, ssh_port)
     try:
         client.connect(ssh_host, port=ssh_port, username=ssh_user, pkey=key, timeout=15)
+        _tofu_persist(stored_b64, tofu_policy)
 
         _, _so, _ = client.exec_command("sudo -n true 2>&1", timeout=10)
         if _so.channel.recv_exit_status() != 0:
@@ -172,8 +222,11 @@ def wf_install():
                 )
             }), 400
 
-        _, out, _ = client.exec_command(f"mkdir -p {tmp_dir}")
-        out.channel.recv_exit_status()
+        _, mktemp_out, _ = client.exec_command("mktemp -d /tmp/wardnode_XXXXXX", timeout=10)
+        mktemp_out.channel.recv_exit_status()
+        tmp_dir = mktemp_out.read().decode().strip()
+        if not tmp_dir or not tmp_dir.startswith("/tmp/wardnode_"):
+            return jsonify({"ok": False, "error": "No se pudo crear directorio temporal seguro en el host"}), 500
 
         sftp = client.open_sftp()
         for local_path in _AGENT_FILES:
@@ -181,7 +234,7 @@ def wf_install():
         sftp.close()
 
         _, stdout, _ = client.exec_command(
-            f"cd {tmp_dir} && sudo bash install.sh 2>&1", timeout=120
+            f"cd {tmp_dir} && sudo bash install.sh 2>&1", timeout=240
         )
         exit_code = stdout.channel.recv_exit_status()
         output = stdout.read().decode("utf-8", errors="replace")
@@ -193,7 +246,26 @@ def wf_install():
             return jsonify({"ok": False, "output": output, "error": f"El script terminó con código {exit_code}"}), 500
 
         client.close()
-        return jsonify({"ok": True, "output": output})
+
+        from app.encryption import encrypt_secret, EncryptionNotConfigured
+        key_stored = True
+        try:
+            AppConfig.set("wf_ssh_private_key", encrypt_secret(ssh_key_text), encrypted=True)
+            AppConfig.set("wf_ssh_port", ssh_port_raw)
+        except EncryptionNotConfigured:
+            key_stored = False
+
+        # Limpiar flag de hardening si es una reinstalación (el host puede haber cambiado)
+        AppConfig.set("wf_ssh_hardened", "0")
+
+        return jsonify({
+            "ok": True,
+            "output": output,
+            "warning": None if key_stored else (
+                "WARDNODE_SECRET_KEY no configurada — la clave SSH NO fue almacenada. "
+                "Configura la variable y reinstala."
+            ),
+        })
 
     except paramiko.AuthenticationException:
         return jsonify({"ok": False, "error": "Autenticación SSH fallida — verifica usuario y clave privada"}), 401
@@ -201,6 +273,97 @@ def wf_install():
         return jsonify({"ok": False, "error": f"Error de conexión SSH: {e}"}), 500
     except FileNotFoundError as e:
         return jsonify({"ok": False, "error": f"Archivo del agente no encontrado en el contenedor: {e}"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+@bp.post("/wf/generate-key")
+@roles_required(ROLE_ADMIN)
+def wf_generate_key():
+    """Genera par RSA-4096, instala la pública en el host vía password SSH
+    y almacena la privada cifrada en AppConfig. No retorna la clave al frontend."""
+    try:
+        import paramiko
+    except ImportError:
+        return jsonify({"ok": False, "error": "Dependencia 'paramiko' no instalada en el contenedor."}), 500
+
+    ssh_port_raw = request.form.get("ssh_port", "22").strip() or "22"
+    ssh_password = request.form.get("ssh_password", "").strip()
+
+    if not ssh_password:
+        return jsonify({"ok": False, "error": "Contraseña root requerida"}), 400
+    try:
+        ssh_port = int(ssh_port_raw)
+        if not (1 <= ssh_port <= 65535):
+            raise ValueError
+    except ValueError:
+        return jsonify({"ok": False, "error": "Puerto SSH inválido"}), 400
+
+    key = paramiko.RSAKey.generate(4096)
+
+    key_io = io.StringIO()
+    key.write_private_key(key_io)
+    private_pem = key_io.getvalue()
+
+    pub_key = f"{key.get_name()} {key.get_base64()} wardnode-generated"
+
+    client, stored_b64, tofu_policy = _make_ssh_client(_SSH_HOST, ssh_port)
+    try:
+        client.connect(
+            _SSH_HOST, port=ssh_port, username="root",
+            password=ssh_password, timeout=15,
+            look_for_keys=False, allow_agent=False,
+        )
+        _tofu_persist(stored_b64, tofu_policy)
+
+        # Crear /root/.ssh con permisos (sin datos de usuario interpolados en el comando)
+        _, out, _ = client.exec_command("mkdir -p /root/.ssh && chmod 700 /root/.ssh", timeout=10)
+        out.channel.recv_exit_status()
+
+        # Escribir authorized_keys vía SFTP — elimina el riesgo de shell injection
+        sftp = client.open_sftp()
+        try:
+            try:
+                with sftp.open("/root/.ssh/authorized_keys", "r") as f:
+                    existing = f.read().decode("utf-8", errors="replace")
+            except OSError:
+                existing = ""
+
+            if pub_key not in existing:
+                new_content = (existing.rstrip("\n") + "\n" + pub_key + "\n") if existing else (pub_key + "\n")
+                with sftp.open("/root/.ssh/authorized_keys", "w") as f:
+                    f.write(new_content.encode())
+        finally:
+            sftp.close()
+
+        _, out, _ = client.exec_command("chmod 600 /root/.ssh/authorized_keys", timeout=10)
+        out.channel.recv_exit_status()
+
+        from app.encryption import encrypt_secret, EncryptionNotConfigured
+        key_stored = True
+        try:
+            AppConfig.set("wf_ssh_private_key", encrypt_secret(private_pem), encrypted=True)
+            AppConfig.set("wf_ssh_port", ssh_port_raw)
+        except EncryptionNotConfigured:
+            key_stored = False
+
+        return jsonify({
+            "ok": True,
+            "warning": None if key_stored else (
+                "WARDNODE_SECRET_KEY no configurada — la clave SSH NO fue almacenada. "
+                "Configura la variable y reinstala para habilitar auto-reutilización en CS."
+            ),
+        })
+
+    except paramiko.AuthenticationException:
+        return jsonify({"ok": False, "error": "Contraseña root incorrecta"}), 401
+    except (paramiko.SSHException, OSError) as e:
+        return jsonify({"ok": False, "error": f"Error de conexión SSH: {e}"}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     finally:
@@ -311,13 +474,79 @@ def wf_set_ipv6():
     return jsonify(send_command("set_ipv6", enabled=(enabled_str == "true")))
 
 
-# ── WardNode CS ───────────────────────────────────────────────────────
+@bp.post("/wf/harden-ssh")
+@roles_required(ROLE_ADMIN)
+def wf_harden_ssh():
+    """Aplica PermitRootLogin prohibit-password en sshd_config del host (login root solo por llave)."""
+    if AppConfig.get("module_wf_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
 
-_CS_FILES = [
-    "/app/host-agent/wardnode-cs-install.sh",
-    "/app/host-agent/sudoers-wardnode-cs",
-    "/app/host-agent/wardnode-cs-control.sh",
-]
+    try:
+        import paramiko
+    except ImportError:
+        return jsonify({"ok": False, "error": "Dependencia 'paramiko' no instalada en el contenedor."}), 500
+
+    ssh_port_raw = AppConfig.get("wf_ssh_port") or "22"
+    try:
+        ssh_port = int(ssh_port_raw)
+        if not (1 <= ssh_port <= 65535):
+            raise ValueError
+    except ValueError:
+        return jsonify({"ok": False, "error": "Puerto SSH inválido en configuración"}), 400
+
+    try:
+        ssh_key_text = AppConfig.get_secret("wf_ssh_private_key") or ""
+    except Exception:
+        ssh_key_text = ""
+    if not ssh_key_text:
+        return jsonify({"ok": False, "error": "Clave SSH no disponible — genera una desde el módulo WF"}), 400
+
+    key = None
+    for key_cls in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
+        try:
+            key = key_cls.from_private_key(io.StringIO(ssh_key_text))
+            break
+        except Exception:
+            continue
+    if key is None:
+        return jsonify({"ok": False, "error": "Clave SSH almacenada no es válida"}), 400
+
+    client, stored_b64, tofu_policy = _make_ssh_client(_SSH_HOST, ssh_port)
+    try:
+        client.connect(_SSH_HOST, port=ssh_port, username="root", pkey=key, timeout=15)
+        _tofu_persist(stored_b64, tofu_policy)
+
+        # Actualizar PermitRootLogin si existe la directiva, añadirla si no
+        harden_cmd = (
+            "grep -qE '^\\s*PermitRootLogin' /etc/ssh/sshd_config "
+            "&& sed -i 's/^\\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config "
+            "|| echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; "
+            "systemctl reload sshd && echo 'SSH hardening aplicado'"
+        )
+        _, stdout, _ = client.exec_command(harden_cmd, timeout=15)
+        exit_code = stdout.channel.recv_exit_status()
+        output = stdout.read().decode("utf-8", errors="replace").strip()
+
+        if exit_code != 0:
+            return jsonify({"ok": False, "error": f"Falló al modificar sshd_config: {output}"}), 500
+
+        AppConfig.set("wf_ssh_hardened", "1")
+        return jsonify({"ok": True, "output": output})
+
+    except paramiko.AuthenticationException:
+        return jsonify({"ok": False, "error": "Autenticación SSH fallida"}), 401
+    except (paramiko.SSHException, OSError) as e:
+        return jsonify({"ok": False, "error": f"Error de conexión SSH: {e}"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+# ── WardNode CS ───────────────────────────────────────────────────────
 
 _CS_DURATION_VALUES = {"1h", "24h", "7d", "0s"}
 _CS_REASON_RE = re.compile(r"^[\w\-]{1,64}$")
@@ -338,99 +567,6 @@ def cs_index():
     if (r := _cs_required()):
         return r
     return render_template("modules/cs.html", socket_path=SOCKET_PATH)
-
-
-@bp.post("/cs/install")
-@roles_required(ROLE_ADMIN)
-def cs_install():
-    if AppConfig.get("module_wf_enabled") != "1":
-        return jsonify({"ok": False, "error": "WardNode WF no está activo"}), 403
-    if AppConfig.get("module_cs_enabled") != "1":
-        return jsonify({"ok": False, "error": "Módulo CS no habilitado"}), 403
-
-    try:
-        import paramiko
-    except ImportError:
-        return jsonify({"ok": False, "error": "Dependencia 'paramiko' no instalada en el contenedor."}), 500
-
-    ssh_host = _SSH_HOST
-    ssh_port_raw = request.form.get("ssh_port", "22").strip() or "22"
-    ssh_user = "root"
-    ssh_key_text = request.form.get("ssh_key", "").strip()
-
-    if not ssh_key_text:
-        return jsonify({"ok": False, "error": "Clave SSH requerida"}), 400
-    try:
-        ssh_port = int(ssh_port_raw)
-        if not (1 <= ssh_port <= 65535):
-            raise ValueError
-    except ValueError:
-        return jsonify({"ok": False, "error": "Puerto SSH inválido"}), 400
-
-    key = None
-    for key_cls in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
-        try:
-            key = key_cls.from_private_key(io.StringIO(ssh_key_text))
-            break
-        except Exception:
-            continue
-    if key is None:
-        return jsonify({"ok": False, "error": "Clave SSH inválida o formato no reconocido (RSA, Ed25519, ECDSA)"}), 400
-
-    tmp_dir = f"/tmp/wardnode_cs_install_{int(time.time())}"
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        client.connect(ssh_host, port=ssh_port, username=ssh_user, pkey=key, timeout=15)
-
-        _, _so, _ = client.exec_command("sudo -n true 2>&1", timeout=10)
-        if _so.channel.recv_exit_status() != 0:
-            client.close()
-            return jsonify({
-                "ok": False,
-                "error": (
-                    f"El usuario '{ssh_user}' requiere contraseña para sudo. "
-                    "Usa root, o un usuario con NOPASSWD en sudoers "
-                    "(ej: usuario ALL=(ALL) NOPASSWD: ALL)."
-                )
-            }), 400
-
-        _, out, _ = client.exec_command(f"mkdir -p {tmp_dir}")
-        out.channel.recv_exit_status()
-
-        sftp = client.open_sftp()
-        for local_path in _CS_FILES:
-            sftp.put(local_path, f"{tmp_dir}/{os.path.basename(local_path)}")
-        sftp.close()
-
-        _, stdout, _ = client.exec_command(
-            f"cd {tmp_dir} && sudo bash wardnode-cs-install.sh 2>&1", timeout=180
-        )
-        exit_code = stdout.channel.recv_exit_status()
-        output = stdout.read().decode("utf-8", errors="replace")
-
-        client.exec_command(f"rm -rf {tmp_dir}")
-
-        if exit_code != 0:
-            client.close()
-            return jsonify({"ok": False, "output": output, "error": f"El script terminó con código {exit_code}"}), 500
-
-        client.close()
-        return jsonify({"ok": True, "output": output})
-
-    except paramiko.AuthenticationException:
-        return jsonify({"ok": False, "error": "Autenticación SSH fallida — verifica usuario y clave privada"}), 401
-    except (paramiko.SSHException, OSError) as e:
-        return jsonify({"ok": False, "error": f"Error de conexión SSH: {e}"}), 500
-    except FileNotFoundError as e:
-        return jsonify({"ok": False, "error": f"Archivo del agente no encontrado en el contenedor: {e}"}), 500
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
 
 
 @bp.post("/cs/status")
@@ -485,20 +621,71 @@ def _obs_required():
     return None
 
 
+_OBS_NGINX_CONF = (
+    "# WardNode OBS — Grafana reverse proxy (auto-generated)\n"
+    "server {\n"
+    "    listen 80;\n"
+    "    server_name _;\n"
+    "\n"
+    "    resolver 127.0.0.11 valid=10s ipv6=off;\n"
+    "\n"
+    "    location /obs/ {\n"
+    "        modsecurity off;\n"
+    "        set $grafana_upstream http://grafana:3000;\n"
+    "        proxy_pass         $grafana_upstream$request_uri;\n"
+    "        proxy_set_header   Host              $host;\n"
+    "        proxy_set_header   X-Real-IP         $remote_addr;\n"
+    "        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;\n"
+    "        proxy_set_header   X-Forwarded-Proto $scheme;\n"
+    "        proxy_set_header   X-WEBAUTH-USER    admin;\n"
+    "        proxy_http_version 1.1;\n"
+    "        proxy_set_header   Upgrade           $http_upgrade;\n"
+    "        proxy_set_header   Connection        \"upgrade\";\n"
+    "        proxy_read_timeout 300s;\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def _inject_obs_nginx_conf(docker_client) -> bool:
+    """Inyecta obs.conf en el proxy si no existe y hace reload.
+    Retorna True si obs.conf ya estaba o fue inyectado con éxito."""
+    import tarfile
+
+    try:
+        proxy = docker_client.containers.get("wardnode-proxy")
+        # Verificar si el contenido actual coincide con el esperado
+        exit_code, current = proxy.exec_run("cat /etc/nginx/conf.d/obs.conf")
+        if exit_code == 0 and current.decode("utf-8", errors="replace") == _OBS_NGINX_CONF:
+            return True  # Ya existe y está actualizado
+
+        buf = io.BytesIO()
+        conf_bytes = _OBS_NGINX_CONF.encode()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            info = tarfile.TarInfo(name="obs.conf")
+            info.size = len(conf_bytes)
+            tar.addfile(info, io.BytesIO(conf_bytes))
+        buf.seek(0)
+        proxy.put_archive("/etc/nginx/conf.d/", buf)
+        proxy.exec_run("nginx -s reload")
+        return True
+    except Exception:
+        return False
+
+
 @bp.post("/obs/activate")
 @roles_required(ROLE_ADMIN)
 def obs_activate():
     import os
     import subprocess
     import time
-    import urllib.request as _ur
 
     try:
         import docker as docker_sdk
     except ImportError:
         return jsonify({"ok": False, "step": "docker", "error": "SDK de Docker no instalado en el contenedor"}), 500
 
-    _OBS_CONTAINERS = ["wardnode-loki", "wardnode-grafana", "wardnode-fluent-bit"]
+    _OBS_CONTAINERS = ["wardnode-loki", "wardnode-grafana", "wardnode-alloy", "wardnode-prometheus"]
 
     try:
         client = docker_sdk.from_env()
@@ -527,7 +714,7 @@ def obs_activate():
                 "error": (
                     "Los contenedores OBS no existen todavía y la variable "
                     "WARDNODE_PROJECT_DIR no está configurada en el servidor. "
-                    "Añádela al archivo .env.prod apuntando al directorio del proyecto "
+                    "Añádela al archivo .env apuntando al directorio del proyecto "
                     "(ej: WARDNODE_PROJECT_DIR=/opt/wardnode) y reinicia el contenedor consola."
                 ),
             }), 500
@@ -571,50 +758,37 @@ def obs_activate():
                 "error": f"docker compose falló (código {result.returncode}): {err_output[:500]}",
             }), 500
 
-    # ── Fase 3: esperar a que los servicios estén listos (máx 90 s) ───────
-    loki_ok = False
-    grafana_ok = False
-    fluentbit_ok = False
-    deadline = time.time() + 90
-
+    # ── Fase 3: verificar que los contenedores estén corriendo (máx 30 s) ──
+    deadline = time.time() + 30
     while time.time() < deadline:
-        if not loki_ok:
-            try:
-                with _ur.urlopen("http://loki:3100/ready", timeout=3) as r:
-                    loki_ok = r.status == 200
-            except Exception:
-                pass
-        if not grafana_ok:
-            try:
-                with _ur.urlopen("http://grafana:3000/api/health", timeout=3) as r:
-                    grafana_ok = r.status == 200
-            except Exception:
-                pass
-        if not fluentbit_ok:
-            try:
-                with _ur.urlopen("http://fluent-bit:2020/api/v1/health", timeout=3) as r:
-                    fluentbit_ok = r.status == 200
-            except Exception:
-                pass
-        if loki_ok and grafana_ok and fluentbit_ok:
-            break
+        try:
+            all_running = all(
+                client.containers.get(name).status == "running"
+                for name in _OBS_CONTAINERS
+            )
+            if all_running:
+                break
+        except Exception:
+            pass
         time.sleep(3)
-
-    not_ready = [
-        s for s, ok in [("Loki", loki_ok), ("Grafana", grafana_ok), ("Fluent Bit", fluentbit_ok)]
-        if not ok
-    ]
-    if not_ready:
-        svc = " y ".join(not_ready)
+    else:
+        not_running = []
+        for name in _OBS_CONTAINERS:
+            try:
+                c = client.containers.get(name)
+                if c.status != "running":
+                    not_running.append(f"{name} ({c.status})")
+            except Exception:
+                not_running.append(f"{name} (no encontrado)")
         return jsonify({
             "ok": False,
             "step": "health",
-            "error": (
-                f"{svc} no responde{'n' if len(not_ready) > 1 else ''} después de 90 s. "
-                "Los contenedores pueden estar arrancando lentamente en el primer inicio. "
-                "Espera unos segundos y vuelve a intentarlo."
-            ),
+            "error": f"Contenedores no arrancaron: {', '.join(not_running)}. "
+                     "Revisa logs con: docker logs <nombre>",
         }), 500
+
+    # ── Fase 4: inyectar obs.conf en el proxy y recargar ───────────────
+    _inject_obs_nginx_conf(client)
 
     AppConfig.set("module_obs_enabled", "1")
     return jsonify({"ok": True})
@@ -632,24 +806,94 @@ def obs_index():
 @roles_required(ROLE_ADMIN)
 def obs_status():
     if AppConfig.get("module_obs_enabled") != "1":
-        return jsonify({"ok": False, "loki": False, "grafana": False, "fluentbit": False, "error": "Módulo OBS no habilitado"}), 403
-    import urllib.request as _ur
-    loki_ok = False
-    grafana_ok = False
-    fluentbit_ok = False
+        return jsonify({"ok": False, "loki": False, "grafana": False, "alloy": False,
+                        "prometheus": False, "error": "Módulo OBS no habilitado"}), 403
     try:
-        with _ur.urlopen("http://loki:3100/ready", timeout=5) as r:
-            loki_ok = r.status == 200
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+    except Exception:
+        return jsonify({"ok": False, "loki": False, "grafana": False, "alloy": False,
+                        "prometheus": False, "error": "Docker no disponible"}), 500
+
+    def _is_running(name):
+        try:
+            return client.containers.get(name).status == "running"
+        except Exception:
+            return False
+
+    loki_ok = _is_running("wardnode-loki")
+    grafana_ok = _is_running("wardnode-grafana")
+    alloy_ok = _is_running("wardnode-alloy")
+    prometheus_ok = _is_running("wardnode-prometheus")
+
+    # Re-inyectar obs.conf si el proxy fue reiniciado y lo perdió
+    if grafana_ok:
+        _inject_obs_nginx_conf(client)
+
+    return jsonify({
+        "ok": loki_ok and grafana_ok and alloy_ok and prometheus_ok,
+        "loki": loki_ok,
+        "grafana": grafana_ok,
+        "alloy": alloy_ok,
+        "prometheus": prometheus_ok,
+    })
+
+
+# ── WardNode SYS — Contenedores ───────────────────────────────────────
+
+def _sys_container_states() -> dict:
+    """Retorna estado de cada servicio gestionable. Una sola llamada Docker SDK."""
+    running = set()
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        running = {c.name for c in client.containers.list()}
     except Exception:
         pass
-    try:
-        with _ur.urlopen("http://grafana:3000/api/health", timeout=5) as r:
-            grafana_ok = r.status == 200
-    except Exception:
-        pass
-    try:
-        with _ur.urlopen("http://fluent-bit:2020/api/v1/health", timeout=5) as r:
-            fluentbit_ok = r.status == 200
-    except Exception:
-        pass
-    return jsonify({"ok": loki_ok and grafana_ok and fluentbit_ok, "loki": loki_ok, "grafana": grafana_ok, "fluentbit": fluentbit_ok})
+    return {
+        "proxy":      "wardnode-proxy"      in running,
+        "loki":       "wardnode-loki"       in running,
+        "grafana":    "wardnode-grafana"    in running,
+        "alloy":      "wardnode-alloy"      in running,
+        "prometheus": "wardnode-prometheus" in running,
+        "crowdsec":   AppConfig.get("module_cs_enabled") == "1",
+        "fluent-bit": "wardnode-fluent-bit" in running,
+    }
+
+
+@bp.get("/sys/")
+@roles_required(ROLE_ADMIN)
+def sys_index():
+    wf_active = AppConfig.get("module_wf_enabled") == "1"
+    return render_template("modules/sys.html", states=_sys_container_states(), wf_active=wf_active)
+
+
+@bp.get("/sys/status")
+@roles_required(ROLE_ADMIN)
+def sys_status():
+    return jsonify(_sys_container_states())
+
+
+@bp.post("/sys/restart/<target>")
+@roles_required(ROLE_ADMIN)
+def sys_restart(target: str):
+    _DOCKER_TARGETS = {"proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit"}
+
+    if target == "crowdsec":
+        result = send_command("cs_restart_services")
+        if result.get("ok"):
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": result.get("error", "Error al reiniciar CrowdSec")}), 500
+
+    if target in _DOCKER_TARGETS:
+        container_name = f"wardnode-{target}"
+        try:
+            import docker as docker_sdk
+            client = docker_sdk.from_env()
+            container = client.containers.get(container_name)
+            container.restart(timeout=30)
+            return jsonify({"ok": True})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": False, "error": "Target desconocido"}), 400

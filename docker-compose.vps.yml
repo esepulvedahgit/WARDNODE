@@ -6,7 +6,7 @@ services:
     image: wardnode-console:prod
     container_name: wardnode-console
     restart: unless-stopped
-    env_file: .env.prod
+    env_file: .env
     environment:
       FLASK_ENV: production
       WF_SOCKET_PATH: /app/sockets/wardnode-wf.sock
@@ -14,10 +14,13 @@ services:
       - "5000:5000"
     volumes:
       - proxy_generated:/app/generated/nginx
+      - fluent_bit_config:/app/generated/fluent-bit
       - geoip_data:/app/data/geoip
       - /var/run/docker.sock:/var/run/docker.sock
       - /run/wardnode:/app/sockets:rw
       - ${WARDNODE_PROJECT_DIR:-/opt/wardnode}:${WARDNODE_PROJECT_DIR:-/opt/wardnode}:ro
+    group_add:
+      - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -35,12 +38,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: "127.0.0.1:24224"
-        tag: "wardnode.console"
-        fluentd-async: "true"
 
   proxy:
     image: wardnode-proxy:prod
@@ -57,17 +54,10 @@ services:
       - ./certs:/etc/nginx/certs:ro
       - proxy_logs:/var/log/nginx
       - modsecurity_logs:/var/log
-      - ./observability/nginx-obs.conf:/etc/nginx/conf.d/obs.conf:ro
     depends_on:
       - console
     networks:
       - wardnode_internal
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: "127.0.0.1:24224"
-        tag: "wardnode.proxy"
-        fluentd-async: "true"
 
   certbot:
     image: certbot/certbot:latest
@@ -81,7 +71,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file: .env.prod
+    env_file: .env
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -93,27 +83,36 @@ services:
       retries: 10
 
   # ── WardNode OBS — Observabilidad (perfil opcional) ──────────────────
-  fluent-bit:
-    image: fluent/fluent-bit:3.3
-    container_name: wardnode-fluent-bit
+  alloy:
+    image: grafana/alloy:latest
+    container_name: wardnode-alloy
     restart: unless-stopped
     profiles:
       - obs
-    ports:
-      - "127.0.0.1:24224:24224"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
     volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+      - proxy_logs:/var/log/nginx:ro
       - modsecurity_logs:/var/log/modsec:ro
-      - /var/log/auth.log:/var/log/auth.log:ro
-      - ./observability/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
-      - ./observability/parsers.conf:/fluent-bit/etc/parsers.conf:ro
-      - fluent_bit_db:/var/fluent-bit/db
+      - /var/log/crowdsec:/var/log/crowdsec:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     depends_on:
       - loki
+      - prometheus
     networks:
       - wardnode_internal
 
   loki:
-    image: grafana/loki:3.4
+    image: grafana/loki:3
     container_name: wardnode-loki
     restart: unless-stopped
     profiles:
@@ -138,6 +137,12 @@ services:
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/obs/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_LOG_LEVEL: warn
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+      GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -146,9 +151,45 @@ services:
     networks:
       - wardnode_internal
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: wardnode-prometheus
+    restart: unless-stopped
+    profiles:
+      - obs
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - wardnode_internal
+
+  # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    container_name: wardnode-fluent-bit
+    restart: unless-stopped
+    # Genera una config noop si todavía no existe ninguna (primer arranque)
+    command: >
+      sh -c "[ -f /fluent-bit/etc/fluent-bit.conf ] ||
+      printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n'
+      > /fluent-bit/etc/fluent-bit.conf;
+      exec /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf"
+    volumes:
+      - fluent_bit_config:/fluent-bit/etc
+      - proxy_logs:/var/log/nginx:ro
+      - modsecurity_logs:/var/log/modsec:ro
+    networks:
+      - wardnode_internal
+
 volumes:
   postgres_data:
   proxy_generated:
+  fluent_bit_config:
   geoip_data:
   proxy_logs:
   modsecurity_logs:
@@ -156,7 +197,8 @@ volumes:
   certbot_challenges:
   loki_data:
   grafana_data:
-  fluent_bit_db:
+  alloy_data:
+  prometheus_data:
 
 networks:
   wardnode_internal:

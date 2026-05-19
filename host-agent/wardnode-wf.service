@@ -7,7 +7,7 @@ Requires=network.target
 [Service]
 Type=simple
 User=root
-Group=root
+Group=wardnode
 ExecStart=/usr/bin/python3 /opt/wardnode/wardnode-wf-agent.py
 ExecStopPost=/bin/rm -f /run/wardnode/wardnode-wf.sock
 Restart=on-failure

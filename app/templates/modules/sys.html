@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Contenedores | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a class="bc-root" href="{{ url_for('modules.index') }}" style="color:var(--text-muted);text-decoration:none">Módulos</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Contenedores</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">Contenedores</h1>
+      <p class="text-secondary mb-0 small">Estado y control de contenedores Docker y servicios del host.</p>
+    </div>
+  </div>
+
+  {# ── Grid de servicios ──────────────────────────────────────────── #}
+  <div class="row g-3"
+       x-data="sysPanel({{ states | tojson }})"
+       x-init="startRefresh()">
+
+    {# Definición de servicios con meta #}
+    {% set services = [
+      { "key": "proxy",      "label": "Nginx / ModSecurity",  "sub": "wardnode-proxy",      "icon": "bi-shield-fill-exclamation", "bg": "#fef2f2", "color": "#dc2626" },
+      { "key": "loki",       "label": "Loki",                 "sub": "wardnode-loki",        "icon": "bi-journal-code",            "bg": "#fff7ed", "color": "#d97706" },
+      { "key": "grafana",    "label": "Grafana",              "sub": "wardnode-grafana",     "icon": "bi-bar-chart-fill",          "bg": "#fdf4ff", "color": "#9333ea" },
+      { "key": "alloy",      "label": "Grafana Alloy",        "sub": "wardnode-alloy",       "icon": "bi-activity",                "bg": "#f0fdf4", "color": "#16a34a" },
+      { "key": "prometheus", "label": "Prometheus",           "sub": "wardnode-prometheus",  "icon": "bi-graph-up",                "bg": "#fff1f2", "color": "#e11d48" },
+      { "key": "crowdsec",   "label": "CrowdSec IDS/IPS",    "sub": "host · systemd",       "icon": "bi-shield-fill-check",       "bg": "#eff6ff", "color": "#2563eb" },
+    ] %}
+
+    <div class="col-sm-6 col-lg-4">
+      <div class="card-panel h-100"
+           x-data="svcCard('fluent-bit')">
+        <div class="card-panel-body" style="padding:20px">
+          <div style="display:flex;align-items:flex-start;gap:14px">
+            <div style="width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                        display:flex;align-items:center;justify-content:center;
+                        background:#f0f9ff;color:#0369a1">
+              <i class="bi bi-send-fill" style="font-size:18px"></i>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
+                <span style="font-size:14px;font-weight:600">Fluent-bit Syslog</span>
+                <span :class="$root.states['fluent-bit'] ? 'badge-running' : 'badge-offline'"
+                      x-text="$root.states['fluent-bit'] ? 'running' : 'offline'"></span>
+              </div>
+              <p style="font-size:11px;color:var(--text-muted);margin:0 0 12px 0;font-family:monospace">wardnode-fluent-bit</p>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-outline-secondary"
+                        style="font-size:12px"
+                        :disabled="restarting"
+                        @click="restart()">
+                  <span x-show="restarting" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px" role="status"></span>
+                  <i x-show="!restarting" class="bi bi-arrow-clockwise me-1"></i>
+                  <span x-text="restarting ? 'Reiniciando…' : 'Reiniciar'"></span>
+                </button>
+                <span x-show="done" x-cloak style="font-size:11px;color:#16a34a;display:flex;align-items:center;gap:4px">
+                  <i class="bi bi-check-circle-fill"></i> Reiniciado
+                </span>
+                <span x-show="error" x-cloak style="font-size:11px;color:var(--c-danger)" x-text="error"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% for svc in services %}
+    <div class="col-sm-6 col-lg-4">
+      <div class="card-panel h-100"
+           x-data="svcCard('{{ svc.key }}')">
+        <div class="card-panel-body" style="padding:20px">
+          <div style="display:flex;align-items:flex-start;gap:14px">
+
+            {# Icono #}
+            <div style="width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                        display:flex;align-items:center;justify-content:center;
+                        background:{{ svc.bg }};color:{{ svc.color }}">
+              <i class="bi {{ svc.icon }}" style="font-size:18px"></i>
+            </div>
+
+            <div style="flex:1;min-width:0">
+              {# Nombre + badge de estado #}
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
+                <span style="font-size:14px;font-weight:600">{{ svc.label }}</span>
+                <span :class="$root.states['{{ svc.key }}'] ? 'badge-running' : 'badge-offline'"
+                      x-text="$root.states['{{ svc.key }}'] ? 'running' : 'offline'"></span>
+              </div>
+
+              {# Subtítulo #}
+              <p style="font-size:11px;color:var(--text-muted);margin:0 0 12px 0;font-family:monospace">{{ svc.sub }}</p>
+
+              {# Nota CrowdSec si WF inactivo #}
+              {% if svc.key == 'crowdsec' and not wf_active %}
+              <p style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;
+                        border-radius:5px;padding:5px 8px;margin:0 0 10px 0">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>Requiere WardNode WF activo.
+              </p>
+              {% endif %}
+
+              {# Botón Reiniciar + feedback #}
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-sm btn-outline-secondary"
+                        style="font-size:12px"
+                        :disabled="restarting"
+                        @click="restart()">
+                  <span x-show="restarting" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px" role="status"></span>
+                  <i x-show="!restarting" class="bi bi-arrow-clockwise me-1"></i>
+                  <span x-text="restarting ? 'Reiniciando…' : 'Reiniciar'"></span>
+                </button>
+
+                <span x-show="done" x-cloak
+                      style="font-size:11px;color:#16a34a;display:flex;align-items:center;gap:4px">
+                  <i class="bi bi-check-circle-fill"></i> Reiniciado
+                </span>
+                <span x-show="error" x-cloak
+                      style="font-size:11px;color:var(--c-danger)"
+                      x-text="error"></span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+  </div>
+
+  <p class="text-secondary small mt-3" style="font-size:11px">
+    <i class="bi bi-arrow-repeat me-1"></i>Estado actualizado automáticamente cada 8 segundos.
+  </p>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sysPanel(initialStates) {
+  return {
+    states: initialStates,
+    _timer: null,
+
+    startRefresh() {
+      this._timer = setInterval(async () => {
+        try {
+          const r = await fetch('{{ url_for("modules.sys_status") }}');
+          if (r.ok) this.states = await r.json();
+        } catch (_) {}
+      }, 8000);
+    },
+  };
+}
+
+function svcCard(key) {
+  return {
+    restarting: false,
+    done: false,
+    error: '',
+    _doneTimer: null,
+
+    async restart() {
+      this.restarting = true;
+      this.done = false;
+      this.error = '';
+      if (this._doneTimer) clearTimeout(this._doneTimer);
+      try {
+        const csrf = document.querySelector("meta[name='csrf-token']").content;
+        const r = await fetch(`{{ url_for("modules.sys_restart", target="__TARGET__") }}`.replace('__TARGET__', key), {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf },
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.done = true;
+          this._doneTimer = setTimeout(() => { this.done = false; }, 4000);
+        } else {
+          this.error = d.error || 'Error desconocido';
+        }
+      } catch (e) {
+        this.error = 'Error de red';
+      }
+      this.restarting = false;
+    },
+  };
+}
+</script>
+<style>[x-cloak] { display: none !important; }</style>
+{% endblock %}

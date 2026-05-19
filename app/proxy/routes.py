@@ -46,6 +46,30 @@ def bootstrap_proxy_catalog():
         current_app.extensions["proxy_catalog_bootstrapped"] = True
 
 
+def _get_service_states() -> dict:
+    """Check Docker container states in a single API call. Returns dict with service info."""
+    from app.models import AppConfig
+
+    running = set()
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        running = {c.name for c in client.containers.list()}
+    except Exception:
+        pass
+
+    return {
+        "proxy":          "wardnode-proxy"      in running,
+        "loki":           "wardnode-loki"       in running,
+        "grafana":        "wardnode-grafana"    in running,
+        "alloy":          "wardnode-alloy"      in running,
+        "prometheus":     "wardnode-prometheus" in running,
+        "crowdsec":       AppConfig.get("module_cs_enabled") == "1",
+        "fluent-bit":     "wardnode-fluent-bit" in running,
+        "syslog_enabled": AppConfig.get("syslog_enabled") == "1",
+    }
+
+
 @bp.get("/")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def dashboard():
@@ -75,14 +99,15 @@ def dashboard():
         cat_counts[e.category or "Otro"] = cat_counts.get(e.category or "Otro", 0) + 1
     top_categories = sorted(cat_counts.items(), key=lambda x: x[1], reverse=True)[:6]
 
-    top_countries = (
+    all_countries = (
         db.session.query(AttackEvent.country_code, func.count().label("cnt"))
         .filter(AttackEvent.country_code.isnot(None))
         .group_by(AttackEvent.country_code)
         .order_by(func.count().desc())
-        .limit(8)
         .all()
     )
+    geo_data     = {code: cnt for code, cnt in all_countries}
+    top_countries = all_countries[:8]
 
     return render_template(
         "proxy/dashboard.html",
@@ -99,7 +124,9 @@ def dashboard():
         chart_blocked=chart_blocked,
         top_categories=top_categories,
         top_countries=top_countries,
+        geo_data=geo_data,
         country_names=COUNTRY_NAMES,
+        service_states=_get_service_states(),
     )
 
 
@@ -202,6 +229,19 @@ def update_site_bot_protection(site_id):
     return redirect(url_for("proxy.site_detail", site_id=site.id))
 
 
+@bp.post("/sites/<int:site_id>/waf")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("30 per minute")
+def update_site_waf(site_id):
+    site = Site.query.get_or_404(site_id)
+    site.waf_enabled = bool(request.form.get("waf_enabled"))
+    db.session.commit()
+    _apply_nginx()
+    state = "activado (bloqueo)" if site.waf_enabled else "desactivado (solo detección)"
+    flash(f"WAF {state}.", "success")
+    return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+
 @bp.post("/sites/<int:site_id>/rules")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("30 per minute")
@@ -262,7 +302,12 @@ def provision_cert(site_id: int):
         site.force_https = True
         db.session.commit()
         render_nginx_configs()
-        reload_nginx()
+        ok_reload, err_reload = reload_nginx()
+        if not ok_reload:
+            site.letsencrypt_status = "error"
+            site.letsencrypt_error = f"Certificado emitido pero nginx no cargó el config TLS: {err_reload}"
+            db.session.commit()
+            return jsonify({"ok": False, "error": site.letsencrypt_error}), 500
         return jsonify({"ok": True})
 
     site.letsencrypt_status = "error"
@@ -604,6 +649,14 @@ def settings():
         except EncryptionNotConfigured:
             smtp_username_masked = "***"
 
+    syslog_enabled  = AppConfig.get("syslog_enabled") == "1"
+    syslog_host     = AppConfig.get("syslog_host") or ""
+    syslog_port     = AppConfig.get("syslog_port") or "514"
+    syslog_protocol = AppConfig.get("syslog_protocol") or "udp"
+    syslog_facility = AppConfig.get("syslog_facility") or "local7"
+    syslog_sources  = (AppConfig.get("syslog_sources") or "nginx_access,modsecurity").split(",")
+    syslog_running  = _fluent_bit_status()
+
     return render_template(
         "proxy/settings.html",
         account_id_masked=account_id_masked,
@@ -615,6 +668,13 @@ def settings():
         smtp_from=smtp_from,
         smtp_use_tls=smtp_use_tls,
         smtp_username_masked=smtp_username_masked,
+        syslog_enabled=syslog_enabled,
+        syslog_host=syslog_host,
+        syslog_port=syslog_port,
+        syslog_protocol=syslog_protocol,
+        syslog_facility=syslog_facility,
+        syslog_sources=syslog_sources,
+        syslog_running=syslog_running,
     )
 
 
@@ -726,6 +786,91 @@ def settings_smtp_test():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@bp.post("/settings/syslog")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("10 per minute")
+def settings_save_syslog():
+    from app.models import AppConfig
+
+    enabled  = "1" if request.form.get("syslog_enabled") else "0"
+    host     = request.form.get("syslog_host", "").strip()
+    port     = request.form.get("syslog_port", "514").strip() or "514"
+    protocol = request.form.get("syslog_protocol", "udp")
+    facility = request.form.get("syslog_facility", "local7")
+    sources  = ",".join(request.form.getlist("syslog_sources"))
+
+    if enabled == "1" and not host:
+        flash("El host del servidor syslog es requerido.", "danger")
+        return redirect(url_for("proxy.settings"))
+    if protocol not in ("udp", "tcp"):
+        protocol = "udp"
+    _VALID_FACILITIES = {
+        "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7",
+        "kern", "user", "mail", "daemon", "auth", "syslog",
+    }
+    if facility not in _VALID_FACILITIES:
+        facility = "local7"
+    if not port.isdigit() or not (1 <= int(port) <= 65535):
+        flash("Puerto syslog inválido.", "danger")
+        return redirect(url_for("proxy.settings"))
+
+    AppConfig.set("syslog_enabled",  enabled)
+    AppConfig.set("syslog_host",     host)
+    AppConfig.set("syslog_port",     port)
+    AppConfig.set("syslog_protocol", protocol)
+    AppConfig.set("syslog_facility", facility)
+    AppConfig.set("syslog_sources",  sources or "nginx_access,modsecurity")
+
+    if enabled == "1":
+        ok, err = _apply_syslog_config()
+        if not ok:
+            flash(f"Configuración guardada, pero error al aplicar en Fluent-bit: {err}", "warning")
+            return redirect(url_for("proxy.settings"))
+    else:
+        # Escribir config vacía y reiniciar — el contenedor sigue corriendo pero no reenvía nada
+        _write_fluent_bit_conf_and_restart(_FLUENT_BIT_CONF_NOOP)
+
+    flash("Configuración de syslog guardada.", "success")
+    return redirect(url_for("proxy.settings"))
+
+
+@bp.post("/settings/syslog-test")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("10 per minute")
+def settings_syslog_test():
+    import socket
+    import time
+
+    data     = request.get_json(silent=True) or {}
+    host     = data.get("host", "").strip()
+    port_str = str(data.get("port", "514"))
+    protocol = data.get("protocol", "udp")
+
+    if not host:
+        return jsonify({"ok": False, "error": "Host requerido"})
+    try:
+        port = int(port_str)
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "Puerto inválido"})
+
+    try:
+        t0 = time.monotonic()
+        if protocol == "tcp":
+            with socket.create_connection((host, port), timeout=3):
+                pass
+        else:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2)
+            sock.sendto(b"<14>1 - wardnode - - - - WardNode connectivity test\n", (host, port))
+            sock.close()
+        ms = round((time.monotonic() - t0) * 1000)
+        return jsonify({"ok": True, "latency_ms": ms})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)})
+
+
 def _apply_nginx() -> None:
     """Regenera configs nginx y recarga nginx. Falla silenciosamente si nginx no está disponible (dev sin Docker)."""
     try:
@@ -733,6 +878,116 @@ def _apply_nginx() -> None:
         reload_nginx()
     except Exception:
         pass
+
+
+# ── Syslog / Fluent-bit helpers ──────────────────────────────────────────────
+
+from pathlib import Path as _Path
+_FLUENT_BIT_CONF_PATH = _Path("/app/generated/fluent-bit/fluent-bit.conf")
+
+_SYSLOG_SOURCE_INPUTS = {
+    "nginx_access": (
+        "[INPUT]\n"
+        "    Name              tail\n"
+        "    Path              /var/log/nginx/access.json\n"
+        "    Parser            json\n"
+        "    Tag               nginx.access\n"
+        "    DB                /tmp/fb_nginx_access.db\n"
+        "    Mem_Buf_Limit     5MB\n"
+        "    Refresh_Interval  5\n"
+    ),
+    "nginx_error": (
+        "[INPUT]\n"
+        "    Name              tail\n"
+        "    Path              /var/log/nginx/error.log\n"
+        "    Tag               nginx.error\n"
+        "    DB                /tmp/fb_nginx_error.db\n"
+        "    Mem_Buf_Limit     2MB\n"
+        "    Refresh_Interval  5\n"
+    ),
+    "modsecurity": (
+        "[INPUT]\n"
+        "    Name              tail\n"
+        "    Path              /var/log/modsec/modsec_audit.log\n"
+        "    Parser            json\n"
+        "    Tag               modsec.audit\n"
+        "    DB                /tmp/fb_modsec_audit.db\n"
+        "    Mem_Buf_Limit     5MB\n"
+        "    Skip_Long_Lines   On\n"
+        "    Refresh_Interval  5\n"
+    ),
+}
+
+
+def _generate_fluent_bit_conf(host: str, port: str, protocol: str, facility: str, sources: list[str]) -> str:
+    parts = [
+        "[SERVICE]\n"
+        "    Flush         5\n"
+        "    Daemon        Off\n"
+        "    Log_Level     warn\n",
+    ]
+    for src in sources:
+        block = _SYSLOG_SOURCE_INPUTS.get(src)
+        if block:
+            parts.append(block)
+    parts.append(
+        "[OUTPUT]\n"
+        "    Name             syslog\n"
+        f"    Host             {host}\n"
+        f"    Port             {port}\n"
+        f"    Mode             {protocol}\n"
+        "    Match            *\n"
+        "    Syslog_Format    rfc5424\n"
+        f"    Syslog_Facility  {facility}\n"
+        "    Syslog_Appname   wardnode\n"
+    )
+    return "\n".join(parts)
+
+
+def _fluent_bit_status() -> bool:
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        c = client.containers.get("wardnode-fluent-bit")
+        return c.status == "running"
+    except Exception:
+        return False
+
+
+_FLUENT_BIT_CONF_NOOP = "[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n"
+
+
+def _apply_syslog_config() -> tuple[bool, str]:
+    from app.models import AppConfig
+
+    host     = AppConfig.get("syslog_host") or ""
+    port     = AppConfig.get("syslog_port") or "514"
+    protocol = AppConfig.get("syslog_protocol") or "udp"
+    facility = AppConfig.get("syslog_facility") or "local7"
+    sources  = (AppConfig.get("syslog_sources") or "nginx_access,modsecurity").split(",")
+
+    conf = _generate_fluent_bit_conf(host, port, protocol, facility, sources)
+    return _write_fluent_bit_conf_and_restart(conf)
+
+
+def _write_fluent_bit_conf_and_restart(conf: str) -> tuple[bool, str]:
+    try:
+        _FLUENT_BIT_CONF_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _FLUENT_BIT_CONF_PATH.write_text(conf)
+    except OSError as exc:
+        return False, f"No se pudo escribir la configuración de Fluent-bit: {exc}"
+
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        container = client.containers.get("wardnode-fluent-bit")
+        if container.status == "running":
+            container.restart(timeout=15)
+        else:
+            container.start()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _bounded_int(field_name: str, minimum: int, maximum: int) -> int | None:

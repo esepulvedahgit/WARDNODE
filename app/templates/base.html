@@ -75,10 +75,12 @@
           <span class="nav-pill-soon">admin</span>
         </a>
         {% endif %}
-        <a class="nav-link-item nav-link-dim" href="#" tabindex="-1">
+        {% if current_user.is_authenticated and current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint == 'modules.sys_index' %}active{% endif %}"
+           href="{{ url_for('modules.sys_index') }}">
           <i class="bi bi-layers-fill"></i><span>Contenedores</span>
-          <span class="nav-pill-soon">pronto</span>
         </a>
+        {% endif %}
       </div>
 
       <div class="nav-group">

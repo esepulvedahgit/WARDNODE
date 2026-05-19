@@ -81,12 +81,15 @@ def write_blocklist_conf() -> Path:
 
 
 def reload_nginx() -> tuple[bool, str]:
-    """Send nginx -s reload to the proxy container via Docker SDK."""
+    """Test nginx config then send reload signal to the proxy container via Docker SDK."""
     container_name = current_app.config.get("NGINX_CONTAINER_NAME", "wardnode-proxy")
     try:
         import docker as docker_sdk
         client = docker_sdk.from_env()
         container = client.containers.get(container_name)
+        test = container.exec_run("nginx -t")
+        if test.exit_code != 0:
+            return False, test.output.decode("utf-8", errors="replace").strip()
         result = container.exec_run("nginx -s reload")
         if result.exit_code == 0:
             return True, ""

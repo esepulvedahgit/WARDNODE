@@ -1,0 +1,113 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__range]))", "instant": true, "legendFormat": "Eventos WAF", "queryType": "instant", "refId": "A"}],
+      "title": "Eventos WAF (ModSecurity)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 100}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"crowdsec\"}[$__range]))", "instant": true, "legendFormat": "Eventos CrowdSec", "queryType": "instant", "refId": "A"}],
+      "title": "Eventos CrowdSec",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 500}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
+      "title": "HTTP 4xx",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
+      "title": "HTTP 5xx",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "wardnode-prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"minVizHeight": 75, "minVizWidth": 75, "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "wardnode-prometheus"}, "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "instant": true, "legendFormat": "CPU %", "refId": "A"}],
+      "title": "CPU",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "wardnode-prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "red", "value": 95}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 4},
+      "id": 6,
+      "options": {"minVizHeight": 75, "minVizWidth": 75, "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "wardnode-prometheus"}, "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "instant": true, "legendFormat": "RAM %", "refId": "A"}],
+      "title": "RAM",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "wardnode-prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 4},
+      "id": 7,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "wardnode-prometheus"}, "expr": "node_load1", "instant": true, "legendFormat": "Load 1m", "refId": "A"}, {"datasource": {"type": "prometheus", "uid": "wardnode-prometheus"}, "expr": "node_load5", "instant": true, "legendFormat": "Load 5m", "refId": "B"}],
+      "title": "Load Average",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "id": 8,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__interval]))", "legendFormat": "WAF (ModSec)", "queryType": "range", "refId": "A"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"crowdsec\"}[$__interval]))", "legendFormat": "CrowdSec", "queryType": "range", "refId": "B"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 [$__interval]))", "legendFormat": "HTTP 4xx/5xx", "queryType": "range", "refId": "C"}
+      ],
+      "title": "Eventos de seguridad en el tiempo",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
+      "id": 9,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=~\"modsecurity|crowdsec\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "title": "Logs de seguridad recientes",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["wardnode", "security", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "WardNode – Security Overview",
+  "uid": "wardnode-security-overview",
+  "version": 1
+}

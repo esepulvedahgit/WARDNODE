@@ -1,0 +1,115 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"}[$__range]))", "instant": true, "legendFormat": "Total", "queryType": "instant", "refId": "A"}],
+      "title": "Total requests",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
+      "title": "HTTP 4xx",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
+      "title": "HTTP 5xx",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_error\"}[$__range]))", "instant": true, "legendFormat": "Errors", "queryType": "instant", "refId": "A"}],
+      "title": "NGINX Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"}[$__interval]))", "legendFormat": "Total requests", "queryType": "range", "refId": "A"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 200 and status < 300 [$__interval]))", "legendFormat": "2xx", "queryType": "range", "refId": "B"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__interval]))", "legendFormat": "4xx", "queryType": "range", "refId": "C"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 500 [$__interval]))", "legendFormat": "5xx", "queryType": "range", "refId": "D"}
+      ],
+      "title": "Requests y status codes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "id": 6,
+      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (detected_field_host) (count_over_time({job=\"nginx_access\"} | json | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{detected_field_host}}", "queryType": "instant", "refId": "A"}],
+      "title": "Top vhosts",
+      "type": "table",
+      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "id": 7,
+      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (detected_field_uri) (count_over_time({job=\"nginx_access\"} | json | status >= 400 | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{detected_field_uri}}", "queryType": "instant", "refId": "A"}],
+      "title": "Top URIs con error (4xx/5xx)",
+      "type": "table",
+      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20},
+      "id": 8,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_access\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "title": "NGINX Access Log",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 30},
+      "id": 9,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_error\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "title": "NGINX Error Log",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["wardnode", "nginx", "logs"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "WardNode – NGINX Logs",
+  "uid": "wardnode-nginx-logs",
+  "version": 1
+}

@@ -59,7 +59,7 @@
                 {% if site.waf_enabled %}
                   <span class="badge-mode badge-block">Bloqueo</span>
                 {% else %}
-                  <span class="badge-mode badge-off">Off</span>
+                  <span class="badge-mode badge-off">Solo detección</span>
                 {% endif %}
               </td>
               <td>
@@ -219,9 +219,23 @@
       <div>
         <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
         <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
+        <div style="margin-top:6px;padding:8px 10px;background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color,#e2e8f0);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
+          <div style="margin-bottom:4px">
+            <i class="bi bi-box me-1" style="color:var(--accent)"></i>
+            <strong>Contenedor Docker</strong> — usa el nombre del servicio:<br>
+            <code>http://mi-app:8080</code>
+            <span style="color:var(--text-muted)"> · el contenedor debe estar en la red <code>wardnode_internal</code></span>
+          </div>
+          <div>
+            <i class="bi bi-hdd me-1" style="color:var(--accent)"></i>
+            <strong>Puerto en el host</strong> — usa el DNS especial de Docker:<br>
+            <code>http://host.docker.internal:3000</code>
+            <span style="color:var(--text-muted)"> · requiere <code>extra_hosts: host-gateway</code> en el proxy</span>
+          </div>
+        </div>
       </div>
       <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" checked>
+        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled">
         <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
       </div>
       <div class="form-check form-switch">

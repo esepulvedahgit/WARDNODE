@@ -41,7 +41,6 @@
 
   {# ── Setup (CrowdSec no disponible) ── #}
   <div x-show="csOk === false" style="display:none">
-  <div x-data="csSetup()">
 
     <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;display:flex;gap:10px;align-items:flex-start;margin-bottom:20px">
       <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-danger);font-size:18px;flex-shrink:0;margin-top:1px"></i>
@@ -49,92 +48,43 @@
         <p style="font-weight:600;margin:0 0 2px;font-size:13px">CrowdSec no disponible</p>
         <p style="font-size:12px;color:var(--text-secondary);margin:0" x-text="csError"></p>
         <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">
-          El agente WF debe estar operativo para comunicarse con CrowdSec.
           Socket: <code style="font-size:11px">{{ socket_path }}</code>
         </p>
       </div>
     </div>
 
-    {# ── Instalación via SSH ── #}
-    <div>
-      <div class="card-panel mb-4">
-        <div class="card-panel-header">
-          <div style="display:flex;align-items:center;gap:8px">
-            <i class="bi bi-key-fill" style="color:var(--accent)"></i>
-            <h2 class="card-panel-title">Instalar CrowdSec via SSH</h2>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span style="font-size:11px;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;border-radius:20px;padding:2px 10px">
-              <i class="bi bi-person-lock me-1"></i>Conecta como: <strong>root</strong>
-            </span>
-            <span style="font-size:11px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:20px;padding:2px 10px">
-              Clave nunca almacenada
-            </span>
-          </div>
+    <div class="card-panel mb-4">
+      <div class="card-panel-header">
+        <div style="display:flex;align-items:center;gap:8px">
+          <i class="bi bi-info-circle-fill" style="color:var(--accent)"></i>
+          <h2 class="card-panel-title">CrowdSec se instala con el agente WF</h2>
         </div>
-        <div class="card-panel-body">
-          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 16px">
-            Se instalará CrowdSec + firewall bouncer + colección SSH en el host. El agente WF
-            debe estar activo (usa el mismo canal de comunicación).
-          </p>
-          <div class="row g-3" style="max-width:560px">
-            <div class="col-4">
-              <label class="form-label" style="font-size:12px;font-weight:600">Puerto SSH</label>
-              <input class="form-control form-control-sm" type="number" x-model="sshPort"
-                     placeholder="22" min="1" max="65535" :disabled="installing">
-            </div>
-            <div class="col-12">
-              <label class="form-label" style="font-size:12px;font-weight:600">Clave privada SSH (PEM)</label>
-              <textarea class="form-control form-control-sm" rows="6" x-model="sshKey"
-                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
-                        style="font-family:monospace;font-size:11px;resize:vertical"
-                        :disabled="installing"></textarea>
-            </div>
-          </div>
-          <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
-            <button @click="runInstall()" :disabled="installing || !sshKey"
-                    class="btn btn-sm btn-primary">
-              <span x-show="installing" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
-              <i x-show="!installing" class="bi bi-play-fill me-1"></i>
-              <span x-text="installing ? 'Instalando…' : 'Instalar CrowdSec'"></span>
-            </button>
-            <span x-show="installing" style="font-size:12px;color:var(--text-muted)">
-              Esto puede tardar hasta 90 segundos…
-            </span>
-          </div>
-          <div x-show="installOutput !== null" x-cloak style="margin-top:16px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span x-show="installOk === true" style="font-size:12px;font-weight:600;color:#16a34a">
-                <i class="bi bi-check-circle-fill me-1"></i>Instalación completada
-              </span>
-              <span x-show="installOk === false" style="font-size:12px;font-weight:600;color:var(--c-danger)">
-                <i class="bi bi-x-circle-fill me-1"></i>Error durante la instalación
-              </span>
-            </div>
-            <div x-show="installError" style="font-size:12px;color:var(--c-danger);margin-bottom:6px" x-text="installError"></div>
-            <pre x-show="installOutput" x-text="installOutput"
-                 style="font-size:11px;background:var(--bg-subtle);padding:12px;border-radius:6px;margin:0;overflow-x:auto;white-space:pre-wrap;max-height:320px;overflow-y:auto"></pre>
-            <div x-show="installOk === true" style="margin-top:10px;font-size:12px;color:var(--text-muted)">
-              <span class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px"></span>
-              Verificando estado de CrowdSec…
-            </div>
-          </div>
+      </div>
+      <div class="card-panel-body">
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px;line-height:1.6">
+          A partir de esta versión, CrowdSec se instala automáticamente junto al agente WF
+          durante la instalación inicial. No se requiere una instalación por separado.
+        </p>
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;padding:10px 14px;font-size:12px;color:#1d4ed8">
+          <i class="bi bi-arrow-right-circle-fill me-2"></i>
+          Ve al módulo <strong>WardNode WF</strong> y usa el botón
+          <strong>"Instalar agente"</strong> para instalar o reinstalar el agente
+          (incluye CrowdSec automáticamente).
         </div>
       </div>
     </div>
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
-      <button @click="$dispatch('wf-rules-changed'); loadStatus()" :disabled="loading" class="btn btn-sm btn-outline-secondary">
+      <button @click="loadStatus()" :disabled="loading" class="btn btn-sm btn-outline-secondary">
         <span x-show="loading" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
         <i x-show="!loading" class="bi bi-arrow-clockwise me-1"></i>
         Reintentar conexión
       </button>
       <span style="font-size:12px;color:var(--text-muted)">
-        Una vez instalado CrowdSec, haz clic para verificar.
+        Una vez instalado el agente WF, haz clic para verificar.
       </span>
     </div>
 
-  </div>
   </div>
 
   {# ── Panel operacional ── #}
@@ -329,8 +279,24 @@ function csPanel() {
       if (!item || typeof item !== 'object') return null;
       const n = {};
       for (const [k, v] of Object.entries(item)) n[k.toLowerCase()] = v;
-      // cscli puede usar 'value' o 'ip' para la dirección
-      n._ip = n.value || n.ip || n.scope_value || '';
+      // IP: top-level value/ip, o anidado en source (formato alerta)
+      const src = item.source || {};
+      n._ip = n.value || n.ip || n.scope_value || src.ip || src.value || '';
+      // Duración: campo duration, o decisions[0].duration, o calcular desde until
+      if (!n.duration && item.decisions && item.decisions[0]) {
+        n.duration = item.decisions[0].duration || '';
+      }
+      if (!n.duration && n.until) {
+        try {
+          const ms = new Date(n.until) - new Date();
+          if (ms > 0) {
+            const h = Math.floor(ms / 3600000);
+            n.duration = h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${h}h`;
+          } else {
+            n.duration = 'expirado';
+          }
+        } catch {}
+      }
       return n;
     },
 
@@ -346,7 +312,17 @@ function csPanel() {
             let parsed = JSON.parse(d.output);
             if (parsed === null) { this.decisions = []; return; }
             if (!Array.isArray(parsed))
-              parsed = parsed.data || parsed.decisions || parsed.items || [];
+              parsed = parsed.data || parsed.decisions || parsed.items || parsed.result || [];
+            // Formato alerta: cada item tiene decisions[] anidado → aplanar
+            if (parsed.length > 0 && Array.isArray(parsed[0].decisions)) {
+              parsed = parsed.flatMap(alert =>
+                (alert.decisions || []).map(dec => ({
+                  ...dec,
+                  source: alert.source,
+                  scenario: dec.scenario || alert.scenario,
+                }))
+              );
+            }
             this.decisions = parsed.map(i => this._normalizeDecision(i)).filter(Boolean);
           } catch {
             this.decisions = [];
@@ -412,50 +388,6 @@ function csPanel() {
   };
 }
 
-function csSetup() {
-  return {
-    sshPort: '22',
-    sshKey: '',
-    installing: false,
-    installOk: null,
-    installError: '',
-    installOutput: null,
-
-    csrf() {
-      return document.querySelector("meta[name='csrf-token']").content;
-    },
-
-    async runInstall() {
-      this.installing = true;
-      this.installOk = null;
-      this.installError = '';
-      this.installOutput = null;
-      const body = new URLSearchParams({
-        ssh_port: this.sshPort,
-        ssh_key:  this.sshKey,
-      });
-      try {
-        const r = await fetch('{{ url_for("modules.cs_install") }}', {
-          method: 'POST',
-          headers: { 'X-CSRFToken': this.csrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        });
-        const d = await r.json();
-        this.installOk = d.ok;
-        this.installOutput = d.output || null;
-        this.installError = d.error || '';
-        if (d.ok) {
-          setTimeout(() => this.$dispatch('cs-install-success'), 3000);
-        }
-      } catch (e) {
-        this.installOk = false;
-        this.installError = 'Error de red al contactar el servidor';
-        this.installOutput = null;
-      }
-      this.installing = false;
-    },
-  };
-}
 </script>
 <style>
 .spin { animation: spin 1s linear infinite; }

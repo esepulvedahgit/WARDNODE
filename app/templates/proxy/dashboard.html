@@ -93,29 +93,59 @@
     </div>
 
 
-    {# Geo origin #}
+    {# Geo origin — mapa coroplético #}
     <div class="card-panel">
       <div class="card-panel-header">
         <h2 class="card-panel-title">Origen geográfico de amenazas</h2>
         <span style="font-size:11px;color:var(--text-muted)">GeoIP · histórico</span>
       </div>
-      <div class="card-panel-body">
-        {% if top_countries %}
-          <div style="display:flex;flex-direction:column;gap:8px">
-            {% set max_count = top_countries[0][1] %}
-            {% for code, count in top_countries %}
-            <div style="display:flex;align-items:center;gap:10px;font-size:12px">
-              <span class="t-mono" style="font-size:13px;font-weight:700;width:28px;color:var(--text-primary)">{{ code }}</span>
-              <span style="flex:1;color:var(--text-secondary);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+      <div class="card-panel-body" style="padding-bottom:12px">
+        {% if geo_data %}
+          <div id="threat-map" style="height:210px;margin:-4px -4px 12px -4px"></div>
+
+          <div style="display:flex;flex-direction:column;gap:6px">
+            {% for code, count in top_countries[:5] %}
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px">
+              <span class="t-mono" style="font-weight:700;width:24px;color:var(--text-primary)">{{ code }}</span>
+              <span style="flex:1;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
                 {{ country_names.get(code, code) }}
               </span>
-              <div style="flex:2;background:#f1f5f9;border-radius:3px;height:6px;overflow:hidden">
-                <div style="height:100%;background:var(--c-danger);border-radius:3px;width:{{ (count / max_count * 100) | round | int }}%"></div>
-              </div>
-              <span style="font-weight:600;color:var(--text-primary);width:28px;text-align:right">{{ count }}</span>
+              <span style="font-weight:600;color:var(--c-danger)">{{ count }}</span>
             </div>
             {% endfor %}
           </div>
+
+          <script>
+          (function() {
+            const geoData = {{ geo_data | tojson }};
+            const nameMap = {{ country_names | tojson }};
+            new jsVectorMap({
+              selector: '#threat-map',
+              map: 'world',
+              zoomButtons: false,
+              zoomOnScroll: false,
+              backgroundColor: 'transparent',
+              series: {
+                regions: [{
+                  values: geoData,
+                  scale: ['#fee2e2', '#dc2626'],
+                  normalizeFunction: 'polynomial',
+                }]
+              },
+              regionStyle: {
+                initial:  { fill: '#e2e8f0', stroke: '#ffffff', strokeWidth: 0.3 },
+                hover:    { fill: '#f59e0b', cursor: 'pointer' },
+                selected: { fill: '#f59e0b' },
+              },
+              onRegionTooltipShow(_, tooltip, code) {
+                const count = geoData[code] || 0;
+                const name  = nameMap[code]  || code;
+                tooltip.text(count > 0 ? `${name} · ${count} amenazas` : name, true);
+              },
+            });
+          })();
+          </script>
+
         {% else %}
           <div style="padding:28px 0;text-align:center;color:var(--text-muted);font-size:12px">
             <i class="bi bi-globe2" style="font-size:28px;display:block;margin-bottom:8px"></i>
@@ -165,59 +195,122 @@
     <div class="card-panel">
       <div class="card-panel-header">
         <h2 class="card-panel-title">Módulos</h2>
-        <a href="#" style="font-size:12px;color:var(--accent);text-decoration:none">Gestionar →</a>
+        <a href="{{ url_for('modules.sys_index') }}" style="font-size:12px;color:var(--accent);text-decoration:none">Gestionar →</a>
       </div>
       <div class="card-panel-body">
+
+        {# Nginx + ModSecurity #}
         <div class="module-item">
           <div class="module-icon" style="background:#fef2f2;color:#dc2626">
             <i class="bi bi-shield-fill-exclamation"></i>
           </div>
           <div class="module-info">
-            <span class="module-name">ModSecurity</span>
-            <span class="module-version">v3.0.12 · OWASP CRS 4.7</span>
+            <span class="module-name">ModSecurity · OWASP CRS</span>
+            <span class="module-version">wardnode-proxy</span>
           </div>
-          <span class="badge-running">running</span>
+          {% if service_states.proxy %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
         </div>
+
+        {# CrowdSec (módulo de host — estado por AppConfig) #}
         <div class="module-item">
           <div class="module-icon" style="background:#eff6ff;color:#2563eb">
             <i class="bi bi-shield-fill-check"></i>
           </div>
           <div class="module-info">
-            <span class="module-name">CrowdSec</span>
-            <span class="module-version">v1.6.4 · CrowdSec</span>
+            <span class="module-name">CrowdSec IDS/IPS</span>
+            <span class="module-version">WardNode CS · host</span>
           </div>
-          <span class="badge-offline">offline</span>
+          {% if service_states.crowdsec %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
         </div>
+
+        {# Grafana Alloy #}
+        <div class="module-item">
+          <div class="module-icon" style="background:#f0fdf4;color:#16a34a">
+            <i class="bi bi-activity"></i>
+          </div>
+          <div class="module-info">
+            <span class="module-name">Grafana Alloy</span>
+            <span class="module-version">wardnode-alloy</span>
+          </div>
+          {% if service_states.alloy %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
+        </div>
+
+        {# Loki #}
         <div class="module-item">
           <div class="module-icon" style="background:#fff7ed;color:#d97706">
             <i class="bi bi-journal-code"></i>
           </div>
           <div class="module-info">
             <span class="module-name">Loki</span>
-            <span class="module-version">v3.2.0 · Grafana Labs</span>
+            <span class="module-version">wardnode-loki</span>
           </div>
-          <span class="badge-offline">offline</span>
+          {% if service_states.loki %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
         </div>
+
+        {# Prometheus #}
         <div class="module-item">
-          <div class="module-icon" style="background:#f0fdf4;color:#16a34a">
-            <i class="bi bi-activity"></i>
+          <div class="module-icon" style="background:#fff1f2;color:#e11d48">
+            <i class="bi bi-graph-up"></i>
           </div>
           <div class="module-info">
-            <span class="module-name">Fluent Bit</span>
-            <span class="module-version">v3.1.4 · CNCF</span>
+            <span class="module-name">Prometheus</span>
+            <span class="module-version">wardnode-prometheus</span>
           </div>
-          <span class="badge-offline">offline</span>
+          {% if service_states.prometheus %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
         </div>
+
+        {# Grafana #}
         <div class="module-item">
           <div class="module-icon" style="background:#fdf4ff;color:#9333ea">
             <i class="bi bi-bar-chart-fill"></i>
           </div>
           <div class="module-info">
             <span class="module-name">Grafana</span>
-            <span class="module-version">v11.3.0 · Grafana Labs</span>
+            <span class="module-version">wardnode-grafana</span>
           </div>
-          <span class="badge-offline">offline</span>
+          {% if service_states.grafana %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
         </div>
+
+        {# Fluent-bit Syslog #}
+        <div class="module-item">
+          <div class="module-icon" style="background:#f0f9ff;color:#0369a1">
+            <i class="bi bi-send-fill"></i>
+          </div>
+          <div class="module-info">
+            <span class="module-name">Fluent-bit Syslog</span>
+            <span class="module-version">wardnode-fluent-bit</span>
+          </div>
+          {% if service_states['fluent-bit'] %}
+            <span class="badge-running">running</span>
+          {% else %}
+            <span class="badge-offline">offline</span>
+          {% endif %}
+        </div>
+
       </div>
     </div>
 
@@ -277,6 +370,9 @@
 {% endblock %}
 
 {% block scripts %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css">
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function() {
