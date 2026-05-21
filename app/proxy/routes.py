@@ -385,8 +385,10 @@ def update_site_security_headers(site_id):
             continue
         name = request.form.get(f"header_name_{header_id}", "").strip()
         value = request.form.get(f"header_value_{header_id}", "").strip()
+        enabled = header_id in enabled_ids
+        always = enabled and header_id in always_ids
         errors.extend(validate_security_header(name, value))
-        updates.append((header, name, value, header_id in enabled_ids, header_id in always_ids))
+        updates.append((header, name, value, enabled, always))
 
     new_headers = []
     custom_names = request.form.getlist("custom_header_name")
@@ -397,7 +399,7 @@ def update_site_security_headers(site_id):
         name = name.strip()
         value = value.strip()
         enabled = str(index) in custom_enabled
-        always = str(index) in custom_always
+        always = enabled and str(index) in custom_always
         if not name and not value and not enabled:
             continue
         errors.extend(validate_security_header(name, value))
@@ -538,48 +540,6 @@ def render_configs():
               severity="error", status="failure", detail={"error": err})
     return jsonify({"ok": False, "error": err or "No se pudo recargar nginx"}), 500
 
-
-@bp.post("/events/demo")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
-@limiter.limit("10 per minute")
-def create_demo_event():
-    site = Site.query.order_by(Site.id).first()
-    demo_ip = "8.8.8.8"
-    domain = site.domain if site else request.form.get("domain", "demo.local")
-    country = get_country_code(demo_ip)
-
-    block_event = AttackEvent(
-        site=site,
-        domain=domain,
-        source_ip=demo_ip,
-        country_code=country,
-        method="GET",
-        path="/search?q=' OR 1=1--",
-        status_code=403,
-        action="block",
-        category="SQL injection",
-        rule_id="942100",
-        severity="critical",
-        message="Demo: WAF bloqueó intento de SQL injection (request nunca llegó al upstream).",
-    )
-    detect_event = AttackEvent(
-        site=site,
-        domain=domain,
-        source_ip=demo_ip,
-        country_code=country,
-        method="POST",
-        path="/login",
-        status_code=200,
-        action="detect",
-        category="brute-force",
-        rule_id="913100",
-        severity="warning",
-        message="Demo: WAF detectó actividad sospechosa pero dejó pasar la solicitud.",
-    )
-    db.session.add_all([block_event, detect_event])
-    db.session.commit()
-    flash("2 eventos demo registrados (1 bloqueo + 1 detección).", "success")
-    return redirect(url_for("proxy.dashboard"))
 
 
 @bp.post("/sites/<int:site_id>/delete")

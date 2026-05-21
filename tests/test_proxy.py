@@ -1,4 +1,5 @@
 from app.models import (
+    AppConfig,
     CustomModSecurityRule,
     NginxExtraConfig,
     ROLE_OPERATOR,
@@ -57,9 +58,8 @@ def test_create_site_and_render_nginx_config(app, tmp_path):
 
         rendered = render_nginx_configs()
 
-    assert len(rendered) == 2
-    zones = rendered[0].read_text(encoding="utf-8")
-    content = rendered[1].read_text(encoding="utf-8")
+    zones = (tmp_path / "00-zones.conf").read_text(encoding="utf-8")
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
     assert "limit_req_zone $binary_remote_addr zone=req_site_" in zones
     assert "rate=7r/s" in zones
     assert "limit_conn_zone $binary_remote_addr zone=conn_site_" in zones
@@ -75,6 +75,58 @@ def test_create_site_and_render_nginx_config(app, tmp_path):
     assert "proxy_buffering off;" in content
     assert "id:1000001" in content
     assert 'SecRuleRemoveByTag "attack-sqli"' in content
+
+
+def test_obs_location_is_rendered_before_catch_all_location(app, tmp_path):
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site = Site(
+            name="Console",
+            domain="wardnode.example",
+            upstream_url="http://console:5000",
+            waf_enabled=True,
+            is_console=True,
+        )
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("module_obs_enabled", "1")
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    assert "location /obs/" in content
+    assert "auth_request /_wardnode_obs_auth;" in content
+    assert "location = /_wardnode_obs_auth" in content
+    assert "proxy_pass $grafana_upstream$request_uri;" in content
+    assert "proxy_set_header X-WEBAUTH-USER admin;" in content
+    assert "proxy_hide_header X-Frame-Options;" in content
+    assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in content
+    assert content.index("location /obs/") < content.index("\n    location / {\n")
+
+
+def test_obs_location_is_not_rendered_for_non_console_site(app, tmp_path):
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site = Site(
+            name="App",
+            domain="app.example",
+            upstream_url="http://app:8080",
+            waf_enabled=True,
+        )
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("module_obs_enabled", "1")
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    assert "location /obs/" not in content
 
 
 def test_operator_can_update_site_traffic_policy(client, login_as):
@@ -123,10 +175,10 @@ def test_site_detail_has_dynamic_crs_filter(client, login_as):
     response = client.get("/proxy/sites/1")
     body = response.get_data(as_text=True)
 
-    assert "crs-family-filter" in body
-    assert "x-data=\"{ selected: '' }\"" in body
-    assert "Selecciona la categoria" in body
-    assert "data-family=" in body
+    assert "crs-rules-form" in body
+    assert "crs-accordion-btn" in body
+    assert "Activar todas" in body
+    assert "Desactivar todas" in body
 
 
 def test_operator_can_update_security_headers_by_line(client, login_as):
@@ -163,6 +215,36 @@ def test_operator_can_update_security_headers_by_line(client, login_as):
     assert "Headers de seguridad actualizados" in response.get_data(as_text=True)
     assert SecurityHeader.query.filter_by(name="X-Frame-Options").first().value == "SAMEORIGIN"
     assert SecurityHeader.query.filter_by(name="X-Test-Header").first().value == "ok"
+
+
+def test_security_header_always_requires_enabled(client, login_as):
+    login_as(ROLE_OPERATOR)
+    client.post(
+        "/proxy/sites",
+        data={
+            "name": "Demo",
+            "domain": "demo.local",
+            "upstream_url": "http://demo:8080",
+        },
+        follow_redirects=True,
+    )
+    header = SecurityHeader.query.filter_by(name="X-Frame-Options").first()
+
+    response = client.post(
+        "/proxy/sites/1/security-headers",
+        data={
+            "header_ids": [str(header.id)],
+            f"header_name_{header.id}": "X-Frame-Options",
+            f"header_value_{header.id}": "DENY",
+            "always_header_ids": [str(header.id)],
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    updated = SecurityHeader.query.get(header.id)
+    assert updated.enabled is False
+    assert updated.always is False
 
 
 def test_invalid_security_header_is_not_saved(client, login_as):
@@ -306,3 +388,95 @@ def test_invalid_custom_modsecurity_rule_is_not_saved(client, login_as):
     assert response.status_code == 200
     assert "reserva 1000000-1999999" in response.get_data(as_text=True)
     assert CustomModSecurityRule.query.filter_by(name="Bad rule").first() is None
+
+
+# ── Ingest pipeline ───────────────────────────────────────────────────────────
+
+_SAMPLE_LOG_LINE = """{
+  "transaction": {
+    "time": "2024-01-01T00:00:00Z",
+    "id": "abc123xyz",
+    "request": {
+      "method": "GET",
+      "http_version": 1.1,
+      "uri": "/search?q=test",
+      "headers": {"Host": "example.com"},
+      "remote_address": "1.2.3.4"
+    },
+    "response": {"http_code": 403, "headers": {}},
+    "messages": [
+      {
+        "message": "SQL injection attempt detected",
+        "details": {
+          "ruleId": "942100",
+          "severity": "CRITICAL",
+          "tags": ["OWASP_CRS/WEB_ATTACK/SQL_INJECTION"]
+        }
+      }
+    ]
+  }
+}"""
+
+
+def test_ingest_parses_modsecurity_json_correctly():
+    from app.proxy.ingest import _parse_line
+
+    result = _parse_line(_SAMPLE_LOG_LINE)
+
+    assert result is not None
+    assert result["transaction_id"] == "abc123xyz"
+    assert result["domain"] == "example.com"
+    assert result["source_ip"] == "1.2.3.4"
+    assert result["method"] == "GET"
+    assert result["path"] == "/search?q=test"
+    assert result["status_code"] == 403
+    assert result["action"] == "block"
+    assert result["rule_id"] == "942100"
+    assert result["severity"] == "critical"
+    assert result["category"] == "sql-injection"
+    assert "SQL injection" in result["message"]
+
+
+def test_ingest_handles_malformed_json():
+    from app.proxy.ingest import _parse_line
+
+    assert _parse_line("not json at all {{{") is None
+    assert _parse_line('{"transaction": {}}') is None
+    assert _parse_line("") is None
+    assert _parse_line('{"transaction": {"messages": []}}') is None
+
+
+def test_ingest_resolves_site_by_domain(app, monkeypatch):
+    from app.proxy.ingest import _process_line
+    from app.extensions import db
+    from app.models import AttackEvent
+
+    monkeypatch.setattr("app.proxy.geoip.get_country_code", lambda ip: "US")
+
+    with app.app_context():
+        site = Site(name="Test", domain="example.com", upstream_url="http://upstream:8080")
+        db.session.add(site)
+        db.session.commit()
+        site_id = site.id
+
+    _process_line(app, _SAMPLE_LOG_LINE)
+
+    with app.app_context():
+        event = AttackEvent.query.filter_by(transaction_id="abc123xyz").first()
+        assert event is not None
+        assert event.site_id == site_id
+        assert event.country_code == "US"
+
+
+def test_ingest_skips_duplicate_transaction_ids(app, monkeypatch):
+    from app.proxy.ingest import _process_line
+    from app.models import AttackEvent
+
+    monkeypatch.setattr("app.proxy.geoip.get_country_code", lambda ip: None)
+
+    _process_line(app, _SAMPLE_LOG_LINE)
+    _process_line(app, _SAMPLE_LOG_LINE)
+
+    with app.app_context():
+        count = AttackEvent.query.filter_by(transaction_id="abc123xyz").count()
+        assert count == 1

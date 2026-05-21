@@ -227,6 +227,7 @@ class AttackEvent(db.Model, TimestampMixin):
     rule_id = db.Column(db.String(80), nullable=True)
     severity = db.Column(db.String(40), nullable=False, default="warning")
     message = db.Column(db.Text, nullable=False)
+    transaction_id = db.Column(db.String(64), nullable=True, unique=True, index=True)
 
     site = db.relationship("Site", back_populates="attack_events")
 

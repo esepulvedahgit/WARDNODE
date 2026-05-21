@@ -8,12 +8,6 @@
 {% endblock %}
 
 {% block page_actions %}
-  <form method="post" action="{{ url_for('proxy.create_demo_event') }}" style="display:inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-sm btn-outline-secondary" type="submit">
-      <i class="bi bi-lightning-charge me-1"></i>Evento demo
-    </button>
-  </form>
   {% if not current_user.has_role('reader') %}
   <button class="btn btn-sm btn-primary" type="button"
           data-bs-toggle="offcanvas" data-bs-target="#newSiteCanvas">

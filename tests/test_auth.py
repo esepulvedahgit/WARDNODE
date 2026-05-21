@@ -29,7 +29,7 @@ def test_create_initial_admin_and_login(client):
         follow_redirects=True,
     )
 
-    assert "Proxy defensivo" in response.get_data(as_text=True)
+    assert "Overview" in response.get_data(as_text=True)
 
 
 def test_setup_closes_after_admin_exists(client, user_factory):
@@ -130,4 +130,4 @@ def test_password_reset_flow_after_admin_exists(client, user_factory):
         data={"email": "admin@example.com", "password": "NewPassword123!"},
         follow_redirects=True,
     )
-    assert "Proxy defensivo" in response.get_data(as_text=True)
+    assert "Overview" in response.get_data(as_text=True)

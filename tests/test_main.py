@@ -20,4 +20,4 @@ def test_proxy_dashboard_loads_for_authenticated_user(client, login_as):
     response = client.get("/proxy/")
 
     assert response.status_code == 200
-    assert "Proxy defensivo" in response.get_data(as_text=True)
+    assert "Overview" in response.get_data(as_text=True)

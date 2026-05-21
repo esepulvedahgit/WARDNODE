@@ -37,7 +37,7 @@ def test_csrf_blocks_mutating_request_when_enabled():
         db.create_all()
 
     client = app.test_client()
-    response = client.post("/proxy/events/demo")
+    response = client.post("/auth/setup")
 
     assert response.status_code == 400
 

@@ -23,6 +23,7 @@ services:
       - obs_loki_config:/tmp/obs/loki
       - obs_prometheus_config:/tmp/obs/prometheus
       - obs_grafana_provisioning:/tmp/obs/grafana_provisioning
+      - modsecurity_logs:/var/log/modsec:ro
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
     extra_hosts:
@@ -41,10 +42,11 @@ services:
         cp /app/observability/loki.yaml /tmp/obs/loki/config.yaml &&
         cp /app/observability/prometheus.yml /tmp/obs/prometheus/prometheus.yml &&
         cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
+        if [ ! -f /app/generated/fluent-bit/.wardnode_init ]; then printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n\n[INPUT]\n    Name dummy\n    Dummy {}\n    Tag noop\n\n[OUTPUT]\n    Name null\n    Match *\n' > /app/generated/fluent-bit/fluent-bit.conf && touch /app/generated/fluent-bit/.wardnode_init; fi &&
         flask db-setup && flask ensure-geoip &&
-        gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 --access-logfile - --error-logfile - wsgi:app
+        gunicorn --bind 0.0.0.0:5000 --workers 1 --timeout 300 --access-logfile - --error-logfile - wsgi:app
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/status || exit 1"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/status')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -54,6 +56,8 @@ services:
     image: wardnode-proxy:prod
     container_name: wardnode-proxy
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
@@ -197,12 +201,9 @@ services:
     image: fluent/fluent-bit:latest
     container_name: wardnode-fluent-bit
     restart: unless-stopped
-    # Genera una config noop si todavía no existe ninguna (primer arranque)
-    command: >
-      sh -c "[ -f /fluent-bit/etc/fluent-bit.conf ] ||
-      printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n'
-      > /fluent-bit/etc/fluent-bit.conf;
-      exec /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf"
+    depends_on:
+      console:
+        condition: service_healthy
     volumes:
       - fluent_bit_config:/fluent-bit/etc
       - proxy_logs:/var/log/nginx:ro

@@ -160,10 +160,24 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
         except Exception as exc:
             print(f"Advertencia: no se regeneraron configs: {exc}")
 
+    @app.cli.command("render-configs")
+    def render_configs_command():
+        """Regenera todos los configs nginx desde la base de datos."""
+        import click
+        from app.proxy.services import render_nginx_configs
+        try:
+            files = render_nginx_configs()
+            click.echo(f"Configs regenerados: {len(files)} archivo(s).")
+        except Exception as exc:
+            click.echo(f"Advertencia: no se regeneraron configs: {exc}")
+
     @login_manager.user_loader
     def load_user(user_id):
         if not user_id.isdigit():
             return None
         return db.session.get(models.User, int(user_id))
+
+    from app.proxy.ingest import start_ingest_thread
+    start_ingest_thread(app)
 
     return app
