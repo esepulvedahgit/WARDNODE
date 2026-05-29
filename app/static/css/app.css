@@ -328,7 +328,7 @@ code, pre, .font-mono {
 }
 
 .data-table tbody tr:hover td { background: #fafbfd; }
-.data-table td.t-mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.data-table td.t-mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
 .data-table td.t-dim  { color: var(--text-muted); }
 .data-table td.t-blue { color: var(--accent); }
 
@@ -624,12 +624,21 @@ code, pre, .font-mono {
   .sidebar.open { transform: translateX(0); box-shadow: 8px 0 32px rgba(0,0,0,.3); }
   .sidebar-toggle { display: flex; align-items: center; }
   .main-content { padding: 16px; }
-  .topbar { padding: 0 16px; }
+  .topbar { padding: 0 12px; flex-wrap: wrap; height: auto; min-height: var(--topbar-h); }
+  .topbar-breadcrumb { overflow: hidden; flex: 1 1 0; min-width: 0; }
+  .topbar-breadcrumb .bc-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-actions { flex-wrap: wrap; gap: 6px; }
   .dash-col-aside { grid-template-columns: 1fr; }
   .crs-accordion-btn { font-size: 12px; }
+  .data-table th { white-space: normal; }
+  .auth-panel { padding: 24px 20px; }
+  .error-card { padding: 32px 24px; }
+  .session-timeout-card { padding: 24px 20px; }
 }
 
 @media (max-width: 480px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
   .kpi-value { font-size: 22px; }
+  .card-panel-header { padding: 12px 14px; }
+  .card-panel-body  { padding: 12px 14px 16px; }
 }

@@ -131,7 +131,7 @@
           <option value="critical" {% if severity_f == 'critical' %}selected{% endif %}>Critical</option>
         </select>
         <input type="text" name="action" class="form-control form-control-sm"
-               style="width:160px;font-size:12px" placeholder="Filtrar acción…"
+               style="width:160px;min-width:0;flex-shrink:1;font-size:12px" placeholder="Filtrar acción…"
                value="{{ action_f }}">
         <button type="submit" class="btn btn-sm btn-outline-secondary" style="font-size:12px">
           <i class="bi bi-funnel-fill"></i>
@@ -248,6 +248,8 @@
 
 </div>
 
+{% endblock %}{# content #}
+
 {% block scripts %}
 <script>
 (function () {
@@ -362,5 +364,4 @@
   {% endif %}
 })();
 </script>
-{% endblock %}
-{% endblock %}
+{% endblock %}{# scripts #}
