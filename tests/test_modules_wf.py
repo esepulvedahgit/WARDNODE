@@ -173,3 +173,57 @@ def test_wf_requires_module_enabled_for_allow(client, login_as, monkeypatch):
 
     assert response.status_code == 403
     assert response.get_json()["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# toggle() guard: WF no puede activarse sin dominio de consola configurado
+# ---------------------------------------------------------------------------
+
+def test_toggle_wf_blocked_without_console_domain(client, login_as):
+    from app.models import AppConfig
+    login_as("admin")
+    AppConfig.set("module_wf_enabled", "0")
+    AppConfig.set("console_site_id", None)
+
+    response = client.post("/modules/wf/toggle", follow_redirects=True)
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Ajustes" in body or "dominio" in body or "consola" in body
+
+    with client.application.app_context():
+        assert AppConfig.get("module_wf_enabled") != "1"
+
+
+def test_toggle_wf_allowed_with_console_domain(client, login_as, monkeypatch):
+    from app.models import AppConfig, Site
+    from app.extensions import db
+
+    login_as("admin")
+
+    with client.application.app_context():
+        site = Site(name="Console", domain="ward.example", upstream_url="http://console:5000", is_console=True)
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", str(site.id))
+        AppConfig.set("module_wf_enabled", "0")
+
+    monkeypatch.setattr("app.modules.routes.os.path.exists", lambda p: False)
+
+    response = client.post("/modules/wf/toggle", follow_redirects=True)
+    assert response.status_code == 200
+
+    with client.application.app_context():
+        assert AppConfig.get("module_wf_enabled") == "1"
+
+
+def test_toggle_wf_disable_works_without_console_domain(client, login_as):
+    from app.models import AppConfig
+    login_as("admin")
+    AppConfig.set("module_wf_enabled", "1")
+    AppConfig.set("console_site_id", None)
+
+    response = client.post("/modules/wf/toggle", follow_redirects=True)
+    assert response.status_code == 200
+
+    with client.application.app_context():
+        assert AppConfig.get("module_wf_enabled") == "0"

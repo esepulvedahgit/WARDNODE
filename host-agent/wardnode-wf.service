@@ -1,8 +1,8 @@
 [Unit]
 Description=WardNode WF — Firewall Agent
 Documentation=https://github.com/tu-org/wardnode
-After=network.target
-Requires=network.target
+After=network.target docker.service
+Wants=docker.service
 
 [Service]
 Type=simple
@@ -18,7 +18,7 @@ TimeoutStopSec=10
 # ProtectSystem omitido: UFW necesita acceso rw a /etc/ufw y /var/lib/ufw
 # RestrictNamespaces/SystemCallFilter omitidos: compatibilidad con iptables/nftables
 PrivateTmp=yes
-ReadWritePaths=/run/wardnode
+ReadWritePaths=/run/wardnode /opt/wardnode
 LockPersonality=yes
 UMask=0117
 

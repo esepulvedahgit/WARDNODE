@@ -67,7 +67,7 @@
 
         <details class="mt-2">
           <summary class="text-secondary" style="font-size:.83rem;cursor:pointer">Cambiar dominio o puerto</summary>
-          <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3 mt-2">
+          <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3 mt-2" x-data="{s:false}" @submit="s=true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-7">
               <label class="form-label fw-medium" for="console_domain">Dominio</label>
@@ -82,13 +82,16 @@
                      min="1" max="65535" placeholder="5000">
             </div>
             <div class="col-md-2 d-flex align-items-end">
-              <button type="submit" class="btn btn-sm btn-primary w-100">Actualizar</button>
+              <button type="submit" class="btn btn-sm btn-primary w-100" :disabled="s">
+                <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                <span x-text="s ? 'Guardando…' : 'Actualizar'"></span>
+              </button>
             </div>
           </form>
         </details>
 
       {% else %}
-        <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3">
+        <form method="post" action="{{ url_for('proxy.save_console_site') }}" class="row g-3" x-data="{s:false}" @submit="s=true">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="col-md-7">
             <label class="form-label fw-medium" for="console_domain">Dominio</label>
@@ -103,7 +106,10 @@
             <div class="form-text">Dejar en 5000 salvo que hayas cambiado el compose.</div>
           </div>
           <div class="col-md-2 d-flex align-items-end">
-            <button type="submit" class="btn btn-sm btn-primary w-100">Crear sitio</button>
+            <button type="submit" class="btn btn-sm btn-primary w-100" :disabled="s">
+              <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+              <span x-text="s ? 'Guardando…' : 'Crear sitio'"></span>
+            </button>
           </div>
         </form>
       {% endif %}
@@ -119,7 +125,7 @@
         Usuario y contraseña se almacenan cifrados. Requiere <code>WARDNODE_SECRET_KEY</code>.
       </p>
 
-      <form method="post" action="{{ url_for('proxy.settings_save_smtp') }}">
+      <form method="post" action="{{ url_for('proxy.settings_save_smtp') }}" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="row g-3 mb-3">
@@ -182,8 +188,10 @@
 
         <div class="d-flex align-items-center gap-3 flex-wrap">
           <button type="submit" class="btn btn-sm btn-primary"
-                  {% if not encryption_ready %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
-            <i class="bi bi-floppy-fill me-1"></i>Guardar SMTP
+                  {% if encryption_ready %}:disabled="s"{% else %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!s" class="bi bi-floppy-fill me-1"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar SMTP'"></span>
           </button>
 
           {% if smtp_host %}
@@ -218,7 +226,7 @@
   {# ── Reenvío Syslog ──────────────────────────────────────────────── #}
   <div class="card-panel mb-4"
        x-data="{
-         enabled: {{ syslog_enabled | tojson }},
+         enabled: {{ syslog_enabled | default(false) | tojson }},
          testing: false,
          testOk: null,
          testMsg: '',
@@ -261,7 +269,7 @@
         Funciona de forma independiente al módulo OBS.
       </p>
 
-      <form method="post" action="{{ url_for('proxy.settings_save_syslog') }}">
+      <form method="post" action="{{ url_for('proxy.settings_save_syslog') }}" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="row g-3 mb-3">
@@ -335,8 +343,10 @@
         </div>
 
         <div class="d-flex align-items-center gap-3 flex-wrap">
-          <button type="submit" class="btn btn-sm btn-primary">
-            <i class="bi bi-floppy-fill me-1"></i>Guardar y aplicar
+          <button type="submit" class="btn btn-sm btn-primary" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!s" class="bi bi-floppy-fill me-1"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar y aplicar'"></span>
           </button>
 
           <div x-show="enabled" x-cloak style="display:contents">
@@ -369,7 +379,7 @@
         <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener noreferrer">Registro gratuito</a>.
       </p>
 
-      <form method="post" action="{{ url_for('proxy.settings_save') }}">
+      <form method="post" action="{{ url_for('proxy.settings_save') }}" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="row g-3 mb-4">
@@ -407,8 +417,10 @@
 
         <div class="d-flex align-items-center gap-3">
           <button type="submit" class="btn btn-sm btn-primary"
-                  {% if not encryption_ready %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
-            <i class="bi bi-floppy-fill me-1"></i>Guardar credenciales
+                  {% if encryption_ready %}:disabled="s"{% else %}disabled title="Requiere WARDNODE_SECRET_KEY"{% endif %}>
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!s" class="bi bi-floppy-fill me-1"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar credenciales'"></span>
           </button>
           {% if not encryption_ready %}
           <span class="text-secondary" style="font-size:.83rem">Requiere <code>WARDNODE_SECRET_KEY</code> en .env</span>

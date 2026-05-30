@@ -84,11 +84,12 @@
                 </a>
                 {% if not current_user.has_role('reader') and not site.is_console %}
                 <form method="post" action="{{ url_for('proxy.delete_site', site_id=site.id) }}"
-                      style="display:inline" x-data
-                      @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')) $el.submit()">
+                      style="display:inline" x-data="{s:false}"
+                      @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')){s=true; $el.submit()}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger ms-1" title="Eliminar sitio">
-                    <i class="bi bi-trash3"></i>
+                  <button type="submit" class="btn btn-sm btn-outline-danger ms-1" title="Eliminar sitio" :disabled="s">
+                    <span x-show="s" class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:.8rem;height:.8rem"></span>
+                    <i x-show="!s" class="bi bi-trash3"></i>
                   </button>
                 </form>
                 {% endif %}
@@ -112,151 +113,8 @@
 
 </div>
 
-{# ── GeoIP Blocklist ──────────────────────────────────────────────── #}
-{% if not current_user.has_role('reader') %}
-<div class="card-panel mt-4">
-  <div class="card-panel-header">
-    <div style="display:flex;align-items:center;gap:8px">
-      <i class="bi bi-geo-alt-fill" style="color:var(--c-danger)"></i>
-      <h2 class="card-panel-title">Bloqueo por país (GeoIP)</h2>
-    </div>
-    <span style="font-size:11px;color:var(--text-muted)">
-      {{ blocklist | length }} país{% if blocklist | length != 1 %}es{% endif %} bloqueado{% if blocklist | length != 1 %}s{% endif %}
-      · se aplica al regenerar Nginx
-    </span>
-  </div>
-  <div class="card-panel-body">
-    <div class="row g-4">
-      <div class="col-md-5">
-        <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
-          Bloquea todo el tráfico entrante de un país a nivel Nginx (<code>return 444</code>). Los cambios se aplican automáticamente con <code>nginx -s reload</code>.
-        </p>
-        <form method="post" action="{{ url_for('proxy.geo_blocklist_add') }}" class="d-flex gap-2">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <select class="form-select form-select-sm" name="country_code" required>
-            <option value="">Seleccionar país…</option>
-            {% for code, name in country_names.items() | sort(attribute='1') %}
-              {% if blocklist | selectattr('country_code', 'equalto', code) | list | length == 0 %}
-              <option value="{{ code }}">{{ name }} ({{ code }})</option>
-              {% endif %}
-            {% endfor %}
-          </select>
-          <button type="submit" class="btn btn-sm btn-danger" style="white-space:nowrap">
-            <i class="bi bi-plus-lg me-1"></i>Bloquear
-          </button>
-        </form>
-      </div>
-      <div class="col-md-7">
-        {% if blocklist %}
-        <div class="table-responsive">
-          <table class="data-table" style="font-size:12px">
-            <thead>
-              <tr>
-                <th style="width:56px">Código</th>
-                <th>País</th>
-                <th style="width:56px">Estado</th>
-                <th style="width:60px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for entry in blocklist %}
-              <tr>
-                <td class="t-mono t-blue">{{ entry.country_code }}</td>
-                <td>{{ entry.country_name }}</td>
-                <td>
-                  {% if entry.enabled %}
-                    <span class="sev-badge sev-badge-critical" style="font-size:10px">activo</span>
-                  {% else %}
-                    <span class="sev-badge sev-badge-low" style="font-size:10px">inactivo</span>
-                  {% endif %}
-                </td>
-                <td style="text-align:right">
-                  <form method="post" action="{{ url_for('proxy.geo_blocklist_remove', code=entry.country_code) }}"
-                        x-data
-                        @submit.prevent="if(confirm('¿Eliminar bloqueo para {{ entry.country_name }}?')) $el.submit()">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-xs btn-outline-danger" style="padding:2px 8px;font-size:11px">
-                      <i class="bi bi-trash3"></i>
-                    </button>
-                  </form>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <div style="padding:20px 0;text-align:center;color:var(--text-muted);font-size:12px">
-          <i class="bi bi-globe2" style="font-size:24px;display:block;margin-bottom:8px"></i>
-          Sin países bloqueados.
-        </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
+{# GeoIP Blocklist se gestiona en la configuración individual de cada sitio #}
 
-{# ── Offcanvas: nuevo sitio ───────────────────────────────────────── #}
-<div class="offcanvas offcanvas-end" tabindex="-1" id="newSiteCanvas" style="width:400px">
-  <div class="offcanvas-header">
-    <h5 class="offcanvas-title">
-      <i class="bi bi-plus-circle me-2" style="color:var(--accent)"></i>Nuevo sitio
-    </h5>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
-  </div>
-  <div class="offcanvas-body">
-    <form method="post" action="{{ url_for('proxy.create_site') }}" class="vstack gap-3">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div>
-        <label class="form-label" for="name">Nombre del sitio</label>
-        <input class="form-control" id="name" name="name" placeholder="Portal clientes" required>
-      </div>
-      <div>
-        <label class="form-label" for="domain">Dominio</label>
-        <input class="form-control" id="domain" name="domain" placeholder="app.example.com" required>
-      </div>
-      <div>
-        <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
-        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
-        <div style="margin-top:6px;padding:8px 10px;background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color,#e2e8f0);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
-          <div style="margin-bottom:4px">
-            <i class="bi bi-box me-1" style="color:var(--accent)"></i>
-            <strong>Contenedor Docker</strong> — usa el nombre del servicio:<br>
-            <code>http://mi-app:8080</code>
-            <span style="color:var(--text-muted)"> · el contenedor debe estar en la red <code>wardnode_internal</code></span>
-          </div>
-          <div>
-            <i class="bi bi-hdd me-1" style="color:var(--accent)"></i>
-            <strong>Puerto en el host</strong> — usa el DNS especial de Docker:<br>
-            <code>http://host.docker.internal:3000</code>
-            <span style="color:var(--text-muted)"> · requiere <code>extra_hosts: host-gateway</code> en el proxy</span>
-          </div>
-        </div>
-      </div>
-      <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled">
-        <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
-      </div>
-      <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled">
-        <label class="form-check-label" for="letsencrypt_enabled">Usar Let's Encrypt</label>
-      </div>
-      <div class="row g-2">
-        <div class="col-12">
-          <label class="form-label" for="custom_certificate_path">Certificado (opcional)</label>
-          <input class="form-control" id="custom_certificate_path" name="custom_certificate_path" placeholder="/etc/nginx/certs/fullchain.pem">
-        </div>
-        <div class="col-12">
-          <label class="form-label" for="custom_certificate_key_path">Llave privada (opcional)</label>
-          <input class="form-control" id="custom_certificate_key_path" name="custom_certificate_key_path" placeholder="/etc/nginx/certs/privkey.pem">
-        </div>
-      </div>
-      <button class="btn btn-primary" type="submit">
-        <i class="bi bi-check2 me-1"></i>Guardar sitio
-      </button>
-    </form>
-  </div>
-</div>
+{% include 'proxy/_new_site_offcanvas.html' %}
 
 {% endblock %}

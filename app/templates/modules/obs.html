@@ -21,7 +21,7 @@
         <i class="bi bi-bar-chart-line-fill" style="color:var(--accent)"></i>
         WardNode OBS
       </h1>
-      <p class="text-secondary mb-0 small">Observabilidad centralizada — logs (WAF, nginx, ModSecurity, SSH, CrowdSec) y métricas (host, contenedores) en Grafana.</p>
+      <p class="text-secondary mb-0 small">Observabilidad centralizada — logs (WAF, nginx, ModSecurity, SSH) y métricas (host, contenedores) en Grafana.</p>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
       <span x-show="lokiOk === true && grafanaOk === true && alloyOk === true && prometheusOk === true" x-cloak class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">
@@ -36,7 +36,7 @@
       <button @click="loadStatus()" class="btn btn-sm btn-outline-secondary" :disabled="loading">
         <i class="bi bi-arrow-clockwise" :class="{'spin': loading}"></i>
       </button>
-      <a href="/obs/" target="_blank" class="btn btn-sm btn-outline-secondary" title="Abrir en pestaña nueva">
+      <a href="{{ url_for('modules.obs_fullscreen') }}" target="_blank" class="btn btn-sm btn-outline-secondary" title="Abrir vista amplia">
         <i class="bi bi-box-arrow-up-right"></i>
       </a>
     </div>
@@ -110,7 +110,7 @@
   <div x-show="grafanaOk === true" x-cloak
        style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;height:calc(100vh - 240px);min-height:400px">
     <iframe id="grafana-frame"
-            src="http://{{ request.host.split(':')[0] }}/obs/"
+            src="/obs/"
             style="width:100%;height:100%;border:none"
             loading="lazy"></iframe>
   </div>
@@ -171,13 +171,6 @@
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
-                <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
-                <div>
-                  <p style="font-size:12px;font-weight:600;margin:0">CrowdSec</p>
-                  <p style="font-size:11px;color:var(--text-muted);margin:0">bind mount <code>/var/log/crowdsec/crowdsec.log</code> → Loki</p>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
                 <i class="bi bi-check-circle-fill" style="color:#2563eb;flex-shrink:0"></i>
                 <div>
                   <p style="font-size:12px;font-weight:600;margin:0">Métricas host</p>
@@ -189,13 +182,6 @@
                 <div>
                   <p style="font-size:12px;font-weight:600;margin:0">Métricas contenedores</p>
                   <p style="font-size:11px;color:var(--text-muted);margin:0">cAdvisor → Prometheus → Grafana</p>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
-                <i class="bi bi-check-circle-fill" style="color:#2563eb;flex-shrink:0"></i>
-                <div>
-                  <p style="font-size:12px;font-weight:600;margin:0">Métricas CrowdSec</p>
-                  <p style="font-size:11px;color:var(--text-muted);margin:0">CrowdSec :6060 → Prometheus → Grafana</p>
                 </div>
               </div>
             </div>
@@ -215,11 +201,12 @@
           </div>
           <div class="card-panel-body">
             <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
-              Si el dominio ya está configurado como site protegido, añade la location en
+              Si necesitas configurarlo manualmente, añade esta location solo en el site de consola, en
               <em>Nginx extras → Bloque server</em>:
             </p>
             <div x-data="{c:false}" style="position:relative">
               <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">location /obs/ {
+    auth_request /_wardnode_obs_auth;
     proxy_pass         http://grafana:3000/obs/;
     proxy_set_header   Host              $host;
     proxy_set_header   X-Real-IP         $remote_addr;
@@ -229,7 +216,21 @@
     proxy_http_version 1.1;
     proxy_set_header   Upgrade           $http_upgrade;
     proxy_set_header   Connection        "upgrade";
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Content-Security-Policy;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Content-Security-Policy "frame-ancestors 'self'" always;
     proxy_read_timeout 300s;
+}
+
+location = /_wardnode_obs_auth {
+    internal;
+    proxy_pass http://console:5000/modules/obs/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Host $host;
 }</pre>
               <button @click="navigator.clipboard.writeText(this.$el.previousElementSibling.textContent);c=true;setTimeout(()=>c=false,2000)"
                       style="position:absolute;top:6px;right:6px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;font-size:13px">

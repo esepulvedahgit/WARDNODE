@@ -17,6 +17,16 @@
     </div>
   </div>
 
+  {% if not console_site_configured %}
+  <div class="alert alert-warning d-flex align-items-center gap-2 mb-4" role="alert">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0"></i>
+    <div>
+      El módulo <strong>WardNode WF</strong> requiere que primero configures el dominio de acceso al panel.
+      <a href="{{ url_for('proxy.settings') }}" class="alert-link">Ir a Ajustes →</a>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-4">
     {% for module in modules %}
     {% set enabled = states[module.id] %}
@@ -84,35 +94,6 @@
               </div>
               <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.5">{{ module.description }}</p>
 
-              {% if module.id == 'cs' %}
-              <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:11px 13px;margin-bottom:14px;font-size:11px;line-height:1.6">
-                {% if enabled %}
-                <p style="margin:0 0 5px 0;color:var(--text-secondary)">
-                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
-                  <strong>Desactivar detiene CrowdSec y el bouncer en el host</strong> — las reglas iptables activas se eliminan.
-                  Al reactivar, los servicios se reanudan automáticamente.
-                </p>
-                {% else %}
-                <p style="margin:0 0 5px 0;color:var(--text-secondary)">
-                  <i class="bi bi-info-circle me-1" style="color:var(--accent)"></i>
-                  Requiere WardNode WF activo. Al activar, instalarás CrowdSec en el host desde el panel.
-                </p>
-                {% endif %}
-                <details>
-                  <summary style="cursor:pointer;color:var(--text-muted);font-size:11px;user-select:none">
-                    ▸ Cómo desinstalar CrowdSec completamente del host
-                  </summary>
-                  <pre style="margin:8px 0 0 0;padding:10px 12px;background:#1a1a2e;color:#a8d8a8;border-radius:6px;font-size:10px;overflow-x:auto;white-space:pre;line-height:1.7"># Desinstalar paquetes
-sudo apt-get purge -y crowdsec crowdsec-firewall-bouncer-iptables
-sudo apt-get autoremove -y
-
-# Eliminar sudoers y script de control
-sudo rm -f /etc/sudoers.d/wardnode-cs
-sudo rm -f /opt/wardnode/wardnode-cs-control.sh</pre>
-                </details>
-              </div>
-              {% endif %}
-
               {% if module.id == 'wf' %}
               <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:11px 13px;margin-bottom:14px;font-size:11px;line-height:1.6">
                 {% if not enabled %}
@@ -146,7 +127,6 @@ sudo systemctl daemon-reload
 # Eliminar archivos del agente y sudoers
 sudo rm -rf /opt/wardnode
 sudo rm -f /etc/sudoers.d/wardnode-wf
-sudo rm -f /etc/sudoers.d/wardnode-cs
 sudo rm -f /etc/tmpfiles.d/wardnode.conf
 
 # Eliminar usuario y grupo del sistema

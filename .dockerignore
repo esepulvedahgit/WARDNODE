@@ -1,0 +1,50 @@
+# Exported images
+export/
+
+# Secrets y claves SSH
+esepulvedah@*
+root@*
+*.pem
+*.key
+*.p12
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Dev / CI
+.claude/
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dev DB
+instance/
+*.db
+*.sqlite3
+
+# Generated configs (se generan en runtime)
+generated/
+
+# Docs
+docs/
+README.md
+SECURITY.md
+CHANGELOG.md
+CLAUDE.md
+
+# Compose files (no necesarios en la imagen)
+docker-compose*.yml

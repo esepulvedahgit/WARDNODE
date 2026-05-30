@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# WardNode — Instalación del agente WF y CrowdSec en el host
-# También instala CrowdSec (desactivado) listo para el módulo CS.
+# WardNode — Instalación del agente WF en el host
 # Uso: sudo bash install.sh   — Idempotente.
 set -euo pipefail
 
@@ -9,14 +8,10 @@ AGENT_SRC="$SCRIPT_DIR/wardnode-wf-agent.py"
 AGENT_DEST="/opt/wardnode/wardnode-wf-agent.py"
 IPV6_SCRIPT_SRC="$SCRIPT_DIR/wardnode-set-ipv6.sh"
 IPV6_SCRIPT_DEST="/opt/wardnode/wardnode-set-ipv6.sh"
-CS_CONTROL_SRC="$SCRIPT_DIR/wardnode-cs-control.sh"
-CS_CONTROL_DEST="/opt/wardnode/wardnode-cs-control.sh"
 SERVICE_SRC="$SCRIPT_DIR/wardnode-wf.service"
 SOCKET_DIR="/run/wardnode"
 TMPFILES_CONF="/etc/tmpfiles.d/wardnode.conf"
 SERVICE_NAME="wardnode-wf"
-ACQUIS_FILE="/etc/crowdsec/acquis.yaml"
-CS_CONFIG="/etc/crowdsec/config.yaml"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}  $*"; }
@@ -37,13 +32,34 @@ echo "  WardNode — Instalación del agente"
 echo "═══════════════════════════════════════════════"
 echo ""
 
-# ── 1. UFW ────────────────────────────────────────
+# ── 1. UFW + iptables-persistent ─────────────────
+if ! command -v netfilter-persistent &>/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent
+    ok "iptables-persistent instalado"
+else
+    ok "iptables-persistent ya instalado"
+fi
+
 if ! command -v ufw &>/dev/null; then
     warn "UFW no instalado — instalando..."
     apt-get update -qq && apt-get install -y -qq ufw
     ok "UFW instalado"
 else
     ok "UFW encontrado"
+fi
+ufw logging low >/dev/null 2>&1 || warn "No se pudo activar logging UFW low todavía"
+touch /var/log/ufw.log 2>/dev/null || true
+chmod 640 /var/log/ufw.log 2>/dev/null || true
+
+# Garantizar que rsyslog enruta los eventos UFW al archivo de log
+if ! systemctl is-active --quiet rsyslog 2>/dev/null; then
+    apt-get install -y -qq rsyslog && systemctl enable --now rsyslog
+    ok "rsyslog instalado y activo"
+fi
+if [ ! -f /etc/rsyslog.d/20-ufw.conf ]; then
+    printf ':msg,contains,"[UFW " /var/log/ufw.log\n& ~\n' > /etc/rsyslog.d/20-ufw.conf
+    systemctl restart rsyslog 2>/dev/null || true
+    ok "rsyslog configurado para logs UFW"
 fi
 
 # ── 2. Grupo dedicado wardnode (GID fijo 1500) ───
@@ -76,105 +92,7 @@ chown root:root "$IPV6_SCRIPT_DEST"
 chmod 755 "$IPV6_SCRIPT_DEST"
 ok "Script IPv6 instalado en $IPV6_SCRIPT_DEST"
 
-# ── 6. Instalar CrowdSec (módulo CS) ──────────────
-echo ""
-echo "  → Preparando CrowdSec (módulo CS)…"
-
-if command -v cscli &>/dev/null; then
-    ok "CrowdSec ya instalado: $(cscli version 2>/dev/null | head -1 || echo 'versión desconocida')"
-else
-    warn "Instalando CrowdSec + firewall bouncer..."
-
-    # Eliminar fuentes y keyrings previos (evita conflicto si ya hubo instalación previa)
-    rm -f /etc/apt/sources.list.d/crowdsec*.list \
-          /etc/apt/sources.list.d/crowdsec*.sources \
-          /etc/apt/sources.list.d/*crowdsec*.list \
-          /etc/apt/sources.list.d/*crowdsec*.sources \
-          /etc/apt/keyrings/crowdsec*.gpg \
-          /etc/apt/keyrings/*crowdsec*.gpg \
-          /usr/share/keyrings/crowdsec*.gpg \
-          /usr/share/keyrings/*crowdsec*.gpg 2>/dev/null || true
-
-    apt-get install -y -qq curl gnupg ca-certificates
-
-    curl -fsSL https://packagecloud.io/crowdsec/crowdsec/gpgkey \
-        | gpg --dearmor -o /usr/share/keyrings/crowdsec-archive-keyring.gpg
-    chmod 644 /usr/share/keyrings/crowdsec-archive-keyring.gpg
-
-    . /etc/os-release
-    echo "deb [signed-by=/usr/share/keyrings/crowdsec-archive-keyring.gpg] \
-https://packagecloud.io/crowdsec/crowdsec/${ID} ${VERSION_CODENAME} main" \
-        > /etc/apt/sources.list.d/crowdsec.list
-
-    apt-get update -qq
-    apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables
-    ok "CrowdSec + bouncer instalados"
-fi
-
-# ── 7. Colección SSH (brute-force protection) ────
-if ! cscli collections list 2>/dev/null | grep -q "crowdsecurity/sshd"; then
-    warn "Instalando colección crowdsecurity/sshd..."
-    cscli collections install crowdsecurity/sshd
-    ok "Colección SSH instalada"
-else
-    ok "Colección crowdsecurity/sshd ya instalada"
-fi
-
-# ── 8. Adquisición de logs SSH ───────────────────
-if [ -f "$ACQUIS_FILE" ] && grep -q "auth.log" "$ACQUIS_FILE" 2>/dev/null; then
-    ok "Adquisición de /var/log/auth.log ya configurada"
-else
-    warn "Configurando adquisición de /var/log/auth.log..."
-    cat >> "$ACQUIS_FILE" << 'ACQUIS_EOF'
-
----
-filenames:
-  - /var/log/auth.log
-  - /var/log/syslog
-labels:
-  type: syslog
-ACQUIS_EOF
-    ok "Adquisición configurada en $ACQUIS_FILE"
-fi
-
-# ── 9. Prometheus CrowdSec en 127.0.0.1 ──────────
-if [ -f "$CS_CONFIG" ]; then
-    if grep -q "listen_addr:" "$CS_CONFIG"; then
-        sed -i 's/listen_addr:.*/listen_addr: 127.0.0.1/' "$CS_CONFIG"
-    elif grep -q "^prometheus:" "$CS_CONFIG"; then
-        sed -i '/^prometheus:/a\  listen_addr: 127.0.0.1' "$CS_CONFIG"
-    else
-        cat >> "$CS_CONFIG" << 'CS_PROM_EOF'
-
-prometheus:
-  enabled: true
-  level: full
-  listen_addr: 127.0.0.1
-  listen_port: 6060
-CS_PROM_EOF
-    fi
-    ok "CrowdSec prometheus en 127.0.0.1:6060"
-else
-    warn "No se encontró $CS_CONFIG — omitiendo configuración de métricas"
-fi
-
-# ── 10. Script de control CS ─────────────────────
-if [ -f "$CS_CONTROL_SRC" ]; then
-    cp "$CS_CONTROL_SRC" "$CS_CONTROL_DEST"
-    chown root:root "$CS_CONTROL_DEST"
-    chmod 755 "$CS_CONTROL_DEST"
-    ok "Script de control CS instalado en $CS_CONTROL_DEST"
-else
-    warn "wardnode-cs-control.sh no encontrado — reinstala para habilitar el módulo CS"
-fi
-
-# ── 11. Dejar CrowdSec DESACTIVADO ───────────────
-# El módulo CS lo activa cuando el usuario lo habilita desde el panel.
-systemctl disable crowdsec crowdsec-firewall-bouncer 2>/dev/null || true
-systemctl stop crowdsec crowdsec-firewall-bouncer 2>/dev/null || true
-ok "CrowdSec desactivado — se activa al habilitar el módulo WardNode CS"
-
-# ── 12. Servicio systemd del agente WF ───────────
+# ── 6. Servicio systemd del agente WF ────────────
 echo ""
 echo "  → Iniciando agente WF…"
 
@@ -209,6 +127,6 @@ systemctl status "$SERVICE_NAME" --no-pager -l | head -8
 echo ""
 echo "  Próximos pasos:"
 echo "  1. Activa el módulo 'WardNode WF' desde el panel"
-echo "  2. Para habilitar CrowdSec activa el módulo 'WardNode CS'"
+echo "  2. Configura el dominio de consola para asegurar el puerto 5000 automáticamente"
 echo "═══════════════════════════════════════════════"
 echo ""

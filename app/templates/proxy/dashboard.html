@@ -33,10 +33,10 @@
   </div>
 
   <div class="kpi-card">
-    <span class="kpi-label">Eventos · 24h</span>
+    <span class="kpi-label">Actividades · 24h</span>
     <span class="kpi-value">{{ stats.events_24h | default(0) }}</span>
     <span class="kpi-delta {% if stats.events_24h > 0 %}down{% else %}flat{% endif %}">
-      {% if stats.events_24h > 0 %}<i class="bi bi-arrow-up-short"></i>detecciones{% else %}sin eventos{% endif %}
+      {% if stats.events_24h > 0 %}<i class="bi bi-arrow-up-short"></i>bloqueos + detecciones{% else %}sin actividad{% endif %}
     </span>
     <div class="kpi-chart-wrap">
       <canvas id="kpiChart1"></canvas>
@@ -109,35 +109,8 @@
             {% endfor %}
           </div>
 
-          <script>
-          (function() {
-            const geoData = {{ geo_data | tojson }};
-            const nameMap = {{ country_names | tojson }};
-            new jsVectorMap({
-              selector: '#threat-map',
-              map: 'world',
-              zoomButtons: false,
-              zoomOnScroll: false,
-              backgroundColor: 'transparent',
-              series: {
-                regions: [{
-                  values: geoData,
-                  scale: ['#fee2e2', '#dc2626'],
-                  normalizeFunction: 'polynomial',
-                }]
-              },
-              regionStyle: {
-                initial:  { fill: '#e2e8f0', stroke: '#ffffff', strokeWidth: 0.3 },
-                hover:    { fill: '#f59e0b', cursor: 'pointer' },
-                selected: { fill: '#f59e0b' },
-              },
-              onRegionTooltipShow(_, tooltip, code) {
-                const count = geoData[code] || 0;
-                const name  = nameMap[code]  || code;
-                tooltip.text(count > 0 ? `${name} · ${count} amenazas` : name, true);
-              },
-            });
-          })();
+          <script id="geo-data-json" type="application/json">
+            { "geoData": {{ geo_data | tojson }}, "nameMap": {{ country_names | tojson }} }
           </script>
 
         {% else %}
@@ -203,22 +176,6 @@
             <span class="module-version">wardnode-proxy</span>
           </div>
           {% if service_states.proxy %}
-            <span class="badge-running">running</span>
-          {% else %}
-            <span class="badge-offline">offline</span>
-          {% endif %}
-        </div>
-
-        {# CrowdSec (módulo de host — estado por AppConfig) #}
-        <div class="module-item">
-          <div class="module-icon" style="background:#eff6ff;color:#2563eb">
-            <i class="bi bi-shield-fill-check"></i>
-          </div>
-          <div class="module-info">
-            <span class="module-name">CrowdSec IDS/IPS</span>
-            <span class="module-version">WardNode CS · host</span>
-          </div>
-          {% if service_states.crowdsec %}
             <span class="badge-running">running</span>
           {% else %}
             <span class="badge-offline">offline</span>
@@ -313,53 +270,7 @@
 
 </div>{# /dash-grid #}
 
-{# ── Offcanvas: new site ───────────────────────────────────────────── #}
-<div class="offcanvas offcanvas-end" tabindex="-1" id="newSiteCanvas" style="width:400px">
-  <div class="offcanvas-header">
-    <h5 class="offcanvas-title">
-      <i class="bi bi-plus-circle me-2" style="color:var(--accent)"></i>Nuevo sitio
-    </h5>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
-  </div>
-  <div class="offcanvas-body">
-    <form method="post" action="{{ url_for('proxy.create_site') }}" class="vstack gap-3">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div>
-        <label class="form-label" for="name">Nombre del sitio</label>
-        <input class="form-control" id="name" name="name" placeholder="Portal clientes" required>
-      </div>
-      <div>
-        <label class="form-label" for="domain">Dominio</label>
-        <input class="form-control" id="domain" name="domain" placeholder="app.example.com" required>
-      </div>
-      <div>
-        <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
-        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
-      </div>
-      <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" checked>
-        <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
-      </div>
-      <div class="form-check form-switch">
-        <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled">
-        <label class="form-check-label" for="letsencrypt_enabled">Usar Let's Encrypt</label>
-      </div>
-      <div class="row g-2">
-        <div class="col-12">
-          <label class="form-label" for="custom_certificate_path">Certificado (opcional)</label>
-          <input class="form-control" id="custom_certificate_path" name="custom_certificate_path" placeholder="/etc/nginx/certs/fullchain.pem">
-        </div>
-        <div class="col-12">
-          <label class="form-label" for="custom_certificate_key_path">Llave privada (opcional)</label>
-          <input class="form-control" id="custom_certificate_key_path" name="custom_certificate_key_path" placeholder="/etc/nginx/certs/privkey.pem">
-        </div>
-      </div>
-      <button class="btn btn-primary" type="submit">
-        <i class="bi bi-check2 me-1"></i>Guardar sitio
-      </button>
-    </form>
-  </div>
-</div>
+{% include 'proxy/_new_site_offcanvas.html' %}
 
 {% endblock %}
 
@@ -367,6 +278,37 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/css/jsvectormap.min.css">
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/js/jsvectormap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsvectormap@1.5.3/dist/maps/world.js"></script>
+<script>
+(function() {
+  const raw = document.getElementById('geo-data-json');
+  if (!raw) return;
+  const { geoData, nameMap } = JSON.parse(raw.textContent);
+  new jsVectorMap({
+    selector: '#threat-map',
+    map: 'world',
+    zoomButtons: false,
+    zoomOnScroll: false,
+    backgroundColor: 'transparent',
+    series: {
+      regions: [{
+        values: geoData,
+        scale: ['#fee2e2', '#dc2626'],
+        normalizeFunction: 'polynomial',
+      }]
+    },
+    regionStyle: {
+      initial:  { fill: '#e2e8f0', stroke: '#ffffff', strokeWidth: 0.3 },
+      hover:    { fill: '#f59e0b', cursor: 'pointer' },
+      selected: { fill: '#f59e0b' },
+    },
+    onRegionTooltipShow(_, tooltip, code) {
+      const count = geoData[code] || 0;
+      const name  = nameMap[code]  || code;
+      tooltip.text(count > 0 ? `${name} · ${count} amenazas` : name, true);
+    },
+  });
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function() {

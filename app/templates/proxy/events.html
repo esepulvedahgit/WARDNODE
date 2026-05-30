@@ -32,9 +32,9 @@
            class="sev-tab sev-tab-high {% if severity == 'high' %}sev-tab-active{% endif %}">
           High <span class="sev-count">{{ counts.high }}</span>
         </a>
-        <a href="{{ url_for('proxy.events_list', severity='warning', action=action or None) }}"
-           class="sev-tab sev-tab-warning {% if severity == 'warning' %}sev-tab-active{% endif %}">
-          Medium <span class="sev-count">{{ counts.warning }}</span>
+        <a href="{{ url_for('proxy.events_list', severity='medium', action=action or None) }}"
+           class="sev-tab sev-tab-warning {% if severity == 'medium' %}sev-tab-active{% endif %}">
+          Medium <span class="sev-count">{{ counts.medium }}</span>
         </a>
         <a href="{{ url_for('proxy.events_list', severity='low', action=action or None) }}"
            class="sev-tab sev-tab-low {% if severity == 'low' %}sev-tab-active{% endif %}">

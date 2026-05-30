@@ -1,0 +1,74 @@
+{# ── Offcanvas: nuevo sitio ───────────────────────────────────────── #}
+<div class="offcanvas offcanvas-end" tabindex="-1" id="newSiteCanvas" style="width:400px">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title">
+      <i class="bi bi-plus-circle me-2" style="color:var(--accent)"></i>Nuevo sitio
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    <form method="post" action="{{ url_for('proxy.create_site') }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div>
+        <label class="form-label" for="name">Nombre del sitio</label>
+        <input class="form-control" id="name" name="name" placeholder="Portal clientes" required>
+      </div>
+      <div>
+        <label class="form-label" for="domain">Dominio</label>
+        <input class="form-control" id="domain" name="domain" placeholder="app.example.com" required>
+      </div>
+      <div>
+        <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
+        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
+        <div style="margin-top:6px;padding:8px 10px;background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color,#e2e8f0);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
+          <div style="margin-bottom:4px">
+            <i class="bi bi-box me-1" style="color:var(--accent)"></i>
+            <strong>Contenedor Docker</strong> — usa el nombre del servicio:<br>
+            <code>http://mi-app:8080</code>
+            <span style="color:var(--text-muted)"> · el contenedor debe estar en la red <code>wardnode_internal</code></span>
+          </div>
+          <div>
+            <i class="bi bi-hdd me-1" style="color:var(--accent)"></i>
+            <strong>Puerto en el host</strong> — usa el DNS especial de Docker:<br>
+            <code>http://host.docker.internal:3000</code>
+            <span style="color:var(--text-muted)"> · requiere <code>extra_hosts: host-gateway</code> en el proxy</span>
+          </div>
+          {% if not module_wf_enabled %}
+          <div style="margin-top:8px;padding:6px 10px;background:#fff8e1;border:1px solid #f9a825;border-radius:5px;color:#7a5200;font-size:11px">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Para crear sitios con upstream <code>host.docker.internal:*</code> debes activar primero el módulo <strong>WardNode WF</strong>.
+          </div>
+          {% else %}
+          <div style="margin-top:8px;padding:6px 10px;background:#e8f5e9;border:1px solid #66bb6a;border-radius:5px;color:#1b5e20;font-size:11px">
+            <i class="bi bi-shield-check me-1"></i>
+            Los upstreams en <code>host.docker.internal:*</code> quedan protegidos automáticamente: el puerto se bloquea en iptables y solo el proxy WAF puede alcanzarlo.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled">
+        <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
+      </div>
+      <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled">
+        <label class="form-check-label" for="letsencrypt_enabled">Usar Let's Encrypt</label>
+      </div>
+      <div class="row g-2">
+        <div class="col-12">
+          <label class="form-label" for="custom_certificate_path">Certificado (opcional)</label>
+          <input class="form-control" id="custom_certificate_path" name="custom_certificate_path" placeholder="/etc/nginx/certs/fullchain.pem">
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="custom_certificate_key_path">Llave privada (opcional)</label>
+          <input class="form-control" id="custom_certificate_key_path" name="custom_certificate_key_path" placeholder="/etc/nginx/certs/privkey.pem">
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit" :disabled="s">
+        <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+        <i x-show="!s" class="bi bi-check2 me-1"></i>
+        <span x-text="s ? 'Guardando…' : 'Guardar sitio'"></span>
+      </button>
+    </form>
+  </div>
+</div>

@@ -29,6 +29,8 @@ class ProductionConfig(Config):
     # Defaults to True in production; set SESSION_COOKIE_SECURE=false in .env.prod for HTTP-only testing
     SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
+    # Disable SSL-strict CSRF check — avoids false positives when a proxy passes X-Forwarded-Proto:https
+    WTF_CSRF_SSL_STRICT = False
 
 
 class TestConfig(Config):

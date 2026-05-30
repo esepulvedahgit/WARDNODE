@@ -21,7 +21,7 @@ def test_create_initial_admin_and_login(client):
     )
 
     assert response.status_code == 200
-    assert "Iniciar sesion" in response.get_data(as_text=True)
+    assert "Iniciar sesi" in response.get_data(as_text=True)
 
     response = client.post(
         "/auth/login",
@@ -111,7 +111,7 @@ def test_password_reset_flow_after_admin_exists(client, user_factory):
     )
     body = response.get_data(as_text=True)
 
-    assert "Enlace de recuperacion temporal" in body
+    assert "Enlace de recuperaci" in body
     token_start = body.split("/auth/reset-password/")[1].split('"')[0]
     token = token_start.replace("amp;", "")
 
@@ -123,7 +123,7 @@ def test_password_reset_flow_after_admin_exists(client, user_factory):
         },
         follow_redirects=True,
     )
-    assert "Iniciar sesion" in response.get_data(as_text=True)
+    assert "Iniciar sesi" in response.get_data(as_text=True)
 
     response = client.post(
         "/auth/login",

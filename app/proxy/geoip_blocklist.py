@@ -63,21 +63,24 @@ COUNTRY_NAMES: dict[str, str] = {
 }
 
 
-def write_blocklist_conf() -> Path:
-    """Write 10-blocklist.conf from GeoBlocklistEntry table and return the path."""
-    from app.models import GeoBlocklistEntry
+def write_blocklist_conf(site=None) -> list[Path]:
+    """Write per-site 10-blocklist-site-{id}.map files and return their paths."""
+    from app.models import Site
 
     output_dir = Path(current_app.config["PROXY_CONFIG_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "10-blocklist.map"
 
-    entries = GeoBlocklistEntry.query.filter_by(enabled=True).all()
-    lines = ["# WardNode GeoIP country blocklist — generated automatically. Do not edit.\n"]
-    for entry in entries:
-        lines.append(f"{entry.country_code} 1;  # {entry.country_name}\n")
-
-    path.write_text("".join(lines), encoding="utf-8")
-    return path
+    sites = [site] if site is not None else Site.query.all()
+    paths = []
+    for s in sites:
+        blocked = [e for e in s.geo_blocklist if e.enabled]
+        lines = [f"# WardNode GeoIP blocklist — site {s.id} ({s.domain}). Do not edit.\n"]
+        for entry in blocked:
+            lines.append(f"    {entry.country_code} 1;  # {entry.country_name}\n")
+        path = output_dir / f"10-blocklist-site-{s.id}.map"
+        path.write_text("".join(lines), encoding="utf-8")
+        paths.append(path)
+    return paths
 
 
 def reload_nginx() -> tuple[bool, str]:

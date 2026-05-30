@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import threading
 import time
 
 from flask import jsonify, redirect, render_template, request, url_for
@@ -8,8 +9,8 @@ from flask_login import current_user
 
 from app.audit.helpers import log_audit
 from app.auth.decorators import roles_required
-from app.extensions import db
-from app.models import AppConfig, ROLE_ADMIN
+from app.extensions import db, limiter
+from app.models import AppConfig, ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER
 from app.modules import bp
 from app.modules.socket_client import (
     SOCKET_PATH,
@@ -33,15 +34,6 @@ MODULES = [
         "endpoint": "modules.wf_index",
     },
     {
-        "id": "cs",
-        "name": "WardNode CS",
-        "description": "Protección IDS/IPS con CrowdSec. Detecta ataques SSH y bloquea IPs "
-                       "automáticamente en el firewall del host. Requiere WardNode WF activo.",
-        "icon": "bi-shield-shaded",
-        "config_key": "module_cs_enabled",
-        "endpoint": "modules.cs_index",
-    },
-    {
         "id": "obs",
         "name": "WardNode OBS",
         "description": "Observabilidad centralizada: logs WAF, nginx, ModSecurity y SSH "
@@ -51,6 +43,34 @@ MODULES = [
         "endpoint": "modules.obs_index",
     },
 ]
+
+
+# ── Helpers para bloqueo diferido del puerto 5000 ─────────────────────
+
+def _get_console_url() -> str | None:
+    """Devuelve http://<dominio> si hay un site de consola configurado."""
+    from app.models import Site
+    cid = AppConfig.get("console_site_id")
+    if cid and cid.isdigit():
+        site = db.session.get(Site, int(cid))
+        if site and site.domain:
+            return f"http://{site.domain}"
+    return None
+
+
+def _secure_port_async(delay: float = 5.0) -> None:
+    """Bloquea el puerto 5000 en un thread background con delay.
+
+    El delay garantiza que la HTTP response activa llegue al cliente antes
+    de que iptables corte la conexión TCP al puerto 5000.
+    """
+    def _worker():
+        time.sleep(delay)
+        try:
+            send_command("secure_console_port", timeout=15)
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 @bp.get("/")
@@ -69,30 +89,43 @@ def toggle(name: str):
         return jsonify({"ok": False, "error": "Módulo desconocido"}), 404
     current = AppConfig.get(module["config_key"]) == "1"
 
-    if name == "cs" and not current:
-        if AppConfig.get("module_wf_enabled") != "1":
-            flash("WardNode WF debe estar activo para activar WardNode CS.", "danger")
-            return redirect(url_for("modules.index"))
-
     if name == "obs" and not current:
         flash("Usa el botón 'Activar' para iniciar el proceso de verificación de OBS.", "info")
         return redirect(url_for("modules.index"))
 
-    if name == "cs":
-        action = "cs_stop_services" if current else "cs_start_services"
-        result = send_command(action)
-        if not result.get("ok"):
-            err = result.get("error", "error desconocido")
-            if current:
+    new_state = not current
+
+    if name == "wf" and new_state:
+        console_site_id = AppConfig.get("console_site_id")
+        if not console_site_id or not console_site_id.isdigit():
+            flash(
+                "Debes configurar el dominio de acceso al panel "
+                "(Ajustes → Acceso al panel) antes de activar el módulo WardNode WF.",
+                "danger",
+            )
+            return redirect(url_for("modules.index"))
+
+        AppConfig.set(module["config_key"], "1")
+        log_audit("module.toggle", resource_type="module", resource_name=name,
+                  detail={"enabled": True})
+
+        # Si el agente ya está instalado, bloquear el puerto 5000 de forma diferida
+        # para que este redirect llegue al cliente antes de que iptables corte TCP:5000.
+        if os.path.exists(SOCKET_PATH):
+            console_url = _get_console_url()
+            if console_url:
+                _secure_port_async(delay=5)
                 flash(
-                    f"Módulo desactivado, pero no se pudieron detener los servicios en el host: {err}. "
-                    "Puedes detenerlos manualmente: sudo systemctl stop crowdsec crowdsec-firewall-bouncer",
+                    "WardNode WF activado. El acceso por el puerto 5000 quedará bloqueado "
+                    f"en segundos — continúa desde tu dominio: {console_url}",
                     "warning",
                 )
-            # Si falla al iniciar (e.g. CS no instalado aún) no mostramos nada —
-            # el panel CS mostrará el formulario de instalación normalmente.
+                login_url = console_url + url_for("auth.login") + "?reason=port_secured"
+                return redirect(login_url)
 
-    new_state = not current
+        flash("WardNode WF activado.", "success")
+        return redirect(url_for("modules.index"))
+
     AppConfig.set(module["config_key"], "1" if new_state else "0")
     log_audit("module.toggle", resource_type="module", resource_name=name,
               detail={"enabled": new_state})
@@ -113,8 +146,7 @@ def _wf_required():
 def wf_index():
     if (r := _wf_required()):
         return r
-    ssh_hardened = AppConfig.get("wf_ssh_hardened") == "1"
-    return render_template("modules/wf.html", socket_path=SOCKET_PATH, ssh_hardened=ssh_hardened)
+    return render_template("modules/wf.html", socket_path=SOCKET_PATH)
 
 
 _SSH_USER_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
@@ -123,7 +155,6 @@ _AGENT_FILES = [
     "/app/host-agent/wardnode-wf-agent.py",
     "/app/host-agent/wardnode-wf.service",
     "/app/host-agent/wardnode-set-ipv6.sh",
-    "/app/host-agent/wardnode-cs-control.sh",
     "/app/host-agent/install.sh",
 ]
 
@@ -251,6 +282,9 @@ def wf_install():
 
         client.close()
 
+        # Dar tiempo al servicio wardnode-wf para arrancar completamente
+        time.sleep(3)
+
         from app.encryption import encrypt_secret, EncryptionNotConfigured
         key_stored = True
         try:
@@ -261,12 +295,23 @@ def wf_install():
 
         log_audit("module.wf_install", resource_type="module", resource_name="wardnode-wf",
                   detail={"port": ssh_port_raw, "key_stored": key_stored})
-        # Limpiar flag de hardening si es una reinstalación (el host puede haber cambiado)
-        AppConfig.set("wf_ssh_hardened", "0")
+
+        # Si hay dominio de consola configurado, programar el bloqueo del puerto 5000
+        # con delay para que esta respuesta JSON llegue al cliente antes de que
+        # iptables corte la conexión TCP:5000.
+        console_url = None
+        port_will_be_blocked = False
+        if AppConfig.get("console_site_id") and os.path.exists(SOCKET_PATH):
+            console_url = _get_console_url()
+            if console_url:
+                port_will_be_blocked = True
+                _secure_port_async(delay=5)
 
         return jsonify({
             "ok": True,
             "output": output,
+            "console_url": console_url,
+            "port_will_be_blocked": port_will_be_blocked,
             "warning": None if key_stored else (
                 "WARDNODE_SECRET_KEY no configurada — la clave SSH NO fue almacenada. "
                 "Configura la variable y reinstala."
@@ -358,23 +403,8 @@ def wf_generate_key():
         except EncryptionNotConfigured:
             key_stored = False
 
-        # Hardening SSH opcional — aplicar mientras la sesión con password sigue activa
-        ssh_hardened = False
-        if request.form.get("harden_ssh") == "1":
-            harden_cmd = (
-                "grep -qE '^\\s*PermitRootLogin' /etc/ssh/sshd_config "
-                "&& sed -i 's/^\\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config "
-                "|| echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; "
-                "systemctl reload sshd"
-            )
-            _, h_out, h_err = client.exec_command(harden_cmd, timeout=15)
-            if h_out.channel.recv_exit_status() == 0:
-                AppConfig.set("wf_ssh_hardened", "1")
-                ssh_hardened = True
-
         return jsonify({
             "ok": True,
-            "ssh_hardened": ssh_hardened,
             "warning": None if key_stored else (
                 "WARDNODE_SECRET_KEY no configurada — la clave SSH NO fue almacenada. "
                 "Configura la variable y reinstala para habilitar auto-reutilización en CS."
@@ -406,6 +436,7 @@ def wf_status():
         result["initialized"] = "deny (incoming)" in verbose_out.lower()
         result["defaults_output"] = verbose_out
     return jsonify(result)
+
 
 
 @bp.post("/wf/init")
@@ -495,145 +526,80 @@ def wf_set_ipv6():
     return jsonify(send_command("set_ipv6", enabled=(enabled_str == "true")))
 
 
-@bp.post("/wf/harden-ssh")
-@roles_required(ROLE_ADMIN)
-def wf_harden_ssh():
-    """Aplica PermitRootLogin prohibit-password en sshd_config del host (login root solo por llave)."""
-    if AppConfig.get("module_wf_enabled") != "1":
+@bp.post("/wf/docker-ports")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+@limiter.limit("30 per minute")
+def wf_docker_ports():
+    r = _wf_required()
+    if r:
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
-
-    try:
-        import paramiko
-    except ImportError:
-        return jsonify({"ok": False, "error": "Dependencia 'paramiko' no instalada en el contenedor."}), 500
-
-    ssh_port_raw = AppConfig.get("wf_ssh_port") or "22"
-    try:
-        ssh_port = int(ssh_port_raw)
-        if not (1 <= ssh_port <= 65535):
-            raise ValueError
-    except ValueError:
-        return jsonify({"ok": False, "error": "Puerto SSH inválido en configuración"}), 400
-
-    try:
-        ssh_key_text = AppConfig.get_secret("wf_ssh_private_key") or ""
-    except Exception:
-        ssh_key_text = ""
-    if not ssh_key_text:
-        return jsonify({"ok": False, "error": "Clave SSH no disponible — genera una desde el módulo WF"}), 400
-
-    key = None
-    for key_cls in (paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey):
-        try:
-            key = key_cls.from_private_key(io.StringIO(ssh_key_text))
-            break
-        except Exception:
-            continue
-    if key is None:
-        return jsonify({"ok": False, "error": "Clave SSH almacenada no es válida"}), 400
-
-    client, stored_b64, tofu_policy = _make_ssh_client(_SSH_HOST, ssh_port)
-    try:
-        client.connect(_SSH_HOST, port=ssh_port, username="root", pkey=key, timeout=15)
-        _tofu_persist(stored_b64, tofu_policy)
-
-        # Actualizar PermitRootLogin si existe la directiva, añadirla si no
-        harden_cmd = (
-            "grep -qE '^\\s*PermitRootLogin' /etc/ssh/sshd_config "
-            "&& sed -i 's/^\\s*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config "
-            "|| echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; "
-            "systemctl reload sshd && echo 'SSH hardening aplicado'"
-        )
-        _, stdout, stderr_ch = client.exec_command(harden_cmd, timeout=15)
-        exit_code = stdout.channel.recv_exit_status()
-        out = stdout.read().decode("utf-8", errors="replace").strip()
-        err = stderr_ch.read().decode("utf-8", errors="replace").strip()
-        output = f"{out}\n{err}".strip() if err else out
-
-        if exit_code != 0:
-            return jsonify({"ok": False, "error": f"Falló al modificar sshd_config: {output or 'sin detalle (revisar stderr del host)'}"}), 500
-
-        AppConfig.set("wf_ssh_hardened", "1")
-        return jsonify({"ok": True, "output": output})
-
-    except paramiko.AuthenticationException:
-        return jsonify({"ok": False, "error": "Autenticación SSH fallida"}), 401
-    except (paramiko.SSHException, OSError) as e:
-        return jsonify({"ok": False, "error": f"Error de conexión SSH: {e}"}), 500
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+    return jsonify(send_command("list_docker_ports", timeout=20))
 
 
-# ── WardNode CS ───────────────────────────────────────────────────────
+@bp.post("/wf/protect-port")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def wf_protect_port():
+    r = _wf_required()
+    if r:
+        return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
+    port = request.form.get("port", "").strip()
+    if not valid_port(port):
+        return jsonify({"ok": False, "error": "Puerto inválido (1–65535)"}), 400
+    result = send_command("protect_host_port", port=port, timeout=15)
+    if result.get("ok"):
+        log_audit("wf.protect_port", resource_type="port", resource_name=port,
+                  detail={"source": "wf_panel"})
+    return jsonify(result)
 
-_CS_DURATION_VALUES = {"1h", "24h", "7d", "0s"}
-_CS_REASON_RE = re.compile(r"^[\w\-]{1,64}$")
+
+@bp.post("/wf/unprotect-port")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def wf_unprotect_port():
+    r = _wf_required()
+    if r:
+        return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
+    port = request.form.get("port", "").strip()
+    if not valid_port(port):
+        return jsonify({"ok": False, "error": "Puerto inválido (1–65535)"}), 400
+    result = send_command("unprotect_host_port", port=port, timeout=15)
+    if result.get("ok"):
+        log_audit("wf.unprotect_port", resource_type="port", resource_name=port,
+                  detail={"source": "wf_panel"})
+    return jsonify(result)
 
 
-def _cs_required():
-    """Returns None if access is allowed, otherwise a redirect response."""
-    if AppConfig.get("module_wf_enabled") != "1":
-        return redirect(url_for("modules.index"))
-    if AppConfig.get("module_cs_enabled") != "1":
-        return redirect(url_for("modules.index"))
-    return None
-
-
-@bp.get("/cs/")
+@bp.post("/wf/limit-ssh")
 @roles_required(ROLE_ADMIN)
-def cs_index():
-    if (r := _cs_required()):
-        return r
-    return render_template("modules/cs.html", socket_path=SOCKET_PATH)
+@limiter.limit("10 per minute")
+def wf_limit_ssh():
+    r = _wf_required()
+    if r:
+        return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
+    port = request.form.get("port", "22").strip()
+    if not valid_port(port):
+        return jsonify({"ok": False, "error": "Puerto inválido"}), 400
+    result = send_command("limit_port", port=port, timeout=15)
+    if result.get("ok"):
+        log_audit("wf.limit_ssh", resource_type="port", resource_name=port)
+    return jsonify(result)
 
 
-@bp.post("/cs/status")
+@bp.post("/wf/unlimit-ssh")
 @roles_required(ROLE_ADMIN)
-def cs_status():
-    if (r := _cs_required()):
-        return jsonify({"ok": False, "error": "Módulo CS no habilitado"}), 403
-    return jsonify(send_command("cs_status"))
-
-
-@bp.post("/cs/decisions")
-@roles_required(ROLE_ADMIN)
-def cs_decisions():
-    if (r := _cs_required()):
-        return jsonify({"ok": False, "error": "Módulo CS no habilitado"}), 403
-    return jsonify(send_command("cs_decisions"))
-
-
-@bp.post("/cs/ban")
-@roles_required(ROLE_ADMIN)
-def cs_ban():
-    if (r := _cs_required()):
-        return jsonify({"ok": False, "error": "Módulo CS no habilitado"}), 403
-    ip = request.form.get("ip", "").strip()
-    duration = request.form.get("duration", "24h").strip()
-    reason = request.form.get("reason", "manual").strip() or "manual"
-    if not valid_ip(ip):
-        return jsonify({"ok": False, "error": "IP inválida"}), 400
-    if duration not in _CS_DURATION_VALUES:
-        return jsonify({"ok": False, "error": "Duración inválida"}), 400
-    if not _CS_REASON_RE.match(reason):
-        return jsonify({"ok": False, "error": "Razón inválida"}), 400
-    return jsonify(send_command("cs_ban", ip=ip, duration=duration, reason=reason))
-
-
-@bp.post("/cs/unban")
-@roles_required(ROLE_ADMIN)
-def cs_unban():
-    if (r := _cs_required()):
-        return jsonify({"ok": False, "error": "Módulo CS no habilitado"}), 403
-    ip = request.form.get("ip", "").strip()
-    if not valid_ip(ip):
-        return jsonify({"ok": False, "error": "IP inválida"}), 400
-    return jsonify(send_command("cs_unban", ip=ip))
+@limiter.limit("10 per minute")
+def wf_unlimit_ssh():
+    r = _wf_required()
+    if r:
+        return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
+    port = request.form.get("port", "22").strip()
+    if not valid_port(port):
+        return jsonify({"ok": False, "error": "Puerto inválido"}), 400
+    result = send_command("unlimit_port", port=port, timeout=15)
+    if result.get("ok"):
+        log_audit("wf.unlimit_ssh", resource_type="port", resource_name=port)
+    return jsonify(result)
 
 
 # ── WardNode OBS ──────────────────────────────────────────────────────
@@ -654,6 +620,7 @@ _OBS_NGINX_CONF = (
     "\n"
     "    location /obs/ {\n"
     "        modsecurity off;\n"
+    "        auth_request /_wardnode_obs_auth;\n"
     "        set $grafana_upstream http://grafana:3000;\n"
     "        proxy_pass         $grafana_upstream$request_uri;\n"
     "        proxy_set_header   Host              $host;\n"
@@ -664,7 +631,21 @@ _OBS_NGINX_CONF = (
     "        proxy_http_version 1.1;\n"
     "        proxy_set_header   Upgrade           $http_upgrade;\n"
     "        proxy_set_header   Connection        \"upgrade\";\n"
+    "        proxy_hide_header X-Frame-Options;\n"
+    "        proxy_hide_header Content-Security-Policy;\n"
+    "        add_header X-Frame-Options \"SAMEORIGIN\" always;\n"
+    "        add_header Content-Security-Policy \"frame-ancestors 'self'\" always;\n"
     "        proxy_read_timeout 300s;\n"
+    "    }\n"
+    "\n"
+    "    location = /_wardnode_obs_auth {\n"
+    "        internal;\n"
+    "        proxy_pass http://console:5000/modules/obs/auth;\n"
+    "        proxy_pass_request_body off;\n"
+    "        proxy_set_header Content-Length \"\";\n"
+    "        proxy_set_header X-Original-URI $request_uri;\n"
+    "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+    "        proxy_set_header Host $host;\n"
     "    }\n"
     "}\n"
 )
@@ -755,10 +736,15 @@ def obs_activate():
 
         try:
             result = subprocess.run(
-                ["docker", "compose", "-f", compose_file, "--profile", "obs", "up", "-d", "--no-build"],
+                [
+                    "docker", "compose", "-f", compose_file, "--profile", "obs",
+                    "up", "-d", "--no-build", "--no-deps", "--no-recreate",
+                    "loki", "grafana", "alloy", "prometheus",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=120,
+                cwd=project_dir,
             )
         except FileNotFoundError:
             return jsonify({
@@ -810,10 +796,30 @@ def obs_activate():
                      "Revisa logs con: docker logs <nombre>",
         }), 500
 
-    # ── Fase 4: inyectar obs.conf en el proxy y recargar ───────────────
-    _inject_obs_nginx_conf(client)
-
+    # ── Fase 4: habilitar OBS en configs de sites y recargar Nginx ─────
     AppConfig.set("module_obs_enabled", "1")
+
+    try:
+        from app.proxy.geoip_blocklist import reload_nginx
+        from app.proxy.services import render_nginx_configs
+
+        render_nginx_configs()
+        ok_reload, err_reload = reload_nginx()
+        if not ok_reload:
+            return jsonify({
+                "ok": False,
+                "step": "nginx",
+                "error": f"OBS activo, pero Nginx no pudo recargar: {err_reload}",
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "step": "nginx",
+            "error": f"OBS activo, pero no se pudieron regenerar configs Nginx: {e}",
+        }), 500
+
+    # Mantener obs.conf como fallback para instalaciones sin site configurado.
+    _inject_obs_nginx_conf(client)
     return jsonify({"ok": True})
 
 
@@ -823,6 +829,26 @@ def obs_index():
     if (r := _obs_required()):
         return r
     return render_template("modules/obs.html")
+
+
+@bp.get("/obs/fullscreen")
+@roles_required(ROLE_ADMIN)
+def obs_fullscreen():
+    if (r := _obs_required()):
+        return r
+    return render_template("modules/obs_fullscreen.html")
+
+
+@bp.get("/obs/auth")
+@limiter.exempt
+def obs_auth():
+    if AppConfig.get("module_obs_enabled") != "1":
+        return "", 403
+    if not current_user.is_authenticated:
+        return "", 401
+    if not current_user.has_role(ROLE_ADMIN):
+        return "", 403
+    return "", 204
 
 
 @bp.post("/obs/status")
@@ -851,6 +877,14 @@ def obs_status():
 
     # Re-inyectar obs.conf si el proxy fue reiniciado y lo perdió
     if grafana_ok:
+        try:
+            from app.proxy.geoip_blocklist import reload_nginx
+            from app.proxy.services import render_nginx_configs
+
+            render_nginx_configs()
+            reload_nginx()
+        except Exception:
+            pass
         _inject_obs_nginx_conf(client)
 
     return jsonify({
@@ -879,7 +913,6 @@ def _sys_container_states() -> dict:
         "grafana":    "wardnode-grafana"    in running,
         "alloy":      "wardnode-alloy"      in running,
         "prometheus": "wardnode-prometheus" in running,
-        "crowdsec":   AppConfig.get("module_cs_enabled") == "1",
         "fluent-bit": "wardnode-fluent-bit" in running,
     }
 
@@ -901,12 +934,6 @@ def sys_status():
 @roles_required(ROLE_ADMIN)
 def sys_restart(target: str):
     _DOCKER_TARGETS = {"proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit"}
-
-    if target == "crowdsec":
-        result = send_command("cs_restart_services")
-        if result.get("ok"):
-            return jsonify({"ok": True})
-        return jsonify({"ok": False, "error": result.get("error", "Error al reiniciar CrowdSec")}), 500
 
     if target in _DOCKER_TARGETS:
         container_name = f"wardnode-{target}"

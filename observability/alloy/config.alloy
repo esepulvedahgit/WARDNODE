@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WardNode Observability — Grafana Alloy
 //
-// Recolecta logs de NGINX, ModSecurity v3 y CrowdSec → Loki
-// Recolecta métricas del host (unix exporter) y CrowdSec → Prometheus
+// Recolecta logs de NGINX, ModSecurity v3 y UFW → Loki
+// Recolecta métricas del host (unix exporter) → Prometheus
 //
 // Labels de Loki en uso (baja cardinalidad):
 //   job, service, waf
@@ -25,20 +25,43 @@ prometheus.remote_write "prometheus" {
 }
 
 // ── Logs: ModSecurity v3 (SecAuditLogFormat JSON) ────────────────────────────
-// El volumen modsecurity_logs se monta en /var/log/modsec en el contenedor
-// de Alloy. ModSecurity escribe modsec_audit.log en la raíz del volumen.
+// La imagen OWASP CRS nginx escribe el JSON de auditoría a stdout del
+// contenedor, no a archivo. Leemos directamente desde Docker.
 
-local.file_match "modsecurity" {
-  path_targets = [{
-    "__path__" = "/var/log/modsec/modsec_audit.log",
-    "job"      = "modsecurity",
-    "service"  = "nginx",
-    "waf"      = "modsecurity",
-  }]
+discovery.docker "proxy_container" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "name"
+    values = ["wardnode-proxy"]
+  }
 }
 
-loki.source.file "modsecurity" {
-  targets    = local.file_match.modsecurity.targets
+discovery.relabel "modsecurity" {
+  targets = discovery.docker.proxy_container.targets
+  rule {
+    target_label = "job"
+    replacement  = "modsecurity"
+  }
+  rule {
+    target_label = "service"
+    replacement  = "nginx"
+  }
+  rule {
+    target_label = "waf"
+    replacement  = "modsecurity"
+  }
+}
+
+loki.source.docker "modsecurity" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.modsecurity.output
+  forward_to = [loki.process.modsec_json.receiver]
+}
+
+loki.process "modsec_json" {
+  stage.drop {
+    expression = "^[^{]"
+  }
   forward_to = [loki.write.default.receiver]
 }
 
@@ -57,35 +80,31 @@ loki.source.file "nginx_access" {
   forward_to = [loki.write.default.receiver]
 }
 
-// ── Logs: NGINX error log ─────────────────────────────────────────────────────
 
-local.file_match "nginx_error" {
+// ── Logs: UFW firewall del host ───────────────────────────────────────────────
+// UFW registra en /var/log/kern.log cuando rsyslog no tiene una regla de
+// separación (/etc/rsyslog.d/20-ufw.conf). Se filtra kern.log para pasar
+// únicamente las líneas que contienen [UFW ] y descartar el ruido del kernel.
+
+local.file_match "ufw" {
   path_targets = [{
-    "__path__" = "/var/log/nginx/error.log",
-    "job"      = "nginx_error",
-    "service"  = "nginx",
+    "__path__" = "/rootfs/var/log/kern.log",
+    "job"      = "ufw",
+    "service"  = "firewall",
   }]
 }
 
-loki.source.file "nginx_error" {
-  targets    = local.file_match.nginx_error.targets
+loki.process "ufw_filter" {
+  stage.match {
+    selector = `{job="ufw"} != "[UFW "`
+    action   = "drop"
+  }
   forward_to = [loki.write.default.receiver]
 }
 
-// ── Logs: CrowdSec ────────────────────────────────────────────────────────────
-// Bind mount desde el host: /var/log/crowdsec/crowdsec.log
-
-local.file_match "crowdsec" {
-  path_targets = [{
-    "__path__" = "/var/log/crowdsec/crowdsec.log",
-    "job"      = "crowdsec",
-    "service"  = "crowdsec",
-  }]
-}
-
-loki.source.file "crowdsec" {
-  targets    = local.file_match.crowdsec.targets
-  forward_to = [loki.write.default.receiver]
+loki.source.file "ufw" {
+  targets    = local.file_match.ufw.targets
+  forward_to = [loki.process.ufw_filter.receiver]
 }
 
 // ── Métricas del host (reemplaza node-exporter) ───────────────────────────────
@@ -127,19 +146,6 @@ prometheus.scrape "host_metrics" {
   targets         = prometheus.exporter.unix.host.targets
   forward_to      = [prometheus.remote_write.prometheus.receiver]
   job_name        = "node"
-  scrape_interval = "15s"
-}
-
-// ── Métricas: CrowdSec Prometheus endpoint ────────────────────────────────────
-// CrowdSec expone /metrics en el puerto 6060 (configurable con CROWDSEC_METRICS_ADDR).
-
-prometheus.scrape "crowdsec_metrics" {
-  targets = [{
-    "__address__" = "host.docker.internal:6060",
-  }]
-  forward_to      = [prometheus.remote_write.prometheus.receiver]
-  job_name        = "crowdsec"
-  metrics_path    = "/metrics"
   scrape_interval = "15s"
 }
 

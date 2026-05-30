@@ -1,10 +1,24 @@
 {% extends "base.html" %}
 
-{% block title %}Login | WardNode{% endblock %}
+{% block title %}Iniciar sesión | WardNode{% endblock %}
 
 {% block content %}
 <section class="auth-panel panel mx-auto">
-  <h1 class="h4 mb-3">Iniciar sesion</h1>
+
+  {% if request.args.get('reason') == 'port_secured' %}
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;gap:10px;align-items:flex-start">
+    <i class="bi bi-shield-lock-fill" style="color:#2563eb;font-size:16px;flex-shrink:0;margin-top:2px"></i>
+    <div>
+      <p style="font-size:13px;font-weight:600;color:#1d4ed8;margin:0 0 2px">Puerto 5000 bloqueado correctamente</p>
+      <p style="font-size:12px;color:#1e40af;margin:0;line-height:1.5">
+        El acceso al panel ahora es exclusivo a través de este dominio.
+        Usa las mismas credenciales de siempre.
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
+  <h1 class="h4 mb-3">Iniciar sesión</h1>
   <form method="post" action="{{ url_for('auth.login_post', next=request.args.get('next')) }}" class="vstack gap-3">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div>
@@ -12,12 +26,12 @@
       <input class="form-control" id="email" name="email" type="email" autocomplete="email" required>
     </div>
     <div>
-      <label class="form-label" for="password">Contrasena</label>
+      <label class="form-label" for="password">Contraseña</label>
       <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required>
     </div>
     <button class="btn btn-primary" type="submit">Entrar</button>
   </form>
-  <a class="d-inline-block mt-3" href="{{ url_for('auth.forgot_password') }}">Recuperar contrasena</a>
+  <a class="d-inline-block mt-3" href="{{ url_for('auth.forgot_password') }}">Recuperar contraseña</a>
 </section>
 {% endblock %}
 

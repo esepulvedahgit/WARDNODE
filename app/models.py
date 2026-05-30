@@ -84,6 +84,8 @@ class Site(db.Model, TimestampMixin):
     custom_certificate_key_path = db.Column(db.String(500), nullable=True)
     is_console = db.Column(db.Boolean, default=False, nullable=False)
     force_https = db.Column(db.Boolean, default=False, nullable=False)
+    hsts_mode = db.Column(db.String(20), nullable=False, default="off")
+    host_port_blocked = db.Column(db.Boolean, default=False, nullable=False)
 
     rule_settings = db.relationship(
         "SiteRuleSetting",
@@ -125,6 +127,12 @@ class Site(db.Model, TimestampMixin):
         back_populates="site",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    geo_blocklist = db.relationship(
+        "GeoBlocklistEntry",
+        back_populates="site",
+        cascade="all, delete-orphan",
+        order_by="GeoBlocklistEntry.country_name",
     )
 
 
@@ -225,7 +233,7 @@ class AttackEvent(db.Model, TimestampMixin):
     action = db.Column(db.String(20), nullable=False, default="block")
     category = db.Column(db.String(120), nullable=False, default="unknown")
     rule_id = db.Column(db.String(80), nullable=True)
-    severity = db.Column(db.String(40), nullable=False, default="warning")
+    severity = db.Column(db.String(40), nullable=False, default="medium")
     message = db.Column(db.Text, nullable=False)
     transaction_id = db.Column(db.String(64), nullable=True, unique=True, index=True)
 
@@ -233,10 +241,15 @@ class AttackEvent(db.Model, TimestampMixin):
 
 
 class GeoBlocklistEntry(db.Model, TimestampMixin):
-    id = db.Column(db.Integer, primary_key=True)
-    country_code = db.Column(db.String(2), unique=True, nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint("site_id", "country_code", name="uq_geo_blocklist_site_country"),)
+
+    id           = db.Column(db.Integer, primary_key=True)
+    site_id      = db.Column(db.Integer, db.ForeignKey("site.id", ondelete="CASCADE"), nullable=False)
+    country_code = db.Column(db.String(2), nullable=False, index=True)
     country_name = db.Column(db.String(80), nullable=False)
-    enabled = db.Column(db.Boolean, default=True, nullable=False)
+    enabled      = db.Column(db.Boolean, default=True, nullable=False)
+
+    site = db.relationship("Site", back_populates="geo_blocklist")
 
 
 class AuditLog(db.Model):

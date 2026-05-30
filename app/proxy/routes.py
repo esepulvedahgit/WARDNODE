@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac as _hmac_mod
 import json as _json
+import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote as _url_quote
 
@@ -12,6 +13,7 @@ from app.audit.helpers import log_audit
 from app.auth.decorators import roles_required
 from app.extensions import csrf, db, limiter
 from app.models import (
+    AppConfig,
     AttackEvent,
     CustomModSecurityRule,
     GeoBlocklistEntry,
@@ -28,6 +30,8 @@ from app.proxy.services import (
     ensure_default_rule_categories,
     ensure_site_bot_protection,
     ensure_site_traffic_policy,
+    is_host_docker_internal,
+    parse_upstream_host_port,
     provision_letsencrypt,
     render_nginx_configs,
     sync_site_rule_settings,
@@ -70,7 +74,6 @@ def _get_service_states() -> dict:
         "grafana":        "wardnode-grafana"    in running,
         "alloy":          "wardnode-alloy"      in running,
         "prometheus":     "wardnode-prometheus" in running,
-        "crowdsec":       AppConfig.get("module_cs_enabled") == "1",
         "fluent-bit":     "wardnode-fluent-bit" in running,
         "syslog_enabled": AppConfig.get("syslog_enabled") == "1",
     }
@@ -143,14 +146,14 @@ def events_list():
     action = request.args.get("action", "")
 
     q = AttackEvent.query.order_by(AttackEvent.created_at.desc())
-    if severity in {"critical", "high", "warning", "medium", "low"}:
+    if severity in {"critical", "high", "medium", "low"}:
         q = q.filter(AttackEvent.severity == severity)
     if action in {"block", "detect"}:
         q = q.filter(AttackEvent.action == action)
     events = q.limit(500).all()
 
     counts = {"all": AttackEvent.query.count()}
-    for sev in ("critical", "high", "warning", "medium", "low"):
+    for sev in ("critical", "high", "medium", "low"):
         counts[sev] = AttackEvent.query.filter(AttackEvent.severity == sev).count()
     counts["block"] = AttackEvent.query.filter(AttackEvent.action == "block").count()
     counts["detect"] = AttackEvent.query.filter(AttackEvent.action == "detect").count()
@@ -168,23 +171,47 @@ def events_list():
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def sites_list():
     sites = Site.query.order_by(Site.domain).all()
-    blocklist = GeoBlocklistEntry.query.order_by(GeoBlocklistEntry.country_name).all()
-    return render_template(
-        "proxy/sites.html",
-        sites=sites,
-        blocklist=blocklist,
-        country_names=COUNTRY_NAMES,
-    )
+    return render_template("proxy/sites.html", sites=sites)
 
 
 @bp.post("/sites")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("20 per minute")
 def create_site():
+    from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
+
+    if not AppConfig.get("console_site_id"):
+        flash(
+            "Por motivos de seguridad, configura el dominio de acceso al panel "
+            "(Ajustes → Acceso al panel) antes de crear sitios protegidos.",
+            "danger",
+        )
+        return redirect(url_for("proxy.sites_list"))
+
+    upstream_url = request.form["upstream_url"].strip()
+    _RESERVED_PORTS = {22, 80, 443, 5000}
+
+    if is_host_docker_internal(upstream_url):
+        if AppConfig.get("module_wf_enabled") != "1":
+            flash(
+                "Para proteger un upstream en host.docker.internal es necesario activar "
+                "el módulo WardNode WF primero.",
+                "danger",
+            )
+            return redirect(url_for("proxy.sites_list"))
+        _, _port = parse_upstream_host_port(upstream_url)
+        if _port in _RESERVED_PORTS:
+            flash(
+                f"El puerto {_port} está reservado (22, 80, 443, 5000) y no puede usarse "
+                "como upstream en host.docker.internal.",
+                "danger",
+            )
+            return redirect(url_for("proxy.sites_list"))
+
     site = Site(
         name=request.form["name"].strip(),
         domain=request.form["domain"].strip().lower(),
-        upstream_url=request.form["upstream_url"].strip(),
+        upstream_url=upstream_url,
         waf_enabled=bool(request.form.get("waf_enabled")),
         letsencrypt_enabled=bool(request.form.get("letsencrypt_enabled")),
         custom_certificate_path=request.form.get("custom_certificate_path") or None,
@@ -199,7 +226,27 @@ def create_site():
     _apply_nginx()
     log_audit("site.create", resource_type="site", resource_name=site.domain,
               detail={"upstream": site.upstream_url, "waf": site.waf_enabled})
-    flash("Sitio agregado al proxy.", "success")
+
+    if is_host_docker_internal(upstream_url) and os.path.exists(_WF_SOCKET):
+        _, _port = parse_upstream_host_port(upstream_url)
+        _wf_result = _wf_send("protect_host_port", port=_port, timeout=15)
+        if _wf_result.get("ok"):
+            site.host_port_blocked = True
+            db.session.commit()
+            flash(
+                f"Sitio agregado al proxy. Puerto {_port} bloqueado automáticamente "
+                "(acceso externo denegado, proxy WAF permitido).",
+                "success",
+            )
+        else:
+            flash(
+                f"Sitio agregado. No se pudo bloquear el puerto {_port} automáticamente "
+                f"({_wf_result.get('error', '')}). Puedes hacerlo desde el detalle del sitio.",
+                "warning",
+            )
+    else:
+        flash("Sitio agregado al proxy.", "success")
+
     return redirect(url_for("proxy.site_detail", site_id=site.id))
 
 
@@ -212,7 +259,15 @@ def site_detail(site_id):
     ensure_site_security_headers(site)
     ensure_site_nginx_extra_config(site)
     ensure_site_bot_protection(site)
-    return render_template("proxy/site_detail.html", site=site)
+    _is_hdi = is_host_docker_internal(site.upstream_url)
+    _hdi_port = parse_upstream_host_port(site.upstream_url)[1] if _is_hdi else None
+    return render_template(
+        "proxy/site_detail.html",
+        site=site,
+        country_names=COUNTRY_NAMES,
+        upstream_is_host_docker=_is_hdi,
+        upstream_host_port=_hdi_port,
+    )
 
 
 @bp.get("/bot-challenge-preview")
@@ -220,7 +275,19 @@ def site_detail(site_id):
 def bot_challenge_preview():
     from flask import Response
     from app.proxy.services import _build_challenge_html
-    return Response(_build_challenge_html(), mimetype="text/html")
+    resp = Response(_build_challenge_html(), mimetype="text/html")
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return resp
+
+
+@bp.get("/waf-block-preview")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def waf_block_preview():
+    from flask import Response
+    from app.proxy.services import _build_waf_block_html
+    resp = Response(_build_waf_block_html(), mimetype="text/html")
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return resp
 
 
 @bp.post("/sites/<int:site_id>/bot-protection")
@@ -280,6 +347,10 @@ def update_site_tls(site_id):
     site.custom_certificate_path = request.form.get("custom_certificate_path") or None
     site.custom_certificate_key_path = request.form.get("custom_certificate_key_path") or None
     site.force_https = bool(request.form.get("force_https"))
+    hsts_mode = request.form.get("hsts_mode", "off")
+    if hsts_mode not in ("off", "1y", "1y-sub", "1y-sub-preload"):
+        hsts_mode = "off"
+    site.hsts_mode = hsts_mode
     if site.letsencrypt_enabled and site.letsencrypt_status not in ("active",):
         site.letsencrypt_status = "pending"
         site.letsencrypt_error = None
@@ -546,12 +617,18 @@ def render_configs():
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("10 per minute")
 def delete_site(site_id):
+    from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
+
     site = Site.query.get_or_404(site_id)
     if site.is_console:
         flash("El sitio de la consola no puede eliminarse desde aquí. Desvinculalo desde Ajustes.", "danger")
         return redirect(url_for("proxy.site_detail", site_id=site.id))
     name = site.name
     domain = site.domain
+    if site.host_port_blocked and os.path.exists(_WF_SOCKET):
+        _, _port = parse_upstream_host_port(site.upstream_url)
+        if _port:
+            _wf_send("unprotect_host_port", port=_port, timeout=15)
     db.session.delete(site)
     db.session.commit()
     _apply_nginx()
@@ -561,44 +638,100 @@ def delete_site(site_id):
     return redirect(url_for("proxy.dashboard"))
 
 
-@bp.post("/geo-blocklist/add")
+@bp.post("/sites/<int:site_id>/host-port/protect")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def host_port_protect(site_id):
+    from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
+
+    site = Site.query.get_or_404(site_id)
+    if not is_host_docker_internal(site.upstream_url):
+        flash("Este sitio no usa un upstream host.docker.internal.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site_id))
+    if AppConfig.get("module_wf_enabled") != "1" or not os.path.exists(_WF_SOCKET):
+        flash("El módulo WardNode WF no está activo.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site_id))
+    _, port = parse_upstream_host_port(site.upstream_url)
+    result = _wf_send("protect_host_port", port=port, timeout=15)
+    if result.get("ok"):
+        site.host_port_blocked = True
+        db.session.commit()
+        log_audit("site.host_port.protect", resource_type="site", resource_name=site.domain,
+                  detail={"port": port})
+        flash(f"Puerto {port} bloqueado: acceso externo denegado, proxy WAF permitido.", "success")
+    else:
+        flash(f"Error al bloquear el puerto {port}: {result.get('error', '')}", "danger")
+    return redirect(url_for("proxy.site_detail", site_id=site_id))
+
+
+@bp.post("/sites/<int:site_id>/host-port/unprotect")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def host_port_unprotect(site_id):
+    from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
+
+    site = Site.query.get_or_404(site_id)
+    if not is_host_docker_internal(site.upstream_url):
+        flash("Este sitio no usa un upstream host.docker.internal.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site_id))
+    if AppConfig.get("module_wf_enabled") != "1" or not os.path.exists(_WF_SOCKET):
+        flash("El módulo WardNode WF no está activo.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site_id))
+    _, port = parse_upstream_host_port(site.upstream_url)
+    result = _wf_send("unprotect_host_port", port=port, timeout=15)
+    if result.get("ok"):
+        site.host_port_blocked = False
+        db.session.commit()
+        log_audit("site.host_port.unprotect", resource_type="site", resource_name=site.domain,
+                  detail={"port": port}, severity="warning")
+        flash(f"Puerto {port} desprotegido: acceso externo habilitado.", "warning")
+    else:
+        flash(f"Error al desproteger el puerto {port}: {result.get('error', '')}", "danger")
+    return redirect(url_for("proxy.site_detail", site_id=site_id))
+
+
+@bp.post("/sites/<int:site_id>/geo-blocklist/add")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("30 per minute")
-def geo_blocklist_add():
+def geo_blocklist_add(site_id):
+    site = Site.query.get_or_404(site_id)
     code = request.form.get("country_code", "").strip().upper()
     if not code or len(code) != 2:
         flash("Código de país inválido.", "danger")
-        return redirect(url_for("proxy.sites_list"))
+        return redirect(url_for("proxy.site_detail", site_id=site_id))
     name = COUNTRY_NAMES.get(code, code)
-    existing = GeoBlocklistEntry.query.filter_by(country_code=code).first()
+    existing = GeoBlocklistEntry.query.filter_by(site_id=site_id, country_code=code).first()
     if existing:
         existing.enabled = True
         flash(f"{name} ya estaba en la lista (reactivado).", "info")
     else:
-        db.session.add(GeoBlocklistEntry(country_code=code, country_name=name))
+        db.session.add(GeoBlocklistEntry(site_id=site_id, country_code=code, country_name=name))
         flash(f"{name} agregado a la lista de bloqueo.", "success")
     db.session.commit()
-    write_blocklist_conf()
+    write_blocklist_conf(site)
     ok, err = reload_nginx()
     if not ok:
         flash(f"Nginx no recargado: {err or 'socket no disponible en modo local'}", "warning")
-    return redirect(url_for("proxy.sites_list"))
+    return redirect(url_for("proxy.site_detail", site_id=site_id))
 
 
-@bp.post("/geo-blocklist/<code>/remove")
+@bp.post("/sites/<int:site_id>/geo-blocklist/<code>/remove")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("30 per minute")
-def geo_blocklist_remove(code):
-    entry = GeoBlocklistEntry.query.filter_by(country_code=code.upper()).first_or_404()
+def geo_blocklist_remove(site_id, code):
+    site = Site.query.get_or_404(site_id)
+    entry = GeoBlocklistEntry.query.filter_by(
+        site_id=site_id, country_code=code.upper()
+    ).first_or_404()
     name = entry.country_name
     db.session.delete(entry)
     db.session.commit()
-    write_blocklist_conf()
+    write_blocklist_conf(site)
     ok, err = reload_nginx()
     if not ok:
         flash(f"Nginx no recargado: {err or 'socket no disponible en modo local'}", "warning")
     flash(f"{name} eliminado de la lista de bloqueo.", "success")
-    return redirect(url_for("proxy.sites_list"))
+    return redirect(url_for("proxy.site_detail", site_id=site_id))
 
 
 @bp.get("/settings")
@@ -668,6 +801,14 @@ def settings():
     )
 
 
+@bp.post("/dismiss-setup-prompt")
+@roles_required(ROLE_ADMIN)
+@csrf.exempt
+def dismiss_setup_prompt():
+    AppConfig.set("setup_prompt_shown", "1")
+    return jsonify({"ok": True})
+
+
 @bp.post("/settings/console-site")
 @roles_required(ROLE_ADMIN)
 @limiter.limit("10 per minute")
@@ -701,7 +842,22 @@ def save_console_site():
     db.session.commit()
 
     AppConfig.set("console_site_id", str(site.id))
-    flash("Sitio de consola configurado. Ajusta TLS y WAF desde la configuración del sitio.", "success")
+
+    # Si WF está activo bloquear el puerto 5000 de forma diferida para que este
+    # redirect llegue al cliente antes de que iptables corte TCP:5000.
+    if AppConfig.get("module_wf_enabled") == "1":
+        from app.modules.routes import _secure_port_async
+        from app.modules.socket_client import SOCKET_PATH as _WF_SOCK
+        if os.path.exists(_WF_SOCK):
+            _secure_port_async(delay=5)
+            flash(
+                "Dominio de consola configurado. El acceso por el puerto 5000 quedará bloqueado "
+                f"en segundos — usa http://{domain} para continuar.",
+                "warning",
+            )
+            return redirect(f"http://{domain}" + url_for("auth.login") + "?reason=port_secured")
+
+    flash("Sitio de consola configurado correctamente.", "success")
     return redirect(url_for("proxy.site_detail", site_id=site.id))
 
 

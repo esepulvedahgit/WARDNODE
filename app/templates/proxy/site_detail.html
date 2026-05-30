@@ -35,7 +35,7 @@
         <span class="badge text-bg-light border">{{ site.rule_settings|length }} reglas</span>
       </div>
 
-      <form id="crs-rules-form" method="post" action="{{ url_for('proxy.update_site_rules', site_id=site.id) }}">
+      <form id="crs-rules-form" method="post" action="{{ url_for('proxy.update_site_rules', site_id=site.id) }}" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         {% if not current_user.has_role('reader') %}
@@ -105,14 +105,17 @@
         </div>
 
         {% if not current_user.has_role('reader') %}
-        <button class="btn btn-primary mt-3" type="submit">Guardar categorias</button>
+        <button class="btn btn-primary mt-3" type="submit" :disabled="s">
+          <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+          <span x-text="s ? 'Guardando…' : 'Guardar categorias'"></span>
+        </button>
         {% endif %}
       </form>
     </div>
 
     <div class="panel mt-4">
       <h2 class="h5 mb-3">Reglas personalizadas ModSecurity</h2>
-      <form method="post" action="{{ url_for('proxy.update_site_custom_rules', site_id=site.id) }}" class="vstack gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_custom_rules', site_id=site.id) }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% for rule in site.custom_rules %}
           <div class="rule-card">
@@ -136,7 +139,10 @@
             </div>
             <textarea class="form-control font-monospace" name="new_rule_text" rows="6" placeholder='SecRule REQUEST_HEADERS:User-Agent "@contains badbot" "id:1000001,phase:1,deny,status:403,msg:&quot;Bad bot&quot;"'></textarea>
           </div>
-          <button class="btn btn-primary" type="submit">Validar y guardar reglas</button>
+          <button class="btn btn-primary" type="submit" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span x-text="s ? 'Validando…' : 'Validar y guardar reglas'"></span>
+          </button>
         {% elif not site.custom_rules %}
           <p class="text-secondary mb-0">Sin reglas personalizadas.</p>
         {% endif %}
@@ -145,7 +151,7 @@
 
     <div class="panel mt-4">
       <h2 class="h5 mb-3">Cabeceras de seguridad</h2>
-      <form method="post" action="{{ url_for('proxy.update_site_security_headers', site_id=site.id) }}">
+      <form method="post" action="{{ url_for('proxy.update_site_security_headers', site_id=site.id) }}" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="table-responsive">
           <table class="table align-middle security-headers-table">
@@ -154,16 +160,32 @@
                 <th>Activa</th>
                 <th>Header</th>
                 <th>Valor</th>
-                <th>Always</th>
+                <th title="Envía la cabecera también en errores y redirecciones">Siempre</th>
                 <th>Tipo</th>
               </tr>
             </thead>
             <tbody>
               {% for header in site.security_headers %}
-                <tr>
+                {% if header.name == 'Strict-Transport-Security' and site.hsts_mode != 'off' %}
+                {# HSTS gestionado por el selector del panel TLS — se muestra como informativo.
+                   No se envía header_ids para este registro: el route lo omite y conserva el
+                   valor actual en BD. La directiva real viene de site.hsts_mode via
+                   _render_security_headers(). #}
+                <tr class="opacity-50">
+                  <td colspan="4" class="py-2 px-2 small text-secondary">
+                    <i class="bi bi-shield-lock me-1"></i>
+                    <strong>Strict-Transport-Security</strong> está gestionado por el
+                    selector <em>HSTS</em> del panel TLS — no es necesario configurarlo aquí.
+                  </td>
+                  <td>
+                    <span class="badge text-bg-primary">Default</span>
+                  </td>
+                </tr>
+                {% else %}
+                <tr x-data="{ enabled: {{ 'true' if header.enabled else 'false' }}, always: {{ 'true' if header.always else 'false' }} }">
                   <td>
                     <input type="hidden" name="header_ids" value="{{ header.id }}">
-                    <input class="form-check-input" type="checkbox" name="enabled_header_ids" value="{{ header.id }}" {% if header.enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+                    <input class="form-check-input" type="checkbox" name="enabled_header_ids" value="{{ header.id }}" x-model="enabled" {% if header.enabled %}checked{% endif %} @change="if (!enabled) always = false" {% if current_user.has_role('reader') %}disabled{% endif %}>
                   </td>
                   <td>
                     <input class="form-control form-control-sm" name="header_name_{{ header.id }}" value="{{ header.name }}" pattern="[A-Za-z0-9!#$%&'*+.^_`|~-]+" {% if current_user.has_role('reader') %}disabled{% endif %} required>
@@ -172,18 +194,19 @@
                     <input class="form-control form-control-sm" name="header_value_{{ header.id }}" value="{{ header.value }}" maxlength="1000" {% if current_user.has_role('reader') %}disabled{% endif %} required>
                   </td>
                   <td>
-                    <input class="form-check-input" type="checkbox" name="always_header_ids" value="{{ header.id }}" {% if header.always %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
+                    <input class="form-check-input" type="checkbox" name="always_header_ids" value="{{ header.id }}" x-model="always" {% if header.always %}checked{% endif %} :disabled="!enabled{% if current_user.has_role('reader') %} || true{% endif %}" title="Solo aplica si la cabecera está activa">
                   </td>
                   <td>
                     <span class="badge text-bg-{{ 'primary' if header.is_default else 'secondary' }}">{{ 'Default' if header.is_default else 'Custom' }}</span>
                   </td>
                 </tr>
+                {% endif %}
               {% endfor %}
               {% if not current_user.has_role('reader') %}
                 {% for index in range(3) %}
-                  <tr>
+                  <tr x-data="{ enabled: false, always: true }">
                     <td>
-                      <input class="form-check-input" type="checkbox" name="custom_header_enabled" value="{{ index }}">
+                      <input class="form-check-input" type="checkbox" name="custom_header_enabled" value="{{ index }}" x-model="enabled" @change="if (!enabled) always = false">
                     </td>
                     <td>
                       <input class="form-control form-control-sm" name="custom_header_name" placeholder="X-Custom-Header" pattern="[A-Za-z0-9!#$%&'*+.^_`|~-]+">
@@ -192,7 +215,7 @@
                       <input class="form-control form-control-sm" name="custom_header_value" placeholder="valor" maxlength="1000">
                     </td>
                     <td>
-                      <input class="form-check-input" type="checkbox" name="custom_header_always" value="{{ index }}" checked>
+                      <input class="form-check-input" type="checkbox" name="custom_header_always" value="{{ index }}" x-model="always" :disabled="!enabled" title="Solo aplica si la cabecera está activa">
                     </td>
                     <td><span class="badge text-bg-secondary">Nuevo</span></td>
                   </tr>
@@ -202,7 +225,10 @@
           </table>
         </div>
         {% if not current_user.has_role('reader') %}
-          <button class="btn btn-primary" type="submit">Guardar cabeceras</button>
+          <button class="btn btn-primary" type="submit" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span x-text="s ? 'Guardando…' : 'Guardar cabeceras'"></span>
+          </button>
         {% endif %}
       </form>
     </div>
@@ -211,7 +237,7 @@
   <section class="col-xxl-4 col-xl-5">
     <div class="panel">
       <h2 class="h5 mb-3">Estado del WAF</h2>
-      <form method="post" action="{{ url_for('proxy.update_site_waf', site_id=site.id) }}" class="vstack gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_waf', site_id=site.id) }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" {% if site.waf_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
@@ -225,14 +251,17 @@
           {% endif %}
         </div>
         {% if not current_user.has_role('reader') %}
-          <button class="btn btn-primary btn-sm" type="submit">Guardar</button>
+          <button class="btn btn-primary btn-sm" type="submit" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span x-text="s ? 'Guardando…' : 'Guardar'"></span>
+          </button>
         {% endif %}
       </form>
     </div>
 
     <div class="panel mt-4">
       <h2 class="h5 mb-3">Politica de trafico</h2>
-      <form method="post" action="{{ url_for('proxy.update_site_traffic_policy', site_id=site.id) }}" class="vstack gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_traffic_policy', site_id=site.id) }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="rate_limit_enabled" name="rate_limit_enabled" {% if site.traffic_policy.rate_limit_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
@@ -276,7 +305,10 @@
           </div>
         </div>
         {% if not current_user.has_role('reader') %}
-          <button class="btn btn-primary" type="submit">Guardar politica</button>
+          <button class="btn btn-primary" type="submit" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span x-text="s ? 'Guardando…' : 'Guardar politica'"></span>
+          </button>
         {% endif %}
       </form>
     </div>
@@ -315,14 +347,21 @@
           </button>
           {% endif %}
         </div>
-        <div x-show="status === 'error' && errorMsg" class="mt-2">
-          <p class="text-danger small mb-0" style="word-break:break-word" x-text="errorMsg"></p>
+        <div x-show="status === 'error' && errorMsg" class="mt-2" x-data="{showFull:false}">
+          <p class="text-danger small mb-0" style="word-break:break-word"
+             x-text="showFull ? errorMsg : (errorMsg && errorMsg.length > 250 ? errorMsg.slice(0,250)+'…' : errorMsg)"></p>
+          <button x-show="errorMsg && errorMsg.length > 250" type="button"
+                  @click.prevent="showFull=!showFull"
+                  class="btn btn-link btn-sm p-0 mt-1 text-danger text-decoration-none">
+            <i class="bi me-1" :class="showFull ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+            <span x-text="showFull ? 'Ver menos' : 'Ver detalles técnicos'"></span>
+          </button>
         </div>
       </div>
       {% endif %}
 
       {% set tls_active = (site.letsencrypt_enabled and site.letsencrypt_status == 'active') or (site.custom_certificate_path and site.custom_certificate_key_path) %}
-      <form method="post" action="{{ url_for('proxy.update_site_tls', site_id=site.id) }}" class="vstack gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_tls', site_id=site.id) }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled" {% if site.letsencrypt_enabled %}checked{% endif %}>
@@ -358,8 +397,32 @@
           </div>
         </div>
 
+        <hr style="margin:4px 0;border-color:var(--border)">
+
+        <div>
+          <label class="form-label fw-medium" for="hsts_mode">HSTS (Strict-Transport-Security)</label>
+          <select class="form-select" id="hsts_mode" name="hsts_mode"
+                  {% if current_user.has_role('reader') %}disabled{% endif %}>
+            <option value="off"            {% if site.hsts_mode == 'off' %}selected{% endif %}>Desactivado</option>
+            <option value="1y"             {% if site.hsts_mode == '1y' %}selected{% endif %}>1 año — max-age=31536000</option>
+            <option value="1y-sub"         {% if site.hsts_mode == '1y-sub' %}selected{% endif %}>1 año + includeSubDomains (recomendado)</option>
+            <option value="1y-sub-preload" {% if site.hsts_mode == '1y-sub-preload' %}selected{% endif %}>1 año + includeSubDomains + preload</option>
+          </select>
+          <div class="form-text" style="padding-left:.25rem">
+            {% if site.hsts_mode != 'off' %}
+              <i class="bi bi-shield-check text-success me-1"></i>
+              HSTS activo — <strong>no es necesario</strong> agregarlo en Cabeceras de seguridad.
+            {% else %}
+              Solo aplica si hay TLS activo. Activa "Forzar HTTPS" junto con HSTS para protección completa.
+            {% endif %}
+          </div>
+        </div>
+
         {% if not current_user.has_role('reader') %}
-        <button class="btn btn-primary" type="submit">Guardar TLS</button>
+        <button class="btn btn-primary" type="submit" :disabled="s">
+          <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+          <span x-text="s ? 'Guardando…' : 'Guardar TLS'"></span>
+        </button>
         {% endif %}
       </form>
     </div>
@@ -390,15 +453,16 @@
       </p>
 
       {% if not current_user.has_role('reader') %}
-      <form method="post" action="{{ url_for('proxy.update_site_bot_protection', site_id=site.id) }}" class="d-flex align-items-center justify-content-between gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_bot_protection', site_id=site.id) }}" class="d-flex align-items-center justify-content-between gap-3" x-data="{s:false}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-check form-switch mb-0">
+        <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
           <input class="form-check-input" type="checkbox" role="switch"
                  id="bot_protection_enabled" name="bot_protection_enabled"
                  {% if site.bot_protection.enabled %}checked{% endif %}
-                 onchange="this.form.submit()">
-          <label class="form-check-label" for="bot_protection_enabled">
+                 @change="if(!s){s=true; $el.form.submit()}" :disabled="s">
+          <label class="form-check-label d-flex align-items-center gap-2" for="bot_protection_enabled">
             {% if site.bot_protection.enabled %}Desactivar protección{% else %}Activar protección{% endif %}
+            <span x-show="s" class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:.8rem;height:.8rem"></span>
           </label>
         </div>
         <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -419,8 +483,82 @@
     </div>
 
     <div class="panel mt-4">
+      <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <i class="bi bi-geo-alt-fill" style="color:{% if site.geo_blocklist %}var(--c-danger){% else %}#94a3b8{% endif %}"></i>
+          <h2 class="h5 mb-0">Bloqueo por país (GeoIP)</h2>
+        </div>
+        <span class="small text-secondary">{{ site.geo_blocklist | length }} país{% if site.geo_blocklist | length != 1 %}es{% endif %} bloqueado{% if site.geo_blocklist | length != 1 %}s{% endif %}</span>
+      </div>
+
+      <p class="text-secondary small mb-3">
+        Bloquea tráfico de un país a nivel Nginx (<code>return 444</code>) solo para este sitio. Se aplica automáticamente tras guardar.
+      </p>
+
+      {% if not current_user.has_role('reader') %}
+      <form method="post" action="{{ url_for('proxy.geo_blocklist_add', site_id=site.id) }}" class="d-flex gap-2 mb-3" x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select class="form-select form-select-sm" name="country_code" required :disabled="s">
+          <option value="">Seleccionar país…</option>
+          {% set blocked_codes = site.geo_blocklist | map(attribute='country_code') | list %}
+          {% for code, name in country_names.items() | sort(attribute='1') %}
+            {% if code not in blocked_codes %}
+            <option value="{{ code }}">{{ name }} ({{ code }})</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm btn-danger" style="white-space:nowrap" :disabled="s">
+          <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+          <i x-show="!s" class="bi bi-plus-lg me-1"></i>
+          <span x-text="s ? 'Bloqueando…' : 'Bloquear'"></span>
+        </button>
+      </form>
+      {% endif %}
+
+      {% if site.geo_blocklist %}
+      <div class="table-responsive">
+        <table class="data-table" style="font-size:12px">
+          <thead>
+            <tr>
+              <th style="width:56px">Código</th>
+              <th>País</th>
+              {% if not current_user.has_role('reader') %}<th style="width:60px"></th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in site.geo_blocklist %}
+            <tr>
+              <td class="t-mono t-blue">{{ entry.country_code }}</td>
+              <td>{{ entry.country_name }}</td>
+              {% if not current_user.has_role('reader') %}
+              <td style="text-align:right">
+                <form method="post" action="{{ url_for('proxy.geo_blocklist_remove', site_id=site.id, code=entry.country_code) }}"
+                      x-data="{s:false}"
+                      @submit.prevent="if(confirm('¿Eliminar bloqueo para {{ entry.country_name }}?')){s=true; $el.submit()}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-xs btn-outline-danger" style="padding:2px 8px;font-size:11px" :disabled="s">
+                    <span x-show="s" class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:.7rem;height:.7rem"></span>
+                    <i x-show="!s" class="bi bi-trash3"></i>
+                  </button>
+                </form>
+              </td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center text-secondary" style="padding:16px 0;font-size:12px">
+        <i class="bi bi-globe2" style="font-size:22px;display:block;margin-bottom:6px"></i>
+        Sin países bloqueados para este sitio.
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="panel mt-4">
       <h2 class="h5 mb-3">Nginx extra</h2>
-      <form method="post" action="{{ url_for('proxy.update_site_nginx_extra', site_id=site.id) }}" class="vstack gap-3">
+      <form method="post" action="{{ url_for('proxy.update_site_nginx_extra', site_id=site.id) }}" class="vstack gap-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="nginx_extra_enabled" name="enabled" {% if site.nginx_extra_config.enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
@@ -435,7 +573,10 @@
           <textarea class="form-control font-monospace" id="location_snippet" name="location_snippet" rows="7" placeholder="proxy_set_header Upgrade $http_upgrade;&#10;proxy_set_header Connection &quot;upgrade&quot;;&#10;proxy_buffering off;" {% if current_user.has_role('reader') %}disabled{% endif %}>{{ site.nginx_extra_config.location_snippet }}</textarea>
         </div>
         {% if not current_user.has_role('reader') %}
-          <button class="btn btn-primary" type="submit">Validar y guardar Nginx extra</button>
+          <button class="btn btn-primary" type="submit" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <span x-text="s ? 'Validando…' : 'Validar y guardar Nginx extra'"></span>
+          </button>
         {% endif %}
       </form>
     </div>
@@ -458,6 +599,56 @@
       </p>
     </div>
     {% else %}
+    {% if upstream_is_host_docker %}
+    <div class="panel mb-4" style="border-color:{% if site.host_port_blocked %}var(--c-success,#22c55e){% else %}var(--c-warning,#f59e0b){% endif %}">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-shield-{% if site.host_port_blocked %}fill text-success{% else %}exclamation text-warning{% endif %}"></i>
+        <h2 class="h5 mb-0">Protección del puerto upstream</h2>
+        <span class="badge ms-auto {% if site.host_port_blocked %}bg-success{% else %}bg-warning text-dark{% endif %}">
+          {% if site.host_port_blocked %}Bloqueado{% else %}Expuesto{% endif %}
+        </span>
+      </div>
+      <p class="text-secondary small mb-3">
+        El upstream de este sitio apunta a <code>host.docker.internal:{{ upstream_host_port }}</code> —
+        un servicio corriendo directamente en el host.
+        {% if site.host_port_blocked %}
+        El acceso externo al puerto <strong>{{ upstream_host_port }}</strong> está bloqueado en iptables:
+        solo el proxy WAF puede alcanzarlo.
+        {% else %}
+        El puerto <strong>{{ upstream_host_port }}</strong> está accesible directamente desde Internet,
+        lo que permite saltarse el WAF.
+        {% endif %}
+      </p>
+      {% if module_wf_enabled %}
+        {% if site.host_port_blocked %}
+        <form method="post" action="{{ url_for('proxy.host_port_unprotect', site_id=site.id) }}"
+              x-data="{s:false}"
+              @submit.prevent="if(confirm('¿Desproteger el puerto {{ upstream_host_port }}?\nEl servicio quedará accesible directamente desde Internet.')){s=true; $el.submit()}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-warning btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!s" class="bi bi-shield-slash me-1"></i>
+            <span x-text="s ? 'Desprotegiendo…' : 'Desbloquear puerto {{ upstream_host_port }}'"></span>
+          </button>
+        </form>
+        {% else %}
+        <form method="post" action="{{ url_for('proxy.host_port_protect', site_id=site.id) }}" x-data="{s:false}" @submit="s=true">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-success btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+            <i x-show="!s" class="bi bi-shield-lock me-1"></i>
+            <span x-text="s ? 'Protegiendo…' : 'Bloquear puerto {{ upstream_host_port }}'"></span>
+          </button>
+        </form>
+        {% endif %}
+      {% else %}
+      <p class="text-secondary small mb-0">
+        <i class="bi bi-info-circle me-1"></i>
+        Activa el módulo <strong>WardNode WF</strong> para gestionar la protección del puerto.
+      </p>
+      {% endif %}
+    </div>
+    {% endif %}
     <div class="panel border-danger" style="border-color:var(--c-danger)!important">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-exclamation-triangle-fill text-danger"></i>
@@ -467,11 +658,13 @@
         Eliminar este sitio borrará permanentemente todas sus reglas, headers, políticas de tráfico y configuraciones asociadas. Esta acción no se puede deshacer.
       </p>
       <form method="post" action="{{ url_for('proxy.delete_site', site_id=site.id) }}"
-            x-data
-            @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')) $el.submit()">
+            x-data="{s:false}"
+            @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')){s=true; $el.submit()}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-danger btn-sm">
-          <i class="bi bi-trash3 me-1"></i>Eliminar sitio
+        <button type="submit" class="btn btn-danger btn-sm" :disabled="s">
+          <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+          <i x-show="!s" class="bi bi-trash3 me-1"></i>
+          <span x-text="s ? 'Eliminando…' : 'Eliminar sitio'"></span>
         </button>
       </form>
     </div>

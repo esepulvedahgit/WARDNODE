@@ -37,13 +37,20 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     def inject_module_states():
         try:
             from app.models import AppConfig
+            console_site_id = AppConfig.get("console_site_id")
             return {
                 "module_wf_enabled": AppConfig.get("module_wf_enabled") == "1",
-                "module_cs_enabled": AppConfig.get("module_cs_enabled") == "1",
                 "module_obs_enabled": AppConfig.get("module_obs_enabled") == "1",
+                "console_site_configured": bool(console_site_id and console_site_id.isdigit()),
+                "setup_prompt_shown": AppConfig.get("setup_prompt_shown") == "1",
             }
         except Exception:
-            return {"module_wf_enabled": False, "module_cs_enabled": False, "module_obs_enabled": False}
+            return {
+                "module_wf_enabled": False,
+                "module_obs_enabled": False,
+                "console_site_configured": False,
+                "setup_prompt_shown": False,
+            }
 
     from app import models  # noqa: F401
     from app.proxy.services import ensure_default_rule_categories

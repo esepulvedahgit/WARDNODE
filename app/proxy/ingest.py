@@ -5,22 +5,22 @@ import logging
 import os
 import threading
 import time
-from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_LOG_PATH = "/var/log/modsec/modsec_audit.log"
+_DEFAULT_PROXY_CONTAINER = "wardnode-proxy"
 
 _SEVERITY_MAP = {
     "CRITICAL": "critical",
-    "ERROR":    "critical",
-    "WARNING":  "warning",
-    "NOTICE":   "warning",
+    "ERROR":    "high",
+    "WARNING":  "medium",
+    "NOTICE":   "low",
     "INFO":     "low",
     "DEBUG":    "low",
 }
 
 _TAG_TO_CATEGORY = {
+    # CRS 3.x  (split("/")[-1].upper() sobre "OWASP_CRS/WEB_ATTACK/SQL_INJECTION")
     "SQL_INJECTION":      "sql-injection",
     "XSS":                "xss",
     "RCE":                "rce",
@@ -34,6 +34,19 @@ _TAG_TO_CATEGORY = {
     "SESSION_FIXATION":   "session-fixation",
     "PROTOCOL_VIOLATION": "protocol-violation",
     "PROTOCOL_ANOMALY":   "protocol-anomaly",
+    # CRS 4.x  (tag completo uppercased, ej. "attack-sqli" → "ATTACK-SQLI")
+    "ATTACK-SQLI":              "sql-injection",
+    "ATTACK-XSS":               "xss",
+    "ATTACK-RCE":               "rce",
+    "ATTACK-LFI":               "lfi",
+    "ATTACK-RFI":               "rfi",
+    "ATTACK-SCANNER":           "scanner",
+    "ATTACK-COMMAND-INJECTION": "command-injection",
+    "ATTACK-PHP-INJECTION":     "php-injection",
+    "ATTACK-JAVA-INJECTION":    "java-injection",
+    "ATTACK-SESSION-FIXATION":  "session-fixation",
+    "ATTACK-PROTOCOL":          "protocol-violation",
+    "ATTACK-PROTOCOL-ANOMALY":  "protocol-anomaly",
 }
 
 
@@ -69,9 +82,10 @@ def _parse_line(line: str) -> dict | None:
     action = "block" if status_code == 403 else "detect"
 
     raw_severity = details.get("severity", "WARNING").upper()
-    severity = _SEVERITY_MAP.get(raw_severity, "warning")
+    severity = _SEVERITY_MAP.get(raw_severity, "medium")
 
-    host = req.get("headers", {}).get("Host", "unknown")
+    headers = req.get("headers", {})
+    host = headers.get("Host") or headers.get("host") or "unknown"
     # strip port if present (e.g. "example.com:443")
     domain = host.split(":")[0].lower()
 
@@ -81,7 +95,7 @@ def _parse_line(line: str) -> dict | None:
     return {
         "transaction_id": txn.get("id"),
         "domain":         domain,
-        "source_ip":      req.get("remote_address", ""),
+        "source_ip":      req.get("remote_address") or txn.get("client_ip") or txn.get("clientIp") or "",
         "method":         req.get("method", "GET"),
         "path":           req.get("uri", "/"),
         "status_code":    status_code,
@@ -138,64 +152,55 @@ def _process_line(app, line: str) -> None:
             raise
 
 
-def _tail_loop(app, log_path: str) -> None:
-    path = Path(log_path)
-    file_obj = None
-    last_inode = None
+def _docker_log_loop(app, container_name: str) -> None:
+    import docker
+    import docker.errors
+
+    client = docker.from_env()
 
     while True:
         try:
-            if not path.exists():
-                time.sleep(5)
-                continue
-
-            stat = path.stat()
-            current_inode = stat.st_ino
-
-            if file_obj is None:
-                file_obj = path.open("r", encoding="utf-8", errors="replace")
-                file_obj.seek(0, 2)
-                last_inode = current_inode
-                log.info("ingest: tailing %s", log_path)
-            elif current_inode != last_inode:
-                file_obj.close()
-                file_obj = path.open("r", encoding="utf-8", errors="replace")
-                last_inode = current_inode
-                log.info("ingest: log rotated, reopened %s", log_path)
-
-            line = file_obj.readline()
-            if line:
+            container = client.containers.get(container_name)
+            # Stream from current time forward — don't replay historical logs
+            since = int(time.time())
+            log.info("ingest: streaming Docker logs from %s", container_name)
+            for raw in container.logs(stream=True, follow=True, since=since):
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("{"):
+                    continue
                 try:
                     _process_line(app, line)
                 except Exception as exc:
                     log.warning("ingest: error processing line: %s", exc)
-            else:
-                time.sleep(0.5)
 
+            # logs() generator exhausted means container stopped
+            log.warning("ingest: log stream ended for %s, retrying in 10s", container_name)
+            time.sleep(10)
+
+        except docker.errors.NotFound:
+            log.warning("ingest: container %s not found, retrying in 10s", container_name)
+            time.sleep(10)
         except Exception as exc:
-            log.error("ingest: unexpected error in tail loop: %s", exc)
-            if file_obj:
-                try:
-                    file_obj.close()
-                except Exception:
-                    pass
-                file_obj = None
+            log.error("ingest: unexpected error: %s", exc)
             time.sleep(5)
 
 
 def start_ingest_thread(app) -> threading.Thread | None:
-    log_path = os.environ.get("MODSEC_LOG_PATH", _DEFAULT_LOG_PATH)
+    container_name = os.environ.get("WARDNODE_PROXY_CONTAINER", _DEFAULT_PROXY_CONTAINER)
 
-    if not os.path.exists(log_path):
-        log.debug("ingest: %s not found, ingest thread not started", log_path)
+    try:
+        import docker
+        docker.from_env().ping()
+    except Exception as exc:
+        log.debug("ingest: Docker not available (%s), ingest thread not started", exc)
         return None
 
     t = threading.Thread(
-        target=_tail_loop,
-        args=(app, log_path),
+        target=_docker_log_loop,
+        args=(app, container_name),
         name="modsec-ingest",
         daemon=True,
     )
     t.start()
-    log.info("ingest: started modsec-ingest thread (tailing %s)", log_path)
+    log.info("ingest: started modsec-ingest thread (streaming %s Docker logs)", container_name)
     return t

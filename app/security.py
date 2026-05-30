@@ -12,6 +12,7 @@ def register_security_controls(app: Flask) -> None:
 
     @app.errorhandler(400)
     def bad_request(error):
+        app.logger.warning("400 Bad Request: %s", error)
         return render_template("errors/400.html"), 400
 
     @app.errorhandler(403)

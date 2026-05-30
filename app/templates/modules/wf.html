@@ -51,19 +51,6 @@
   <div x-show="agentOk === false" x-cloak>
   <div x-data="wfSetup()">
 
-    {# Banner de error #}
-    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;display:flex;gap:10px;align-items:flex-start;margin-bottom:20px">
-      <i class="bi bi-exclamation-triangle-fill" style="color:var(--c-danger);font-size:18px;flex-shrink:0;margin-top:1px"></i>
-      <div>
-        <p style="font-weight:600;margin:0 0 2px;font-size:13px">Agente WF no disponible</p>
-        <p style="font-size:12px;color:var(--text-secondary);margin:0" x-text="agentError"></p>
-        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0">
-          Ruta del socket en el contenedor: <code style="font-size:11px">{{ socket_path }}</code> &nbsp;·&nbsp;
-          En el host: <code style="font-size:11px">/run/wardnode/wardnode-wf.sock</code>
-        </p>
-      </div>
-    </div>
-
     {# ── Instalación via SSH ── #}
     <div>
       <div class="card-panel mb-4">
@@ -124,18 +111,6 @@
                         <i class="bi bi-shield-lock me-1"></i>Solo se usa para instalar la llave pública. No se almacena.
                       </div>
                     </div>
-                    <div class="col-12">
-                      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:10px 12px;display:flex;align-items:flex-start;gap:10px">
-                        <input class="form-check-input mt-0" type="checkbox" x-model="hardenSSH"
-                               id="hardenSSHCheck" :disabled="generating"
-                               style="flex-shrink:0;margin-top:2px">
-                        <label for="hardenSSHCheck" style="font-size:12px;cursor:pointer;line-height:1.4">
-                          <span style="font-weight:600;color:#166534">Deshabilitar login root por contraseña SSH</span><br>
-                          <span style="color:#15803d">Aplica <code style="font-size:11px">PermitRootLogin prohibit-password</code> al finalizar.
-                          El acceso por llave sigue funcionando.</span>
-                        </label>
-                      </div>
-                    </div>
                   </div>
                   <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
                     <button @click="generateKey()" :disabled="generating || !sshPassword"
@@ -148,12 +123,8 @@
                   <div x-show="genError" x-cloak style="margin-top:10px;font-size:12px;color:var(--c-danger)">
                     <i class="bi bi-x-circle-fill me-1"></i><span x-text="genError"></span>
                   </div>
-                  <div x-show="genOk && !genSshHardened" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
+                  <div x-show="genOk" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
                     <i class="bi bi-check-circle-fill me-1"></i>Llave generada e instalada en el servidor. Ahora haz clic en "Instalar agente" para continuar.
-                  </div>
-                  <div x-show="genOk && genSshHardened" x-cloak style="margin-top:10px;font-size:12px;color:#16a34a">
-                    <i class="bi bi-check-circle-fill me-1"></i>Llave generada e instalada. Hardening SSH aplicado.
-                    Ahora haz clic en "Instalar agente" para continuar.
                   </div>
                   <div x-show="genWarning" x-cloak style="margin-top:8px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px 12px">
                     <i class="bi bi-exclamation-triangle-fill me-1"></i><span x-text="genWarning"></span>
@@ -182,12 +153,12 @@
               <span x-text="installing ? 'Instalando…' : 'Instalar agente'"></span>
             </button>
             <span x-show="installing" style="font-size:12px;color:var(--text-muted)">
-              Esto puede tardar hasta 3 minutos (incluye CrowdSec)…
+              Esto puede tardar hasta 2 minutos…
             </span>
           </div>
 
           {# Output log #}
-          <div x-show="installOutput !== null" x-cloak style="margin-top:16px">
+          <div x-show="installOk !== null" x-cloak style="margin-top:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
               <span x-show="installOk === true" style="font-size:12px;font-weight:600;color:#16a34a">
                 <i class="bi bi-check-circle-fill me-1"></i>Instalación completada
@@ -199,52 +170,50 @@
             <div x-show="installError" style="font-size:12px;color:var(--c-danger);margin-bottom:6px" x-text="installError"></div>
             <pre x-show="installOutput" x-text="installOutput"
                  style="font-size:11px;background:var(--bg-subtle);padding:12px;border-radius:6px;margin:0;overflow-x:auto;white-space:pre-wrap;max-height:320px;overflow-y:auto"></pre>
-            <div x-show="installOk === true && agentOk === null" style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+
+            {# Banner de redirección al dominio cuando el puerto 5000 va a ser bloqueado #}
+            <div x-show="portBlocking && consoleUrl" x-cloak
+                 style="margin-top:14px;background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:16px 18px">
+              <div style="display:flex;align-items:flex-start;gap:12px">
+                <i class="bi bi-shield-lock-fill" style="font-size:20px;color:#2563eb;flex-shrink:0;margin-top:2px"></i>
+                <div style="flex:1">
+                  <p style="font-weight:700;font-size:13px;margin:0 0 4px;color:#1d4ed8">
+                    Puerto 5000 bloqueado — usa tu dominio para continuar
+                  </p>
+                  <p style="font-size:12px;color:#1e40af;margin:0 0 10px;line-height:1.5">
+                    El agente WF ha asegurado el acceso externo al puerto 5000.
+                    A partir de ahora accede al panel únicamente a través de tu dominio.
+                    Tendrás que <strong>iniciar sesión de nuevo</strong>.
+                  </p>
+                  <div style="background:#dbeafe;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px;word-break:break-all">
+                    <i class="bi bi-link-45deg me-1"></i>
+                    <a :href="consoleUrl + '/auth/login?reason=port_secured'" x-text="consoleUrl + '/auth/login'"
+                       style="color:#1d4ed8;font-weight:600"></a>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <button @click="window.location.href = consoleUrl + '/auth/login?reason=port_secured'"
+                            class="btn btn-sm btn-primary"
+                            style="font-size:12px">
+                      <i class="bi bi-box-arrow-right me-1"></i>Ir al dominio ahora
+                    </button>
+                    <span style="font-size:11px;color:#3b82f6">
+                      Redirigiendo en <strong x-text="redirectCountdown"></strong> s…
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div x-show="installOk === true && !portBlocking && agentOk === null" style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span style="font-size:12px;color:var(--text-muted)">
                 <span class="spinner-border spinner-border-sm me-1" style="width:11px;height:11px"></span>
                 Verificando conexión con el agente…
               </span>
             </div>
-            <div x-show="installOk === true && agentOk === false" x-cloak style="margin-top:12px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px 12px">
+            <div x-show="installOk === true && !portBlocking && agentOk === false" x-cloak style="margin-top:12px;font-size:12px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:8px 12px">
               <i class="bi bi-exclamation-triangle-fill me-1"></i>
               Agente instalado pero UFW no responde. Revisa:
               <code style="font-size:11px;margin-left:4px">journalctl -u wardnode-wf -n 30</code>
-            </div>
-          </div>
-
-          {# ── Hardening SSH (mostrar tras install exitoso, solo si no fue aplicado ya) ── #}
-          <div x-show="installOk === true && !hardenDone" x-cloak style="margin-top:16px">
-            <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:14px 16px">
-              <div style="display:flex;align-items:flex-start;gap:10px">
-                <i class="bi bi-shield-lock-fill" style="color:#b45309;font-size:18px;flex-shrink:0;margin-top:1px"></i>
-                <div style="flex:1">
-                  <p style="font-weight:600;font-size:13px;color:#92400e;margin:0 0 4px">Hardening SSH recomendado</p>
-                  <p style="font-size:12px;color:#78350f;margin:0 0 12px;line-height:1.5">
-                    Deshabilitar el login root por contraseña en el servidor (<code style="font-size:11px">PermitRootLogin prohibit-password</code>).
-                    El acceso por llave SSH sigue funcionando — solo se bloquean las contraseñas.
-                  </p>
-                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                    <button @click="hardenSsh()" :disabled="hardenRunning || hardenDone"
-                            style="background:#b45309;border:none;color:#fff;border-radius:6px;padding:5px 14px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;cursor:pointer"
-                            :style="(hardenRunning || hardenDone) ? 'opacity:0.6;cursor:not-allowed' : ''">
-                      <span x-show="hardenRunning" class="spinner-border spinner-border-sm" style="width:11px;height:11px"></span>
-                      <i x-show="!hardenRunning" class="bi bi-shield-lock-fill"></i>
-                      <span x-text="hardenRunning ? 'Aplicando…' : 'Aplicar hardening SSH'"></span>
-                    </button>
-                    <button @click="hardenSkipped = true" x-show="!hardenDone && !hardenSkipped"
-                            class="btn btn-sm btn-outline-secondary" style="font-size:12px">
-                      Omitir por ahora
-                    </button>
-                  </div>
-                  <div x-show="hardenDone" x-cloak style="margin-top:8px;font-size:12px;color:#16a34a;font-weight:600">
-                    <i class="bi bi-check-circle-fill me-1"></i>Hardening aplicado — root solo puede ingresar por llave SSH.
-                  </div>
-                  <div x-show="hardenError" x-cloak style="margin-top:8px;font-size:12px;color:var(--c-danger)" x-text="hardenError"></div>
-                  <div x-show="hardenSkipped && !hardenDone" x-cloak style="margin-top:8px;font-size:12px;color:var(--text-muted)">
-                    Omitido. Puedes aplicarlo manualmente: <code style="font-size:11px">PermitRootLogin prohibit-password</code> en <code style="font-size:11px">/etc/ssh/sshd_config</code>.
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -266,33 +235,6 @@
 
   </div>
   </div>
-
-  {# ── Banner hardening SSH (agente activo, hardening pendiente) ── #}
-  {% if not ssh_hardened %}
-  <div x-show="agentOk === true" x-cloak style="margin-bottom:20px" x-data="wfHarden()">
-    <div x-show="!done && !dismissed" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <i class="bi bi-shield-lock" style="color:#b45309;font-size:18px;flex-shrink:0"></i>
-      <div style="flex:1;min-width:200px">
-        <span style="font-size:12px;color:#92400e;font-weight:600">Recomendación de seguridad:</span>
-        <span style="font-size:12px;color:#78350f;margin-left:4px">deshabilitar login root por contraseña SSH</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <button @click="apply()" :disabled="running"
-                style="background:#b45309;border:none;color:#fff;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px"
-                :style="running ? 'opacity:0.6;cursor:not-allowed' : ''">
-          <span x-show="running" class="spinner-border spinner-border-sm" style="width:10px;height:10px"></span>
-          <i x-show="!running" class="bi bi-shield-lock-fill"></i>
-          <span x-text="running ? 'Aplicando…' : 'Aplicar'"></span>
-        </button>
-        <button @click="dismissed = true" class="btn btn-sm btn-outline-secondary" style="font-size:12px">Omitir</button>
-      </div>
-      <div x-show="error" x-cloak style="width:100%;font-size:12px;color:var(--c-danger);margin-top:4px" x-text="error"></div>
-    </div>
-    <div x-show="done" x-cloak style="font-size:12px;color:#16a34a;padding:6px 0">
-      <i class="bi bi-check-circle-fill me-1"></i>Hardening SSH aplicado — root solo puede ingresar por llave.
-    </div>
-  </div>
-  {% endif %}
 
   {# ── Inicialización obligatoria del firewall ── #}
   <div x-show="agentOk === true && initialized === false" x-cloak style="margin-bottom:24px">
@@ -338,7 +280,7 @@
           </label>
           <input class="form-control form-control-sm" type="number" x-model="sshPort"
                  placeholder="22" min="1" max="65535"
-                 style="width:100px;border-color:#fcd34d"
+                 style="width:100px;max-width:100%;min-width:0;border-color:#fcd34d"
                  :disabled="running">
         </div>
         <button @click="runInit()" :disabled="running || !sshPort"
@@ -348,16 +290,14 @@
           <i x-show="!running" class="bi bi-shield-lock-fill"></i>
           <span x-text="running ? 'Inicializando…' : 'Inicializar firewall'"></span>
         </button>
+        <div x-show="ok === true" x-cloak style="font-size:12px;color:#16a34a;font-weight:600">
+          <i class="bi bi-check-circle-fill me-1"></i>Firewall inicializado correctamente
+        </div>
         <div x-show="ok === false" x-cloak>
           <span style="font-size:12px;color:var(--c-danger);font-weight:600">
             <i class="bi bi-x-circle-fill me-1"></i><span x-text="error"></span>
           </span>
         </div>
-      </div>
-
-      <div x-show="output" x-cloak style="margin-top:14px">
-        <pre x-text="output"
-             style="font-size:11px;background:#fef3c7;border:1px solid #fde68a;padding:10px 12px;border-radius:6px;margin:0;overflow-x:auto;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:#374151"></pre>
       </div>
     </div>
 
@@ -598,6 +538,176 @@
     </div>
 
   </div>
+
+  {# ── Panel: Puertos Docker publicados ── #}
+  <div class="row g-4 mt-0"
+       x-data="wfDockerPorts()"
+       x-show="agentOk === true"
+       x-cloak
+       @wf-rules-changed.window="load()">
+    <div class="col-12">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-hdd-network" style="color:var(--accent)"></i>
+            <h2 class="card-panel-title">Puertos Docker publicados</h2>
+          </div>
+          <button @click="load()" :disabled="loading" class="btn btn-xs btn-outline-secondary"
+                  style="padding:2px 10px;font-size:11px">
+            <span x-show="loading" class="spinner-border spinner-border-sm" style="width:10px;height:10px"></span>
+            <i x-show="!loading" class="bi bi-arrow-clockwise"></i>
+            Actualizar
+          </button>
+        </div>
+        <div class="card-panel-body">
+
+          <div x-show="error" x-cloak
+               style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;font-size:12px;color:#b91c1c;margin-bottom:12px">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            <span x-text="error"></span>
+          </div>
+
+          <div x-show="loading && ports.length === 0" style="padding:40px 0;text-align:center">
+            <span class="spinner-border spinner-border-sm" style="color:var(--text-muted)"></span>
+            <p style="font-size:12px;color:var(--text-muted);margin-top:8px">Consultando contenedores…</p>
+          </div>
+
+          <div x-show="!loading && !error && ports.length === 0"
+               style="padding:32px 0 16px;text-align:center;color:var(--text-muted)">
+            <i class="bi bi-hdd-stack" style="font-size:32px;display:block;margin-bottom:10px"></i>
+            <p style="font-size:13px;margin:0 0 12px">No hay contenedores con puertos publicados en este host.</p>
+            <details x-show="rawOutput" style="text-align:left;max-width:600px;margin:0 auto">
+              <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">
+                Ver salida de <code>docker ps</code>
+              </summary>
+              <pre x-text="rawOutput || '(vacío)'"
+                   style="font-size:11px;background:var(--bg-subtle);padding:10px;border-radius:6px;margin-top:6px;overflow-x:auto;white-space:pre-wrap"></pre>
+            </details>
+          </div>
+
+          <div x-show="ports.length > 0" x-cloak>
+            <div class="table-responsive">
+              <table class="data-table" style="font-size:12px">
+                <thead>
+                  <tr>
+                    <th>Contenedor</th>
+                    <th>Puerto host</th>
+                    <th>Puerto container</th>
+                    <th>Proto</th>
+                    <th>Estado</th>
+                    <th style="width:130px;text-align:right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="p in ports" :key="p.container + ':' + p.host_port">
+                    <tr>
+                      <td class="t-mono" x-text="p.container"></td>
+                      <td class="t-mono fw-bold" x-text="p.host_port"></td>
+                      <td class="t-mono t-dim" x-text="p.container_port"></td>
+                      <td class="t-mono t-dim" x-text="p.proto"></td>
+                      <td>
+                        <span x-show="isReserved(p.host_port)"
+                              class="badge bg-secondary" style="font-size:10px">Reservado</span>
+                        <span x-show="!isReserved(p.host_port)"
+                              :class="p.blocked ? 'badge bg-success' : 'badge bg-warning text-dark'"
+                              style="font-size:10px"
+                              x-text="p.blocked ? 'Bloqueado' : 'Expuesto'"></span>
+                      </td>
+                      <td style="text-align:right">
+                        {% if not current_user.has_role('reader') %}
+                        <button x-show="!isReserved(p.host_port)"
+                                @click="toggle(p.host_port, p.blocked)"
+                                :disabled="actionState[p.host_port] === 'loading'"
+                                :class="p.blocked ? 'btn btn-xs btn-outline-warning' : 'btn btn-xs btn-outline-danger'"
+                                style="padding:2px 10px;font-size:11px;white-space:nowrap">
+                          <span x-show="actionState[p.host_port] === 'loading'"
+                                class="spinner-border spinner-border-sm" style="width:10px;height:10px"></span>
+                          <span x-show="actionState[p.host_port] !== 'loading'">
+                            <i :class="p.blocked ? 'bi bi-unlock' : 'bi bi-shield-lock'"></i>
+                            <span x-text="p.blocked ? ' Desbloquear' : ' Bloquear'"></span>
+                          </span>
+                        </button>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:11px;color:var(--text-muted);margin-top:8px;margin-bottom:6px">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>Bloqueado</strong> — acceso externo denegado via <code>iptables raw/PREROUTING</code>;
+              el proxy WAF sigue alcanzando el upstream.
+              Los puertos protegidos automáticamente al crear sitios también aparecen aquí.
+            </p>
+            <details style="margin-top:4px">
+              <summary style="font-size:11px;color:var(--text-muted);cursor:pointer">
+                Ver salida completa de <code>docker ps</code>
+              </summary>
+              <pre x-text="rawOutput || '(vacío)'"
+                   style="font-size:11px;background:var(--bg-subtle);padding:10px;border-radius:6px;margin-top:6px;overflow-x:auto;white-space:pre-wrap"></pre>
+            </details>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Panel: Protección SSH brute-force ── #}
+  <div class="row g-4 mt-0"
+       x-data="wfSshLimit()"
+       x-show="agentOk === true && initialized === true"
+       x-cloak
+       @wf-status-loaded.window="syncFromRules($event.detail.rules)">
+    <div class="col-12">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-terminal-fill" :style="limited ? 'color:#16a34a' : 'color:var(--accent)'"></i>
+            <h2 class="card-panel-title">Protección SSH brute-force</h2>
+          </div>
+          <span :class="limited ? 'badge bg-success' : 'badge bg-secondary'"
+                style="font-size:10px"
+                x-text="limited ? 'Activa' : 'Inactiva'"></span>
+        </div>
+        <div class="card-panel-body">
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+            Bloquea IPs con más de 6 intentos de conexión en 30 segundos
+            (<code>ufw limit <span x-text="sshPort"></span>/tcp</code>).
+            Sin daemons adicionales — usa el rate-limiting nativo de UFW (capa 4, igual que fail2ban).
+          </p>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Puerto SSH:</label>
+              <input class="form-control form-control-sm" type="number"
+                     x-model="sshPort" min="1" max="65535"
+                     style="width:80px;max-width:100%;min-width:0" :disabled="running">
+            </div>
+            {% if not current_user.has_role('reader') %}
+            <button @click="toggle()"
+                    :disabled="running"
+                    :class="limited ? 'btn btn-sm btn-outline-warning' : 'btn btn-sm btn-outline-success'"
+                    style="font-size:12px">
+              <span x-show="running" class="spinner-border spinner-border-sm" style="width:11px;height:11px"></span>
+              <template x-if="!running">
+                <span>
+                  <i :class="limited ? 'bi bi-shield-slash' : 'bi bi-shield-lock-fill'"></i>
+                  <span x-text="limited ? ' Desactivar protección' : ' Activar protección'"></span>
+                </span>
+              </template>
+            </button>
+            {% endif %}
+            <span x-show="result === true" x-cloak style="font-size:12px;color:#16a34a">
+              <i class="bi bi-check-circle-fill"></i> Aplicado
+            </span>
+            <span x-show="result === false" x-cloak style="font-size:12px;color:var(--c-danger)" x-text="errMsg"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 
@@ -637,6 +747,7 @@ function wfPanel() {
           this.rules = this._parseRules(d.output || '');
           this.initialized = d.initialized ?? true;
           this.defaultsOutput = d.defaults_output || '';
+          this.$dispatch('wf-status-loaded', { rules: this.rules });
           this.loadIpv6();
         } else {
           this.agentOk = false;
@@ -738,46 +849,33 @@ function wfSetup() {
     genOk: false,
     genError: '',
     genWarning: '',
-    hardenSSH: true,
-    genSshHardened: false,
-    hardenRunning: false,
-    hardenDone: false,
-    hardenError: '',
-    hardenSkipped: false,
+    consoleUrl: null,
+    portBlocking: false,
+    redirectCountdown: 0,
+    _countdownTimer: null,
 
     csrf() {
       return document.querySelector("meta[name='csrf-token']").content;
     },
 
-    async hardenSsh() {
-      this.hardenRunning = true;
-      this.hardenError = '';
-      try {
-        const r = await fetch('{{ url_for("modules.wf_harden_ssh") }}', {
-          method: 'POST',
-          headers: { 'X-CSRFToken': this.csrf() },
-        });
-        const d = await r.json();
-        if (d.ok) {
-          this.hardenDone = true;
-        } else {
-          this.hardenError = d.error || 'Error desconocido';
+    _startRedirectCountdown() {
+      this.redirectCountdown = 5;
+      this._countdownTimer = setInterval(() => {
+        this.redirectCountdown--;
+        if (this.redirectCountdown <= 0) {
+          clearInterval(this._countdownTimer);
+          window.location.href = this.consoleUrl + '/auth/login?reason=port_secured';
         }
-      } catch (e) {
-        this.hardenError = 'Error de red al contactar el servidor';
-      }
-      this.hardenRunning = false;
+      }, 1000);
     },
 
     async generateKey() {
       this.generating = true;
       this.genOk = false;
-      this.genSshHardened = false;
       this.genError = '';
       const body = new URLSearchParams({
         ssh_port:   this.sshPort,
         ssh_password: this.sshPassword,
-        harden_ssh: this.hardenSSH ? '1' : '0',
       });
       try {
         const r = await fetch('{{ url_for("modules.wf_generate_key") }}', {
@@ -788,13 +886,8 @@ function wfSetup() {
         const d = await r.json();
         if (d.ok) {
           this.genOk = true;
-          this.genSshHardened = d.ssh_hardened || false;
           this.genWarning = d.warning || '';
           this.sshPassword = '';
-          // Si el hardening ya fue aplicado, marcar también el estado del banner
-          if (d.ssh_hardened) {
-            this.hardenDone = true;
-          }
         } else {
           this.genError = d.error || 'Error desconocido';
         }
@@ -824,8 +917,15 @@ function wfSetup() {
         this.installOutput = d.output || null;
         this.installError = d.error || '';
         if (d.ok) {
-          // Esperar a que el agente termine de iniciar y luego verificar automáticamente
-          setTimeout(() => this.$dispatch('wf-install-success'), 3000);
+          if (d.port_will_be_blocked && d.console_url) {
+            // El puerto 5000 será bloqueado en ~5s — redirigir al dominio antes
+            this.consoleUrl = d.console_url;
+            this.portBlocking = true;
+            this._startRedirectCountdown();
+          } else {
+            // Sin bloqueo de puerto: verificar el agente normalmente
+            setTimeout(() => this.$dispatch('wf-install-success'), 3000);
+          }
         }
       } catch (e) {
         this.installOk = false;
@@ -833,39 +933,6 @@ function wfSetup() {
         this.installOutput = null;
       }
       this.installing = false;
-    },
-  };
-}
-
-function wfHarden() {
-  return {
-    running: false,
-    done: false,
-    dismissed: false,
-    error: '',
-
-    csrf() {
-      return document.querySelector("meta[name='csrf-token']").content;
-    },
-
-    async apply() {
-      this.running = true;
-      this.error = '';
-      try {
-        const r = await fetch('{{ url_for("modules.wf_harden_ssh") }}', {
-          method: 'POST',
-          headers: { 'X-CSRFToken': this.csrf() },
-        });
-        const d = await r.json();
-        if (d.ok) {
-          this.done = true;
-        } else {
-          this.error = d.error || 'Error desconocido';
-        }
-      } catch (e) {
-        this.error = 'Error de red';
-      }
-      this.running = false;
     },
   };
 }
@@ -963,6 +1030,134 @@ function wfAction(action) {
         this.errMsg = 'Error de red';
       }
       this.running = false;
+    }
+  };
+}
+
+function wfSshLimit() {
+  return {
+    limited: false,
+    sshPort: '22',
+    running: false,
+    result: null,
+    errMsg: '',
+
+    syncFromRules(rules) {
+      if (!Array.isArray(rules)) return;
+      this._lastRules = rules;
+      this.limited = rules.some(r =>
+        r.text && r.text.toUpperCase().includes('LIMIT') && r.text.includes(this.sshPort)
+      );
+    },
+
+    async toggle() {
+      this.running = true;
+      this.result = null;
+      this.errMsg = '';
+      const url = this.limited
+        ? '{{ url_for("modules.wf_unlimit_ssh") }}'
+        : '{{ url_for("modules.wf_limit_ssh") }}';
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() },
+          body: new URLSearchParams({ port: this.sshPort })
+        });
+        const d = await r.json();
+        this.result = d.ok;
+        if (!d.ok) {
+          this.errMsg = d.error || 'Error al aplicar la regla';
+        } else {
+          this.limited = !this.limited;
+          this.$dispatch('wf-rules-changed');
+        }
+      } catch (e) {
+        this.result = false;
+        this.errMsg = 'Error de conexión: ' + String(e);
+      }
+      this.running = false;
+    },
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    init() {
+      // syncFromRules se dispara via @wf-status-loaded.window cuando wfPanel.loadStatus()
+      // completa — garantiza que las reglas UFW ya están disponibles al sincronizar.
+      this.$watch('sshPort', () => this.syncFromRules(this._lastRules || []));
+    }
+  };
+}
+
+function wfDockerPorts() {
+  return {
+    ports: [],
+    rawOutput: '',
+    loading: false,
+    error: null,
+    actionState: {},
+    _RESERVED: new Set([22, 80, 443, 5000]),
+
+    isReserved(port) {
+      return this._RESERVED.has(parseInt(port));
+    },
+
+    async load() {
+      this.loading = true;
+      this.error = null;
+      try {
+        const r = await fetch('{{ url_for("modules.wf_docker_ports") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() }
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.ports = d.ports || [];
+          this.rawOutput = d.raw || '';
+        } else {
+          this.error = d.error || 'Error al obtener puertos Docker';
+          this.rawOutput = '';
+        }
+      } catch (e) {
+        this.error = 'Error de conexión: ' + String(e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async toggle(port, blocked) {
+      this.actionState = { ...this.actionState, [port]: 'loading' };
+      const url = blocked
+        ? '{{ url_for("modules.wf_unprotect_port") }}'
+        : '{{ url_for("modules.wf_protect_port") }}';
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() },
+          body: new URLSearchParams({ port })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.actionState = { ...this.actionState, [port]: 'ok' };
+          this.$dispatch('wf-rules-changed');
+          await this.load();
+        } else {
+          this.actionState = { ...this.actionState, [port]: 'error' };
+          this.error = d.error || 'Error al cambiar estado del puerto ' + port;
+        }
+      } catch (e) {
+        this.actionState = { ...this.actionState, [port]: 'error' };
+        this.error = 'Error de conexión: ' + String(e);
+      }
+    },
+
+    csrf() {
+      return document.querySelector("meta[name='csrf-token']").content;
+    },
+
+    init() {
+      this.load();
     }
   };
 }

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,6 +14,10 @@ SOCKET_PATH = "/run/wardnode/wardnode-wf.sock"
 SOCKET_DIR = os.path.dirname(SOCKET_PATH)
 MAX_PAYLOAD = 4_096
 TIMEOUT_S = 10
+_SECURE_PORT_MARKER = "/opt/wardnode/.secure_port5000"
+_PROTECTED_PORTS_MARKER = "/opt/wardnode/.protected_ports.json"
+_BLOCKED_PORTS = {22, 80, 443, 5000}
+_DOCKER_CIDR = "172.16.0.0/12"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,13 +29,13 @@ _IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}(/(?:[12]?\d|3[012]))?$")
 _IPV6_RE = re.compile(r"^[0-9a-fA-F:]+(/\d{1,3})?$")
 _PROTO = {"tcp", "udp", "any"}
 _RULE_RE = re.compile(r"^\d{1,3}$")
-_DURATION_RE = re.compile(r"^\d+[smhd]$")
-_REASON_RE = re.compile(r"^[\w\-]{1,64}$")
 ACTIONS = {"status", "allow_port", "deny_port", "allow_ip", "deny_ip", "delete_rule",
            "check_defaults", "init_firewall",
-           "cs_status", "cs_decisions", "cs_ban", "cs_unban",
-           "cs_stop_services", "cs_start_services", "cs_restart_services",
-           "get_ipv6_status", "set_ipv6"}
+           "get_ipv6_status", "set_ipv6",
+           "secure_console_port",
+           "protect_host_port", "unprotect_host_port",
+           "list_docker_ports",
+           "limit_port", "unlimit_port"}
 
 
 def _vport(p):
@@ -52,21 +57,6 @@ def _vrule(n):
     return bool(_RULE_RE.match(str(n)))
 
 
-def _cscli(*args) -> dict:
-    try:
-        r = subprocess.run(
-            ["/usr/bin/cscli", *args],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        return {"ok": r.returncode == 0, "output": (r.stdout or r.stderr).strip()}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "cscli timeout"}
-    except FileNotFoundError:
-        return {"ok": False, "error": "cscli no encontrado — ¿CrowdSec instalado?"}
-
-
 def _ufw(*args) -> dict:
     try:
         r = subprocess.run(
@@ -78,6 +68,231 @@ def _ufw(*args) -> dict:
         return {"ok": r.returncode == 0, "output": (r.stdout or r.stderr).strip()}
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "ufw timeout"}
+
+
+def _enable_ufw_logging() -> dict:
+    result = _ufw("logging", "low")
+    try:
+        open("/var/log/ufw.log", "a", encoding="utf-8").close()
+        os.chmod("/var/log/ufw.log", 0o640)
+    except Exception:
+        pass
+    return result
+
+
+def _iptables(*args) -> dict:
+    try:
+        r = subprocess.run(
+            ["/usr/sbin/iptables", *args],
+            capture_output=True, text=True, timeout=10,
+        )
+        return {"ok": r.returncode == 0, "output": (r.stdout or r.stderr).strip()}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "iptables timeout"}
+    except FileNotFoundError:
+        return {"ok": False, "error": "iptables no encontrado"}
+
+
+def _load_protected_ports() -> dict:
+    try:
+        with open(_PROTECTED_PORTS_MARKER, encoding="utf-8") as fh:
+            data = json.load(fh)
+            return {str(k): bool(v) for k, v in data.items()}
+    except (FileNotFoundError, json.JSONDecodeError, Exception):
+        return {}
+
+
+def _save_protected_ports(ports: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_PROTECTED_PORTS_MARKER), exist_ok=True)
+        with open(_PROTECTED_PORTS_MARKER, "w", encoding="utf-8") as fh:
+            json.dump(ports, fh)
+    except Exception as exc:
+        logging.warning(f"No se pudo guardar marcador de puertos protegidos: {exc}")
+
+
+def _protect_host_port(port: str) -> dict:
+    """Bloquea acceso externo al puerto del host vía raw/PREROUTING (antes del DNAT de Docker).
+    Permite tráfico desde la subred Docker (_DOCKER_CIDR) para que el proxy WAF alcance el upstream.
+    Usar raw/PREROUTING en lugar de INPUT garantiza que la regla ve el puerto original del host
+    incluso cuando Docker hace DNAT (ej. -p 8081:80 → dport sigue siendo 8081 en PREROUTING).
+    """
+    # Idempotencia: borrar regla previa para este puerto
+    for _ in range(10):
+        r = subprocess.run(
+            ["/usr/sbin/iptables", "-t", "raw", "-D", "PREROUTING",
+             "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            break
+
+    result = _iptables("-t", "raw", "-I", "PREROUTING", "1",
+                       "-p", "tcp", "--dport", port,
+                       "!", "-s", _DOCKER_CIDR, "-j", "DROP")
+    if not result["ok"]:
+        return {"ok": False, "error": f"iptables: {result['output']}"}
+
+    ports = _load_protected_ports()
+    ports[port] = True
+    _save_protected_ports(ports)
+    return {"ok": True, "output": f"Puerto {port} asegurado: acceso externo bloqueado vía raw/PREROUTING"}
+
+
+def _unprotect_host_port(port: str) -> dict:
+    """Elimina la regla raw/PREROUTING que bloquea el acceso externo al puerto del host."""
+    removed = 0
+    for _ in range(10):
+        r = subprocess.run(
+            ["/usr/sbin/iptables", "-t", "raw", "-D", "PREROUTING",
+             "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            break
+        removed += 1
+
+    ports = _load_protected_ports()
+    ports.pop(port, None)
+    _save_protected_ports(ports)
+    return {"ok": True, "output": f"Puerto {port} desprotegido ({removed} reglas eliminadas)"}
+
+
+def _restore_protected_ports_if_needed() -> None:
+    """Re-aplica reglas INPUT al arrancar para cada puerto en el marcador JSON."""
+    ports = _load_protected_ports()
+    for port, active in ports.items():
+        if not active:
+            continue
+        logging.info(f"Restaurando bloqueo del puerto {port} en INPUT")
+        result = _protect_host_port(port)
+        if result.get("ok"):
+            logging.info(f"Puerto {port} bloqueado correctamente al arrancar")
+        else:
+            logging.warning(f"No se pudo restaurar bloqueo del puerto {port}: {result.get('error', '')}")
+
+
+def _secure_console_port() -> dict:
+    """Bloquea acceso externo al puerto 5000 vía cadena DOCKER-USER de iptables."""
+    # Idempotencia: eliminar reglas previas para el puerto 5000 en DOCKER-USER
+    for rule in [
+        ["-D", "DOCKER-USER", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
+        ["-D", "DOCKER-USER", "-s", "172.16.0.0/12", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+    ]:
+        for _ in range(10):
+            r = subprocess.run(
+                ["/usr/sbin/iptables"] + rule,
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode != 0:
+                break
+
+    # Insertar DROP primero, luego ACCEPT al frente → ACCEPT queda en posición 1
+    for rule in [
+        ["-I", "DOCKER-USER", "1", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
+        ["-I", "DOCKER-USER", "1", "-s", "172.16.0.0/12", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+    ]:
+        result = _iptables(*rule)
+        if not result["ok"]:
+            return {"ok": False, "error": f"iptables: {result['output']}"}
+
+    # Escribir marcador de persistencia: el agente lo lee al arrancar y re-aplica las reglas.
+    # DOCKER-USER no existe antes de que Docker arranque, así que netfilter-persistent no puede
+    # restaurar estas reglas en boot. El marcador + el arranque del agente después de Docker
+    # (After=docker.service) es el mecanismo de persistencia principal.
+    try:
+        os.makedirs(os.path.dirname(_SECURE_PORT_MARKER), exist_ok=True)
+        with open(_SECURE_PORT_MARKER, "w", encoding="utf-8") as fh:
+            fh.write("secured\n")
+    except Exception as exc:
+        logging.warning(f"No se pudo escribir marcador de persistencia: {exc}")
+
+    return {"ok": True, "output": "Puerto 5000 asegurado: acceso externo bloqueado vía DOCKER-USER"}
+
+
+def _restore_secure_port_if_needed() -> None:
+    """Re-aplica reglas DOCKER-USER al arrancar si el marcador de persistencia existe.
+
+    Se llama desde serve() en cada inicio del agente. Como el servicio systemd tiene
+    After=docker.service, Docker ya ha creado la cadena DOCKER-USER cuando llegamos aquí.
+    """
+    if not os.path.exists(_SECURE_PORT_MARKER):
+        return
+    logging.info("Marcador encontrado — restaurando bloqueo del puerto 5000 en DOCKER-USER")
+    result = _secure_console_port()
+    if result.get("ok"):
+        logging.info("Puerto 5000 bloqueado correctamente al arrancar")
+    else:
+        logging.warning(f"No se pudo restaurar bloqueo del puerto 5000: {result.get('error', '')}")
+
+
+_PORT_MAPPING_RE = re.compile(r"(?:[\d.:]+:)?(\d+)->(\d+)/(tcp|udp)")
+
+
+def _is_host_port_blocked(port: str) -> bool:
+    """Verifica si la regla raw/PREROUTING de bloqueo existe en iptables (fuente de verdad real)."""
+    r = subprocess.run(
+        ["/usr/sbin/iptables", "-t", "raw", "-C", "PREROUTING",
+         "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
+        capture_output=True, text=True, timeout=5,
+    )
+    return r.returncode == 0
+
+
+def _docker_bin() -> str | None:
+    """Localiza el binario docker considerando instalaciones snap y rutas no estándar."""
+    candidate = shutil.which("docker")
+    if candidate:
+        return candidate
+    for path in ("/usr/bin/docker", "/usr/local/bin/docker", "/snap/bin/docker"):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def _list_docker_ports() -> dict:
+    """Lista puertos publicados de contenedores Docker activos con su estado de bloqueo."""
+    docker = _docker_bin()
+    if not docker:
+        return {"ok": False, "error": "docker no encontrado — ¿está instalado en el host?"}
+
+    try:
+        r = subprocess.run(
+            [docker, "ps", "--format", '{"name":"{{.Names}}","ports":"{{.Ports}}"}'],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            return {"ok": False, "error": f"docker ps falló: {r.stderr.strip()}"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "Timeout al ejecutar docker ps"}
+
+    seen: set[tuple] = set()
+    ports_list = []
+    for line in r.stdout.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        for m in _PORT_MAPPING_RE.finditer(item.get("ports", "")):
+            host_port = m.group(1)
+            container_port = m.group(2)
+            proto = m.group(3)
+            key = (item.get("name", ""), host_port, proto)
+            if key in seen:
+                continue
+            seen.add(key)
+            ports_list.append({
+                "container": item.get("name", ""),
+                "host_port": host_port,
+                "container_port": container_port,
+                "proto": proto,
+                "blocked": _is_host_port_blocked(host_port),
+            })
+
+    return {"ok": True, "ports": ports_list, "raw": r.stdout.strip()}
 
 
 def handle(cmd: dict) -> dict:
@@ -137,92 +352,12 @@ def handle(cmd: dict) -> dict:
             _ufw("allow", f"{ssh_port}/tcp"),
             _ufw("allow", "80/tcp"),
             _ufw("allow", "443/tcp"),
+            _enable_ufw_logging(),
             _ufw("--force", "enable"),
         ]
         output = "\n".join(s.get("output", "") for s in steps)
         ok = all(s.get("ok") for s in steps)
         return {"ok": ok, "output": output}
-
-    if action == "cs_status":
-        version = _cscli("version")
-        if not version.get("ok"):
-            return {"ok": False, "error": version.get("error", "CrowdSec no disponible — reinstala el agente WF desde el panel")}
-        svc = subprocess.run(
-            ["systemctl", "is-active", "crowdsec"],
-            capture_output=True, text=True,
-        ).stdout.strip()
-        bouncer = subprocess.run(
-            ["systemctl", "is-active", "crowdsec-firewall-bouncer"],
-            capture_output=True, text=True,
-        ).stdout.strip()
-        return {
-            "ok": True,
-            "output": version.get("output", ""),
-            "crowdsec": svc,
-            "bouncer": bouncer,
-        }
-
-    if action == "cs_decisions":
-        return _cscli("decisions", "list", "-o", "json")
-
-    if action == "cs_ban":
-        ip = str(cmd.get("ip", ""))
-        duration = str(cmd.get("duration", "24h"))
-        reason = str(cmd.get("reason", "manual"))
-        if not _vip(ip):
-            return {"ok": False, "error": "IP inválida"}
-        if not _DURATION_RE.match(duration):
-            return {"ok": False, "error": "Duración inválida (ej: 24h, 7d, 3600s)"}
-        if not _REASON_RE.match(reason):
-            return {"ok": False, "error": "Razón inválida (solo letras, números, guiones)"}
-        return _cscli("decisions", "add", "--ip", ip,
-                      "--duration", duration, "--reason", reason, "--type", "ban")
-
-    if action == "cs_unban":
-        ip = str(cmd.get("ip", ""))
-        if not _vip(ip):
-            return {"ok": False, "error": "IP inválida"}
-        return _cscli("decisions", "delete", "--ip", ip)
-
-    if action in ("cs_stop_services", "cs_start_services"):
-        stopping = action == "cs_stop_services"
-        steps = (
-            [("stop", "bouncer"), ("stop", "crowdsec"), ("disable", "bouncer"), ("disable", "crowdsec")]
-            if stopping else
-            [("enable", "crowdsec"), ("start", "crowdsec"), ("enable", "bouncer"), ("start", "bouncer")]
-        )
-        outputs = []
-        for act, tgt in steps:
-            try:
-                r = subprocess.run(
-                    ["/opt/wardnode/wardnode-cs-control.sh", act, tgt],
-                    capture_output=True, text=True, timeout=15,
-                )
-                outputs.append((r.stdout or r.stderr).strip())
-                if r.returncode != 0:
-                    return {"ok": False, "error": f"Fallo en '{act} {tgt}'", "output": "\n".join(outputs)}
-            except subprocess.TimeoutExpired:
-                return {"ok": False, "error": f"Timeout al ejecutar '{act} {tgt}'"}
-            except FileNotFoundError:
-                return {"ok": False, "error": "Script de control CS no encontrado — reinstala el agente WF"}
-        return {"ok": True, "output": "\n".join(o for o in outputs if o)}
-
-    if action == "cs_restart_services":
-        outputs = []
-        for tgt in ["crowdsec", "bouncer"]:
-            try:
-                r = subprocess.run(
-                    ["/opt/wardnode/wardnode-cs-control.sh", "restart", tgt],
-                    capture_output=True, text=True, timeout=30,
-                )
-                outputs.append((r.stdout or r.stderr).strip())
-                if r.returncode != 0:
-                    return {"ok": False, "error": f"Fallo al reiniciar '{tgt}'", "output": "\n".join(outputs)}
-            except subprocess.TimeoutExpired:
-                return {"ok": False, "error": f"Timeout al reiniciar '{tgt}'"}
-            except FileNotFoundError:
-                return {"ok": False, "error": "Script de control CS no encontrado — reinstala el agente WF"}
-        return {"ok": True, "output": "\n".join(o for o in outputs if o)}
 
     if action == "get_ipv6_status":
         try:
@@ -251,6 +386,45 @@ def handle(cmd: dict) -> dict:
         except FileNotFoundError:
             return {"ok": False, "error": "Script IPv6 no encontrado — ejecuta install.sh nuevamente"}
 
+    if action == "secure_console_port":
+        return _secure_console_port()
+
+    if action == "protect_host_port":
+        port = str(cmd.get("port", ""))
+        if not _vport(port):
+            return {"ok": False, "error": "Puerto inválido"}
+        if int(port) in _BLOCKED_PORTS:
+            return {"ok": False, "error": f"El puerto {port} está reservado y no puede bloquearse"}
+        return _protect_host_port(port)
+
+    if action == "unprotect_host_port":
+        port = str(cmd.get("port", ""))
+        if not _vport(port):
+            return {"ok": False, "error": "Puerto inválido"}
+        return _unprotect_host_port(port)
+
+    if action == "list_docker_ports":
+        return _list_docker_ports()
+
+    if action == "limit_port":
+        port = str(cmd.get("port", "22"))
+        proto = str(cmd.get("proto", "tcp"))
+        if not _vport(port):
+            return {"ok": False, "error": "Puerto inválido"}
+        if not _vproto(proto):
+            return {"ok": False, "error": "Protocolo inválido"}
+        return _ufw("limit", f"{port}/{proto}")
+
+    if action == "unlimit_port":
+        port = str(cmd.get("port", "22"))
+        proto = str(cmd.get("proto", "tcp"))
+        if not _vport(port):
+            return {"ok": False, "error": "Puerto inválido"}
+        if not _vproto(proto):
+            return {"ok": False, "error": "Protocolo inválido"}
+        _ufw("delete", "limit", f"{port}/{proto}")
+        return _ufw("allow", f"{port}/{proto}")
+
     return {"ok": False, "error": "Sin handler"}
 
 
@@ -274,6 +448,8 @@ def _ensure_ufw_active() -> None:
 
 def serve():
     _ensure_ufw_active()
+    _restore_secure_port_if_needed()
+    _restore_protected_ports_if_needed()
     os.makedirs(SOCKET_DIR, exist_ok=True)
     if os.path.exists(SOCKET_PATH):
         os.unlink(SOCKET_PATH)
@@ -314,7 +490,10 @@ def serve():
                     resp = {"ok": False, "error": "Comando malformado"}
 
                 resp_bytes = json.dumps(resp).encode()
-                conn.sendall(len(resp_bytes).to_bytes(4, "big") + resp_bytes)
+                try:
+                    conn.sendall(len(resp_bytes).to_bytes(4, "big") + resp_bytes)
+                except Exception as exc:
+                    logging.warning("Error enviando respuesta (cliente desconectado): %s", exc)
 
 
 if __name__ == "__main__":

@@ -14,3 +14,11 @@ data/geoip/*.mmdb
 dist/
 build/
 *.egg-info/
+
+# Local tool/runtime state
+.opencode/
+
+# Exported Docker images and transfer artifacts
+export/
+root@*
+esepulvedah@*

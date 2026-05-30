@@ -20,7 +20,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **Bot Protection** — challenge matemático server-side con token HMAC-SHA256; cookie `HttpOnly + Secure`; verificación vía endpoint Flask proxiado desde nginx
 - **Config extra Nginx** — snippets server/location por sitio con validación y dry-run `nginx -t`
 - **Módulo WardNode WF** — gestión de UFW sin SSH desde la consola mediante socket Unix + agente host; hardening SSH integrado en el flujo de generación de clave
-- **Módulo WardNode CS** — instalación y gestión de CrowdSec (decisiones ban/unban) vía SSH
+- **Módulo WardNode CS** — instalación inicial junto al agente WF y gestión de CrowdSec por el mismo socket Unix (estado, decisiones, ban/unban, start/stop)
 - **Módulo WardNode OBS** — stack de observabilidad: Grafana Alloy → Loki + Prometheus → Grafana; configs distribuidas mediante volúmenes nombrados desde la imagen de consola
 - **Syslog (Fluent-bit)** — reenvío de logs nginx/modsecurity a servidor syslog externo; validación de host con allowlist regex + bloqueo loopback/link-local
 - **Módulo Auditoría** — panel admin-only con KPIs, gráfico timeline 7d, donut por severidad, top actores, tabla paginada y exportación CSV; `AuditLog` model con savepoint para aislamiento de transacciones

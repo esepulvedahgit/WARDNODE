@@ -44,7 +44,7 @@
       <div class="nav-group">
         <span class="nav-group-label">Plataforma</span>
         {% if current_user.has_role('admin') %}
-        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint and 'cs' not in request.endpoint %}active{% endif %}"
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.index') }}">
           <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
         </a>
@@ -53,13 +53,6 @@
            href="{{ url_for('modules.wf_index') }}"
            style="padding-left:2rem">
           <i class="bi bi-shield-fill-exclamation"></i><span>WF · Firewall</span>
-        </a>
-        {% endif %}
-        {% if module_cs_enabled %}
-        <a class="nav-link-item {% if request.endpoint and 'cs' in request.endpoint %}active{% endif %}"
-           href="{{ url_for('modules.cs_index') }}"
-           style="padding-left:2rem">
-          <i class="bi bi-shield-shaded"></i><span>CS · CrowdSec</span>
         </a>
         {% endif %}
         {% if module_obs_enabled %}
@@ -188,6 +181,58 @@
 <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 {% block scripts %}{% endblock %}
+
+{% if current_user.is_authenticated and current_user.has_role('admin') and not console_site_configured and not setup_prompt_shown %}
+<div id="setup-required-overlay" class="session-timeout-overlay" style="display:flex"
+     role="dialog" aria-modal="true" aria-labelledby="setup-required-title">
+  <div class="session-timeout-card" style="max-width:460px">
+    <div class="session-timeout-icon">
+      <i class="bi bi-shield-lock" style="color:var(--accent)"></i>
+    </div>
+    <p class="session-timeout-title" id="setup-required-title">Configuración inicial requerida</p>
+    <p class="session-timeout-desc" style="text-align:left;margin-bottom:12px">
+      Para usar WardNode de forma segura, sigue estos pasos:
+    </p>
+    <ol style="text-align:left;font-size:13px;color:var(--text-secondary);padding-left:18px;margin-bottom:20px;line-height:1.9">
+      <li>Ve a <strong>Ajustes → Acceso al panel</strong> e ingresa el dominio desde donde accederás al panel</li>
+      <li>Ve a <strong>Módulos → WardNode WF</strong> e instala el agente en tu servidor</li>
+      <li>Al activar WF, el puerto 5000 quedará bloqueado — continúa siempre desde tu dominio</li>
+      <li>Ya puedes crear sitios protegidos y activar los demás módulos</li>
+    </ol>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+      <a id="setup-goto-settings-btn" href="{{ url_for('proxy.settings') }}" class="btn btn-primary" style="font-size:13px">
+        <i class="bi bi-gear me-1"></i>Ir a Ajustes
+      </a>
+      <button id="setup-dismiss-btn" class="btn btn-outline-secondary" style="font-size:13px">
+        Recordar después
+      </button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var CSRF = document.querySelector("meta[name='csrf-token']") ? document.querySelector("meta[name='csrf-token']").content : '';
+  async function dismissSetupPrompt() {
+    try {
+      await fetch('{{ url_for("proxy.dismiss_setup_prompt") }}', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF },
+      });
+    } catch (e) {}
+  }
+  document.getElementById('setup-goto-settings-btn').addEventListener('click', async function (e) {
+    e.preventDefault();
+    var href = this.href;
+    await dismissSetupPrompt();
+    window.location.href = href;
+  });
+  document.getElementById('setup-dismiss-btn').addEventListener('click', async function () {
+    await dismissSetupPrompt();
+    document.getElementById('setup-required-overlay').style.display = 'none';
+  });
+})();
+</script>
+{% endif %}
 
 {% if current_user.is_authenticated %}
 <div id="session-timeout-overlay" class="session-timeout-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="session-timeout-title">

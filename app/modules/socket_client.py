@@ -4,7 +4,7 @@ import re
 import socket
 
 SOCKET_PATH = os.environ.get("WF_SOCKET_PATH", "/app/sockets/wardnode-wf.sock")
-MAX_RESP = 65_536
+MAX_RESP = 4_194_304  # 4 MB — margen para respuestas grandes del agente WF
 TIMEOUT_S = 10
 
 _PORT_RE = re.compile(r"^\d{1,5}$")
@@ -32,11 +32,11 @@ def valid_rule_num(n: str) -> bool:
     return bool(_RULE_RE.match(n))
 
 
-def send_command(action: str, **params) -> dict:
+def send_command(action: str, timeout: int = TIMEOUT_S, **params) -> dict:
     payload = json.dumps({"action": action, **params}).encode()
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(TIMEOUT_S)
+            s.settimeout(timeout)
             s.connect(SOCKET_PATH)
             s.sendall(len(payload).to_bytes(4, "big") + payload)
             raw_len = s.recv(4)

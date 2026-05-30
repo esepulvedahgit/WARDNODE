@@ -3,7 +3,7 @@ import pytest
 from app import create_app
 from app.config import TestConfig
 from app.extensions import db
-from app.models import ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER, User
+from app.models import ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER, AppConfig, User
 
 
 @pytest.fixture()
@@ -12,6 +12,7 @@ def app():
 
     with app.app_context():
         db.create_all()
+        AppConfig.set("console_site_id", "9999")
         yield app
         db.session.remove()
         db.drop_all()

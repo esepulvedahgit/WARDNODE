@@ -57,10 +57,11 @@ The `proxy/conf.d/generated.conf` template bootstraps the proxy with a single `i
 
 | Blueprint | Prefix | Purpose |
 |-----------|--------|---------|
-| `auth` | `/auth/` | Login, setup, user CRUD, password reset |
+| `auth` | `/auth/` | Login, setup, user CRUD, password reset, TOTP enrollment |
 | `main` | `/` | Root redirect, `/status` JSON |
 | `proxy` | `/proxy/` | All WAF management routes |
 | `modules` | `/modules/` | Optional host-management modules (admin only) |
+| `audit` | `/audit/` | Audit log dashboard (KPI cards, timeline chart, CSV export) — admin only |
 
 ### Models and relationships
 
@@ -71,11 +72,21 @@ The `proxy/conf.d/generated.conf` template bootstraps the proxy with a single `i
 - `Site` → `NginxExtraConfig` (1:1) — raw server/location snippets (validated)
 - `Site` → `BotProtectionConfig` (1:1) — bot challenge gate (cookie `wn_bot=ward_cleared_v1`). When enabled, unknown clients are redirected to `/_wn_challenge/` before reaching the upstream. The challenge HTML + JS is embedded in `services.py:_build_challenge_html()`.
 - `Site` → `SiteRuleSetting` (1:N) → `RuleCategory` — which OWASP CRS categories are active
-- `Site` → `AttackEvent` (1:N) — ModSecurity events (ingestion pending)
+- `Site` → `AttackEvent` (1:N) — ModSecurity block/detect events populated by the ingest thread
+
+`AuditLog` records operator actions (config changes, logins, etc.) and system events. Write entries with `log_audit()` from `app/audit/helpers.py` — it never raises exceptions and uses a SQLAlchemy `SAVEPOINT` to avoid committing the caller's pending transaction. Fields: `actor_email`, `action`, `resource_type`, `resource_name`, `severity` (`info`/`warning`/`error`/`critical`), `status` (`success`/`failure`), `detail` (JSON string).
 
 `AppConfig` is a generic key-value store (`app_config` table) used for all app-wide settings (module toggles, MaxMind credentials, SMTP config). Sensitive values are stored encrypted (`encrypted=True` column); read them back with `decrypt_secret()` from `app/encryption.py`. Requires `WARDNODE_SECRET_KEY` in env.
 
 `GeoBlocklistEntry` stores ISO country codes to block at the Nginx level. `proxy/geoip_blocklist.py` regenerates `00-geoip.conf` and reloads Nginx immediately (separate from the full `render_nginx_configs()` cycle).
+
+### AttackEvent ingest thread
+
+`proxy/ingest.py:start_ingest_thread()` is called at app startup (`app/__init__.py`). It spawns a daemon thread (`modsec-ingest`) that streams Docker logs from the proxy container via the Docker SDK (`docker.from_env()`). The OWASP CRS nginx image always writes ModSecurity JSON audit events to container stdout — never to file — so the thread reads them from there. Container name is controlled by `WARDNODE_PROXY_CONTAINER` (default `wardnode-proxy`). Each JSON line is parsed into an `AttackEvent` row; duplicate `transaction_id` values are silently discarded via `IntegrityError` rollback. In dev without Docker the thread is not started (Docker ping fails gracefully).
+
+### TOTP two-factor authentication
+
+`User` has `totp_enabled` (bool) and `totp_secret` (encrypted via `encrypt_secret()`). When TOTP is active the login flow adds an intermediate step: session key `_totp_user_id` holds the pending user ID until the TOTP code is verified. Enrollment stores the pending secret in `session["_totp_pending"]` until the user confirms with a valid code.
 
 Module state is injected into every template via a context processor in `app/__init__.py`:
 ```python
@@ -90,7 +101,7 @@ Optional modules are catalogued in `modules/routes.py:MODULES` and toggled via `
 
 ```
 Flask container  ──Unix socket──►  wardnode-wf-agent.py (host daemon)
-  modules/socket_client.py           sudoers: NOPASSWD /usr/sbin/ufw
+  modules/socket_client.py           systemd service runs as root:wardnode
   send_command("allow_port", ...)    systemd: wardnode-wf.service
 ```
 
@@ -98,13 +109,13 @@ Protocol: 4-byte big-endian length prefix + JSON payload. The socket is bind-mou
 
 Input validation is **dual-layer**: Flask validates in `socket_client.py` before sending; the agent re-validates every field independently (never trust the caller). Socket commands are whitelisted in `ACTIONS` set in the agent; all args re-validated with regex before any `subprocess.run` call (never `shell=True`).
 
-The host agent (`host-agent/wardnode-wf-agent.py`) is installed via `host-agent/wardnode-cs-install.sh` (run as root). Install can be triggered from the UI via SSH (paramiko) — Flask connects to `host.docker.internal` using the admin-provided private key. `host.docker.internal` requires `extra_hosts: host-gateway` in `docker-compose.vps.yml`.
+The host agent (`host-agent/wardnode-wf-agent.py`) is installed via `host-agent/install.sh` (run as root). Install can be triggered from the UI via SSH (paramiko) — Flask connects to `host.docker.internal` using the admin-provided private key. `host.docker.internal` requires `extra_hosts: host-gateway` in `docker-compose.vps.yml`. The current systemd unit runs the agent as `root` with group `wardnode`; access control is enforced by the Unix socket path and the allowlisted JSON protocol.
 
 **UFW initialization gate**: `wf_status` calls `check_defaults` and returns `initialized: bool`. The UI blocks Permitir/Bloquear panels until the admin completes the one-time init step (`default deny incoming`).
 
-**WardNode CS** — CrowdSec IDS/IPS. Installs CrowdSec on the host via SSH (paramiko + `wardnode-cs-install.sh`). Post-install, the Flask UI drives decisions (ban/unban) by running `wardnode-cs-control.sh` commands on the host also via SSH. Requires WF to be active first (CS bouncer acts via UFW).
+**WardNode CS** — CrowdSec IDS/IPS. CrowdSec is installed by `host-agent/install.sh` and left disabled until the module is enabled. Post-install, the Flask UI drives status, decisions, ban/unban, and service start/stop through the same WF Unix socket; the agent calls `cscli` or `/opt/wardnode/wardnode-cs-control.sh`. Requires WF to be active first (CS bouncer acts via UFW).
 
-**WardNode OBS** — Observability stack activated via the `obs` Docker Compose profile. Stack: Grafana Alloy (collector) → Loki (logs) + Prometheus (metrics) → Grafana. Alloy replaces Fluent Bit and embeds node-exporter functionality via `prometheus.exporter.unix`. Grafana is served at `/obs/` through the proxy (`observability/nginx-obs.conf`). Configuration lives entirely under `observability/`.
+**WardNode OBS** — Observability stack activated via the `obs` Docker Compose profile. Stack: Grafana Alloy (collector) → Loki (logs) + Prometheus (metrics) → Grafana. Alloy replaces Fluent Bit for OBS collection and embeds node-exporter functionality via `prometheus.exporter.unix`. Grafana is served at `/obs/` through an `obs.conf` file injected into the running proxy container by `modules/routes.py:_inject_obs_nginx_conf()`. In production, observability configs are copied from the console image into named volumes before the OBS containers start.
 
 ### Frontend stack
 
@@ -134,6 +145,7 @@ Jinja2 templates + **HTMX** for partial page updates + **Alpine.js** for local s
 | `RATELIMIT_STORAGE_URI` | `memory://` | Use `redis://` for multi-process |
 | `PASSWORD_RESET_SHOW_TOKEN` | `false` | Dev only — never enable in prod |
 | `PASSWORD_RESET_TOKEN_MINUTES` | `30` | Reset token expiry |
+| `WARDNODE_PROXY_CONTAINER` | `wardnode-proxy` | Docker container name to stream ModSecurity logs from |
 
 Copy `.env.example` to `.env` before first run.
 

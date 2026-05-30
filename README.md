@@ -1,6 +1,6 @@
 # WardNode
 
-Base para una consola defensiva que administra un proxy inverso Nginx con ModSecurity y OWASP CRS:
+Consola defensiva que administra un proxy inverso Nginx con ModSecurity y OWASP CRS:
 
 - Flask app factory y blueprints modulares
 - SQLAlchemy + Postgres para sitios, dominios, categorias y eventos
@@ -8,6 +8,7 @@ Base para una consola defensiva que administra un proxy inverso Nginx con ModSec
 - Jinja2, HTMX, Bootstrap y Alpine.js
 - Proxy Docker basado en `owasp/modsecurity-crs:nginx`
 - Configuracion generada para dominios, upstreams, certificados y categorias OWASP
+- Modulos opcionales para firewall UFW, CrowdSec y observabilidad
 - pytest
 
 ## Uso local
@@ -41,8 +42,7 @@ El proxy publica `http://localhost` y `https://localhost`.
 4. Registrar un sitio con dominio y upstream interno.
 5. Habilitar o deshabilitar categorias OWASP por sitio.
 6. Configurar certificados personalizados o marcar Let's Encrypt.
-7. Generar configuracion Nginx.
-8. Recargar el contenedor `proxy` cuando se quiera aplicar la nueva configuracion.
+7. La consola genera configuracion Nginx y recarga el contenedor `proxy` automaticamente cuando corresponde.
 
 ## Roles
 
@@ -111,17 +111,46 @@ La recuperacion se habilita solo despues de que exista un admin. Los tokens se g
 
 ## Let's Encrypt
 
-El compose incluye un servicio `certbot` bajo profile. Ejemplo:
+La consola puede disparar el aprovisionamiento usando Docker SDK cuando el sitio tiene Let's Encrypt habilitado. El compose tambien incluye un servicio `certbot` bajo profile para operaciones manuales. Ejemplo:
 
 ```powershell
 docker compose --profile certbot run --rm certbot certonly --webroot -w /var/www/certbot -d app.example.com --email admin@example.com --agree-tos --no-eff-email
 ```
 
-Luego marca Let's Encrypt en el sitio, genera Nginx y recarga el proxy.
+Luego marca Let's Encrypt en el sitio y aprovisiona desde la UI, o regenera Nginx y recarga el proxy manualmente si usaste `certbot` fuera de la consola.
+
+## Modulos Host
+
+WardNode incluye modulos opcionales que interactuan con el host o con contenedores auxiliares. Solo usuarios `admin` pueden gestionarlos.
+
+### WardNode WF
+
+Administra UFW del host mediante un agente systemd y un socket Unix:
+
+```text
+console -> /app/sockets/wardnode-wf.sock -> /run/wardnode/wardnode-wf.sock -> wardnode-wf-agent.py
+```
+
+El agente se instala con `host-agent/install.sh` o desde la UI via SSH. Flask valida puertos, IPs y protocolos antes de enviar comandos; el agente vuelve a validar todos los campos antes de ejecutar `ufw`.
+
+### WardNode CS
+
+Gestiona CrowdSec IDS/IPS reutilizando el mismo socket/agente de WF. Permite consultar estado, listar decisiones, ban/unban y arrancar/detener/reiniciar `crowdsec` y `crowdsec-firewall-bouncer`. Requiere WF activo porque el bouncer actua sobre UFW.
+
+### WardNode OBS
+
+Activa el stack de observabilidad con el perfil `obs` de Docker Compose:
+
+- Grafana Alloy recolecta logs y metricas.
+- Loki almacena logs de Nginx, ModSecurity y CrowdSec.
+- Prometheus recibe metricas via `remote_write` desde Alloy.
+- Grafana muestra dashboards bajo `/obs/`.
+
+OBS usa Docker SDK y Docker CLI contra `/var/run/docker.sock`. Si los contenedores no existen, la consola ejecuta `docker compose -f docker-compose.vps.yml --profile obs up -d --no-build` usando `WARDNODE_PROJECT_DIR`.
 
 ## Notas
 
-La base deja preparado el almacenamiento y la generacion de configuracion. La emision automatica de certificados Let's Encrypt y la ingesta real del audit log JSON de ModSecurity quedan como modulos ampliables.
+La ingesta real del audit log JSON de ModSecurity hacia la tabla `AttackEvent` no forma parte del flujo principal actual. Los eventos visibles en base de datos son independientes de la observabilidad enviada a Loki.
 
 ## Tests
 

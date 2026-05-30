@@ -6,7 +6,7 @@ services:
     image: wardnode-console:prod
     container_name: wardnode-console
     restart: unless-stopped
-    env_file: .env
+    env_file: .env.prod
     environment:
       FLASK_ENV: production
       WF_SOCKET_PATH: /app/sockets/wardnode-wf.sock
@@ -44,7 +44,7 @@ services:
         cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
         if [ ! -f /app/generated/fluent-bit/.wardnode_init ]; then printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n\n[INPUT]\n    Name dummy\n    Dummy {}\n    Tag noop\n\n[OUTPUT]\n    Name null\n    Match *\n' > /app/generated/fluent-bit/fluent-bit.conf && touch /app/generated/fluent-bit/.wardnode_init; fi &&
         flask db-setup && flask ensure-geoip &&
-        gunicorn --bind 0.0.0.0:5000 --workers 1 --timeout 300 --access-logfile - --error-logfile - wsgi:app
+        gunicorn -c gunicorn.conf.py wsgi:app
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/status')"]
       interval: 30s
@@ -86,7 +86,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file: .env
+    env_file: .env.prod
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -102,6 +102,7 @@ services:
     image: grafana/alloy:latest
     container_name: wardnode-alloy
     restart: unless-stopped
+    user: root
     profiles:
       - obs
     extra_hosts:
@@ -112,11 +113,10 @@ services:
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - obs_alloy_config:/etc/alloy:ro
       - alloy_data:/var/lib/alloy/data
       - proxy_logs:/var/log/nginx:ro
-      - modsecurity_logs:/var/log/modsec:ro
-      - /var/log/crowdsec:/var/log/crowdsec:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro

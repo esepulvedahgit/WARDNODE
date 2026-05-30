@@ -94,7 +94,6 @@ services:
       - alloy_data:/var/lib/alloy/data
       - proxy_logs:/var/log/nginx:ro
       - modsecurity_logs:/var/log/modsec:ro
-      - /var/log/crowdsec:/var/log/crowdsec:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro

@@ -1,6 +1,7 @@
 from flask import redirect, render_template, url_for
 from flask_login import current_user
 
+from app.extensions import limiter
 from app.main import bp
 from app.auth.services import admin_exists
 
@@ -15,6 +16,7 @@ def index():
 
 
 @bp.get("/status")
+@limiter.exempt
 def status():
     return render_template("main/index.html")
 

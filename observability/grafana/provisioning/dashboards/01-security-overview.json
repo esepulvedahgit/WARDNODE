@@ -9,7 +9,7 @@
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__range]))", "instant": true, "legendFormat": "Eventos WAF", "queryType": "instant", "refId": "A"}],
@@ -18,18 +18,8 @@
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 100}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
-      "id": 2,
-      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"crowdsec\"}[$__range]))", "instant": true, "legendFormat": "Eventos CrowdSec", "queryType": "instant", "refId": "A"}],
-      "title": "Eventos CrowdSec",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 500}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
       "id": 3,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
@@ -39,7 +29,7 @@
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
       "id": 4,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
@@ -84,8 +74,7 @@
       "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
         {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__interval]))", "legendFormat": "WAF (ModSec)", "queryType": "range", "refId": "A"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"crowdsec\"}[$__interval]))", "legendFormat": "CrowdSec", "queryType": "range", "refId": "B"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 [$__interval]))", "legendFormat": "HTTP 4xx/5xx", "queryType": "range", "refId": "C"}
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 [$__interval]))", "legendFormat": "HTTP 4xx/5xx", "queryType": "range", "refId": "B"}
       ],
       "title": "Eventos de seguridad en el tiempo",
       "type": "timeseries"
@@ -95,7 +84,7 @@
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
       "id": 9,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=~\"modsecurity|crowdsec\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"modsecurity\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
       "title": "Logs de seguridad recientes",
       "type": "logs"
     }
