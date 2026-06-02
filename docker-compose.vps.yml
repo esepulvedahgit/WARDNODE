@@ -55,6 +55,7 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:127.0.0.1"
+      - "console:127.0.0.1"
     network_mode: host
     volumes:
       - proxy_generated:/etc/nginx/generated:ro
