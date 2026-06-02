@@ -10,8 +10,9 @@ services:
     environment:
       FLASK_ENV: production
       WF_SOCKET_PATH: /app/sockets/wardnode-wf.sock
-    ports:
-      - "5000:5000"
+      WF_SSH_HOST: "127.0.0.1"
+      WN_CONSOLE_URL: "http://127.0.0.1:5000"
+    network_mode: host
     volumes:
       - proxy_generated:/app/generated/nginx
       - fluent_bit_config:/app/generated/fluent-bit
@@ -26,13 +27,9 @@ services:
       - modsecurity_logs:/var/log/modsec:ro
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
-    networks:
-      - wardnode_internal
     command:
       - sh
       - -c
@@ -57,10 +54,8 @@ services:
     container_name: wardnode-proxy
     restart: unless-stopped
     extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "80:80"
-      - "443:443"
+      - "host.docker.internal:127.0.0.1"
+    network_mode: host
     volumes:
       - proxy_generated:/etc/nginx/generated:ro
       - geoip_data:/etc/nginx/geoip:ro
@@ -71,8 +66,6 @@ services:
       - modsecurity_logs:/var/log
     depends_on:
       - console
-    networks:
-      - wardnode_internal
 
   certbot:
     image: certbot/certbot:latest
@@ -87,6 +80,8 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: .env.prod
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -165,6 +160,8 @@ services:
       GF_AUTH_PROXY_HEADER_PROPERTY: "username"
       GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - obs_grafana_provisioning:/etc/grafana/provisioning:ro

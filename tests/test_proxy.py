@@ -102,7 +102,7 @@ def test_obs_location_is_rendered_before_catch_all_location(app, tmp_path):
     assert "location /obs/" in content
     assert "auth_request /_wardnode_obs_auth;" in content
     assert "location = /_wardnode_obs_auth" in content
-    assert "proxy_pass $grafana_upstream$request_uri;" in content
+    assert "proxy_pass http://127.0.0.1:3000$request_uri;" in content
     assert "proxy_set_header X-WEBAUTH-USER admin;" in content
     assert "proxy_hide_header X-Frame-Options;" in content
     assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in content

@@ -9,6 +9,7 @@ class Config:
     GEOIP_DB_PATH = os.getenv("GEOIP_DB_PATH", "data/geoip/GeoLite2-Country.mmdb")
     WARDNODE_SECRET_KEY = os.getenv("WARDNODE_SECRET_KEY", "")
     NGINX_CONTAINER_NAME = os.getenv("NGINX_CONTAINER_NAME", "wardnode-proxy")
+    WN_CONSOLE_URL = os.getenv("WN_CONSOLE_URL", "http://console:5000")
     WTF_CSRF_TIME_LIMIT = 3600
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

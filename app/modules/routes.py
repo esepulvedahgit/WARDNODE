@@ -150,7 +150,7 @@ def wf_index():
 
 
 _SSH_USER_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
-_SSH_HOST = "host.docker.internal"
+_SSH_HOST = os.environ.get("WF_SSH_HOST", "host.docker.internal")
 _AGENT_FILES = [
     "/app/host-agent/wardnode-wf-agent.py",
     "/app/host-agent/wardnode-wf.service",
@@ -616,13 +616,10 @@ _OBS_NGINX_CONF = (
     "    listen 80;\n"
     "    server_name _;\n"
     "\n"
-    "    resolver 127.0.0.11 valid=10s ipv6=off;\n"
-    "\n"
     "    location /obs/ {\n"
     "        modsecurity off;\n"
     "        auth_request /_wardnode_obs_auth;\n"
-    "        set $grafana_upstream http://grafana:3000;\n"
-    "        proxy_pass         $grafana_upstream$request_uri;\n"
+    "        proxy_pass         http://127.0.0.1:3000$request_uri;\n"
     "        proxy_set_header   Host              $host;\n"
     "        proxy_set_header   X-Real-IP         $remote_addr;\n"
     "        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;\n"
@@ -640,7 +637,7 @@ _OBS_NGINX_CONF = (
     "\n"
     "    location = /_wardnode_obs_auth {\n"
     "        internal;\n"
-    "        proxy_pass http://console:5000/modules/obs/auth;\n"
+    "        proxy_pass http://127.0.0.1:5000/modules/obs/auth;\n"
     "        proxy_pass_request_body off;\n"
     "        proxy_set_header Content-Length \"\";\n"
     "        proxy_set_header X-Original-URI $request_uri;\n"

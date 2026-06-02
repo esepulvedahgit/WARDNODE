@@ -319,8 +319,7 @@ def _render_obs_location(site: Site) -> str:
     return """    location /obs/ {
         modsecurity off;
         auth_request /_wardnode_obs_auth;
-        set $grafana_upstream http://grafana:3000;
-        proxy_pass $grafana_upstream$request_uri;
+        proxy_pass http://127.0.0.1:3000$request_uri;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -339,7 +338,7 @@ def _render_obs_location(site: Site) -> str:
     location = /_wardnode_obs_auth {
         internal;
         modsecurity off;
-        proxy_pass http://console:5000/modules/obs/auth;
+        proxy_pass http://127.0.0.1:5000/modules/obs/auth;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI $request_uri;

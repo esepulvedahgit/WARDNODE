@@ -112,26 +112,31 @@ def _save_protected_ports(ports: dict) -> None:
 
 
 def _protect_host_port(port: str) -> dict:
-    """Bloquea acceso externo al puerto del host vía raw/PREROUTING (antes del DNAT de Docker).
-    Permite tráfico desde la subred Docker (_DOCKER_CIDR) para que el proxy WAF alcance el upstream.
-    Usar raw/PREROUTING en lugar de INPUT garantiza que la regla ve el puerto original del host
-    incluso cuando Docker hace DNAT (ej. -p 8081:80 → dport sigue siendo 8081 en PREROUTING).
+    """Bloquea acceso externo al puerto del host vía raw/PREROUTING.
+    Añade excepción loopback (-i lo) para permitir que el proxy en host network alcance el upstream.
     """
-    # Idempotencia: borrar regla previa para este puerto
-    for _ in range(10):
-        r = subprocess.run(
-            ["/usr/sbin/iptables", "-t", "raw", "-D", "PREROUTING",
-             "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode != 0:
-            break
+    # Idempotencia: borrar reglas previas para este puerto
+    for rule in [
+        ["-t", "raw", "-D", "PREROUTING", "-i", "lo", "-p", "tcp", "--dport", port, "-j", "ACCEPT"],
+        ["-t", "raw", "-D", "PREROUTING", "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
+    ]:
+        for _ in range(10):
+            r = subprocess.run(["/usr/sbin/iptables"] + rule,
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                break
 
+    # Insertar DROP en pos 1, luego lo ACCEPT en pos 1 → ACCEPT queda primero
     result = _iptables("-t", "raw", "-I", "PREROUTING", "1",
                        "-p", "tcp", "--dport", port,
                        "!", "-s", _DOCKER_CIDR, "-j", "DROP")
     if not result["ok"]:
         return {"ok": False, "error": f"iptables: {result['output']}"}
+
+    result = _iptables("-t", "raw", "-I", "PREROUTING", "1",
+                       "-i", "lo", "-p", "tcp", "--dport", port, "-j", "ACCEPT")
+    if not result["ok"]:
+        return {"ok": False, "error": f"iptables lo ACCEPT: {result['output']}"}
 
     ports = _load_protected_ports()
     ports[port] = True
@@ -140,17 +145,18 @@ def _protect_host_port(port: str) -> dict:
 
 
 def _unprotect_host_port(port: str) -> dict:
-    """Elimina la regla raw/PREROUTING que bloquea el acceso externo al puerto del host."""
+    """Elimina las reglas raw/PREROUTING (DROP y lo ACCEPT) que protegen el puerto del host."""
     removed = 0
-    for _ in range(10):
-        r = subprocess.run(
-            ["/usr/sbin/iptables", "-t", "raw", "-D", "PREROUTING",
-             "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode != 0:
-            break
-        removed += 1
+    for rule in [
+        ["-t", "raw", "-D", "PREROUTING", "-i", "lo", "-p", "tcp", "--dport", port, "-j", "ACCEPT"],
+        ["-t", "raw", "-D", "PREROUTING", "-p", "tcp", "--dport", port, "!", "-s", _DOCKER_CIDR, "-j", "DROP"],
+    ]:
+        for _ in range(10):
+            r = subprocess.run(["/usr/sbin/iptables"] + rule,
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                break
+            removed += 1
 
     ports = _load_protected_ports()
     ports.pop(port, None)
@@ -173,11 +179,13 @@ def _restore_protected_ports_if_needed() -> None:
 
 
 def _secure_console_port() -> dict:
-    """Bloquea acceso externo al puerto 5000 vía cadena DOCKER-USER de iptables."""
-    # Idempotencia: eliminar reglas previas para el puerto 5000 en DOCKER-USER
+    """Bloquea acceso externo al puerto 5000 vía cadena INPUT de iptables.
+    Permite loopback (proxy en host network) y bloquea el resto.
+    """
+    # Idempotencia: eliminar reglas previas para el puerto 5000 en INPUT
     for rule in [
-        ["-D", "DOCKER-USER", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
-        ["-D", "DOCKER-USER", "-s", "172.16.0.0/12", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+        ["-D", "INPUT", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
+        ["-D", "INPUT", "-i", "lo", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
     ]:
         for _ in range(10):
             r = subprocess.run(
@@ -187,19 +195,15 @@ def _secure_console_port() -> dict:
             if r.returncode != 0:
                 break
 
-    # Insertar DROP primero, luego ACCEPT al frente → ACCEPT queda en posición 1
+    # Insertar DROP primero, luego lo ACCEPT al frente → ACCEPT queda en posición 1
     for rule in [
-        ["-I", "DOCKER-USER", "1", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
-        ["-I", "DOCKER-USER", "1", "-s", "172.16.0.0/12", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
+        ["-I", "INPUT", "1", "-p", "tcp", "--dport", "5000", "-j", "DROP"],
+        ["-I", "INPUT", "1", "-i", "lo", "-p", "tcp", "--dport", "5000", "-j", "ACCEPT"],
     ]:
         result = _iptables(*rule)
         if not result["ok"]:
             return {"ok": False, "error": f"iptables: {result['output']}"}
 
-    # Escribir marcador de persistencia: el agente lo lee al arrancar y re-aplica las reglas.
-    # DOCKER-USER no existe antes de que Docker arranque, así que netfilter-persistent no puede
-    # restaurar estas reglas en boot. El marcador + el arranque del agente después de Docker
-    # (After=docker.service) es el mecanismo de persistencia principal.
     try:
         os.makedirs(os.path.dirname(_SECURE_PORT_MARKER), exist_ok=True)
         with open(_SECURE_PORT_MARKER, "w", encoding="utf-8") as fh:
@@ -207,18 +211,14 @@ def _secure_console_port() -> dict:
     except Exception as exc:
         logging.warning(f"No se pudo escribir marcador de persistencia: {exc}")
 
-    return {"ok": True, "output": "Puerto 5000 asegurado: acceso externo bloqueado vía DOCKER-USER"}
+    return {"ok": True, "output": "Puerto 5000 asegurado: acceso externo bloqueado vía INPUT"}
 
 
 def _restore_secure_port_if_needed() -> None:
-    """Re-aplica reglas DOCKER-USER al arrancar si el marcador de persistencia existe.
-
-    Se llama desde serve() en cada inicio del agente. Como el servicio systemd tiene
-    After=docker.service, Docker ya ha creado la cadena DOCKER-USER cuando llegamos aquí.
-    """
+    """Re-aplica reglas INPUT al arrancar si el marcador de persistencia existe."""
     if not os.path.exists(_SECURE_PORT_MARKER):
         return
-    logging.info("Marcador encontrado — restaurando bloqueo del puerto 5000 en DOCKER-USER")
+    logging.info("Marcador encontrado — restaurando bloqueo del puerto 5000 en INPUT")
     result = _secure_console_port()
     if result.get("ok"):
         logging.info("Puerto 5000 bloqueado correctamente al arrancar")
