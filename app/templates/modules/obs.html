@@ -106,16 +106,43 @@
     </div>
   </div>
 
-  {# ── Grafana embebido ── #}
-  <div x-show="grafanaOk === true" x-cloak
-       style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;height:calc(100vh - 240px);min-height:400px">
-    <iframe id="grafana-frame"
-            src="/obs/"
-            style="width:100%;height:100%;border:none"
-            loading="lazy"></iframe>
+  {# ── Grafana embebido — solo se monta en el DOM cuando el HTTP probe confirma ready ── #}
+  <template x-if="grafanaOk === true && grafanaReady === true">
+    <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;height:calc(100vh - 240px);min-height:400px">
+      <iframe id="grafana-frame"
+              src="/obs/"
+              style="width:100%;height:100%;border:none"
+              loading="lazy"></iframe>
+    </div>
+  </template>
+
+  {# ── Spinner: contenedor running pero HTTP aún no responde ── #}
+  <div x-show="grafanaOk === true && grafanaReady === null" style="display:none"
+       style="border:1px solid var(--border-color);border-radius:8px;padding:60px 20px;text-align:center;background:var(--bg-subtle)">
+    <div style="border:1px solid var(--border-color);border-radius:8px;padding:60px 20px;text-align:center;background:var(--bg-subtle)">
+      <div class="spinner-border mb-3" style="color:var(--accent);width:32px;height:32px"></div>
+      <p style="font-size:13px;margin:0 0 4px;font-weight:600">Iniciando Grafana…</p>
+      <p style="font-size:12px;color:var(--text-muted);margin:0">
+        Verificando disponibilidad
+        <span x-show="readyElapsed > 0" x-text="'(' + readyElapsed + ' s)'"></span>
+        — puede tardar hasta ~60 s en el primer arranque.
+      </p>
+    </div>
   </div>
 
-  {# ── Placeholder cuando Grafana no está disponible ── #}
+  {# ── Error: Grafana no respondió en el tiempo límite ── #}
+  <div x-show="grafanaOk === true && grafanaReady === false" style="display:none">
+    <div style="border:1px solid var(--border-color);border-radius:8px;padding:60px 20px;text-align:center;color:var(--text-muted);background:var(--bg-subtle)">
+      <i class="bi bi-exclamation-triangle" style="font-size:40px;display:block;margin-bottom:12px;opacity:0.5;color:var(--c-danger)"></i>
+      <p style="font-size:13px;margin:0 0 4px;font-weight:600;color:var(--c-danger)">Grafana no respondió</p>
+      <p style="font-size:12px;margin:0 0 16px">El contenedor está activo pero el servidor HTTP no responde. Puede estar iniciando o en error.</p>
+      <button @click="retryGrafana()" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-clockwise me-1"></i>Reintentar
+      </button>
+    </div>
+  </div>
+
+  {# ── Placeholder cuando el contenedor no está disponible ── #}
   <div x-show="grafanaOk !== true" style="display:none">
     <div style="border:1px solid var(--border-color);border-radius:8px;padding:60px 20px;text-align:center;color:var(--text-muted);background:var(--bg-subtle)">
       <i class="bi bi-graph-up" style="font-size:40px;display:block;margin-bottom:12px;opacity:0.3"></i>
@@ -257,6 +284,12 @@ function obsPanel() {
     prometheusOk: null,
     loading: false,
 
+    // readiness HTTP de Grafana
+    grafanaReady: null,   // null=verificando, true=HTTP ok, false=timeout
+    _readyTimer: null,
+    _readyDeadline: 0,
+    readyElapsed: 0,
+
     csrf() {
       return document.querySelector("meta[name='csrf-token']").content;
     },
@@ -280,7 +313,48 @@ function obsPanel() {
         this.prometheusOk = false;
       }
       this.loading = false;
-    }
+      // Arrancar probe HTTP de Grafana si el contenedor está activo
+      // y el iframe aún no fue confirmado (no relanzar si ya hay un timer activo)
+      if (this.grafanaOk && this.grafanaReady !== true && !this._readyTimer) {
+        this.startGrafanaReadyPolling();
+      }
+    },
+
+    startGrafanaReadyPolling() {
+      this.grafanaReady = null;
+      this.readyElapsed = 0;
+      this._readyDeadline = Date.now() + 90000;
+      this._pollGrafanaReady();
+      this._readyTimer = setInterval(() => this._pollGrafanaReady(), 3000);
+    },
+
+    async _pollGrafanaReady() {
+      this.readyElapsed = Math.round((Date.now() - (this._readyDeadline - 90000)) / 1000);
+      if (Date.now() > this._readyDeadline) {
+        this.grafanaReady = false;
+        this._stopReadyPolling();
+        return;
+      }
+      try {
+        const r = await fetch('{{ url_for("modules.obs_grafana_ready") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this.csrf() }
+        });
+        const d = await r.json();
+        if (d.ready === true) {
+          this.grafanaReady = true;
+          this._stopReadyPolling();
+        }
+      } catch (e) { /* red caída — seguir intentando hasta el deadline */ }
+    },
+
+    _stopReadyPolling() {
+      if (this._readyTimer) { clearInterval(this._readyTimer); this._readyTimer = null; }
+    },
+
+    retryGrafana() {
+      this.startGrafanaReadyPolling();
+    },
   };
 }
 

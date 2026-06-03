@@ -226,7 +226,7 @@ def _restore_secure_port_if_needed() -> None:
         logging.warning(f"No se pudo restaurar bloqueo del puerto 5000: {result.get('error', '')}")
 
 
-_PORT_MAPPING_RE = re.compile(r"(?:[\d.:]+:)?(\d+)->(\d+)/(tcp|udp)")
+_PORT_MAPPING_RE = re.compile(r"([\d.]+|[\da-fA-F:]+):(\d+)->(\d+)/(tcp|udp)")
 
 
 def _is_host_port_blocked(port: str) -> bool:
@@ -277,9 +277,11 @@ def _list_docker_ports() -> dict:
         except json.JSONDecodeError:
             continue
         for m in _PORT_MAPPING_RE.finditer(item.get("ports", "")):
-            host_port = m.group(1)
-            container_port = m.group(2)
-            proto = m.group(3)
+            host_ip = m.group(1)
+            host_port = m.group(2)
+            container_port = m.group(3)
+            proto = m.group(4)
+            loopback_only = host_ip in ("127.0.0.1", "::1")
             key = (item.get("name", ""), host_port, proto)
             if key in seen:
                 continue
@@ -289,7 +291,8 @@ def _list_docker_ports() -> dict:
                 "host_port": host_port,
                 "container_port": container_port,
                 "proto": proto,
-                "blocked": _is_host_port_blocked(host_port),
+                "loopback_only": loopback_only,
+                "blocked": False if loopback_only else _is_host_port_blocked(host_port),
             })
 
     return {"ok": True, "ports": ports_list, "raw": r.stdout.strip()}

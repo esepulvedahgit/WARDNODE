@@ -151,6 +151,7 @@ def wf_index():
 
 _SSH_USER_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
 _SSH_HOST = os.environ.get("WF_SSH_HOST", "host.docker.internal")
+_GRAFANA_URL = os.environ.get("WARDNODE_GRAFANA_URL", "http://127.0.0.1:3000")
 _AGENT_FILES = [
     "/app/host-agent/wardnode-wf-agent.py",
     "/app/host-agent/wardnode-wf.service",
@@ -793,6 +794,14 @@ def obs_activate():
                      "Revisa logs con: docker logs <nombre>",
         }), 500
 
+    # ── Fase 3b: esperar a que Grafana responda HTTP (no fatal, máx 30 s) ──
+    http_deadline = time.time() + 30
+    while time.time() < http_deadline:
+        if _grafana_http_ready():
+            break
+        time.sleep(2)
+    # Si Grafana aún no responde el frontend continuará su propio polling.
+
     # ── Fase 4: habilitar OBS en configs de sites y recargar Nginx ─────
     AppConfig.set("module_obs_enabled", "1")
 
@@ -891,6 +900,27 @@ def obs_status():
         "alloy": alloy_ok,
         "prometheus": prometheus_ok,
     })
+
+
+def _grafana_http_ready(timeout: float = 2.0) -> bool:
+    """Probe HTTP real a Grafana /api/health. True solo si el servidor responde 200."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"{_GRAFANA_URL}/api/health", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+@bp.post("/obs/grafana-ready")
+@roles_required(ROLE_ADMIN)
+def obs_grafana_ready():
+    """Probe ligero de readiness HTTP de Grafana — sin Docker ni reloads de Nginx.
+    Diseñado para polling frecuente desde el frontend (cada ~3 s)."""
+    if AppConfig.get("module_obs_enabled") != "1":
+        return jsonify({"ready": False, "error": "Módulo OBS no habilitado"}), 403
+    return jsonify({"ready": _grafana_http_ready()})
 
 
 # ── WardNode SYS — Contenedores ───────────────────────────────────────

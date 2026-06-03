@@ -120,7 +120,101 @@
         </a>
       </div>
     </header>
-    <iframe src="/obs/" title="Grafana" loading="eager"></iframe>
+    <!-- El iframe se inyecta aquí cuando Grafana responde HTTP -->
+    <div id="obs-frame-container" style="width:100%;height:100%;background:#111827;
+         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+      <div id="obs-spinner">
+        <svg width="36" height="36" viewBox="0 0 36 36" style="animation:obs-spin 1s linear infinite">
+          <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(148,163,184,0.2)" stroke-width="3"/>
+          <path d="M18 4a14 14 0 0 1 14 14" fill="none" stroke="#6366f1" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p id="obs-status-text" style="color:#94a3b8;font-size:13px;font-weight:600;margin:0">Iniciando Grafana…</p>
+      <p id="obs-elapsed-text" style="color:#64748b;font-size:11px;margin:0">Puede tardar hasta ~60 s en el primer arranque.</p>
+      <button id="obs-retry-btn" onclick="obsStartPolling()"
+              style="display:none;margin-top:8px;padding:6px 18px;border:1px solid rgba(148,163,184,0.3);
+                     border-radius:8px;background:rgba(255,255,255,0.05);color:#e5e7eb;
+                     font-size:12px;cursor:pointer;font-family:inherit">
+        ↻ Reintentar
+      </button>
+    </div>
   </div>
 </body>
+<script>
+(function () {
+  const DEADLINE_MS = 90000;
+  const POLL_INTERVAL_MS = 3000;
+  const READY_URL = '{{ url_for("modules.obs_grafana_ready") }}';
+  const CSRF = document.querySelector("meta[name='csrf-token']").content;
+
+  let timer = null;
+  let startedAt = null;
+
+  function mountIframe() {
+    const container = document.getElementById('obs-frame-container');
+    container.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = '/obs/';
+    iframe.title = 'Grafana';
+    iframe.style.cssText = 'display:block;width:100%;height:100%;border:0;background:#111827';
+    container.appendChild(iframe);
+  }
+
+  function showError() {
+    document.getElementById('obs-status-text').textContent = 'Grafana no respondió';
+    document.getElementById('obs-status-text').style.color = '#f87171';
+    document.getElementById('obs-elapsed-text').textContent =
+      'El contenedor está activo pero el servidor HTTP no responde.';
+    document.getElementById('obs-spinner').style.display = 'none';
+    document.getElementById('obs-retry-btn').style.display = 'inline-block';
+  }
+
+  function updateElapsed() {
+    const s = Math.round((Date.now() - startedAt) / 1000);
+    if (s > 0) {
+      document.getElementById('obs-elapsed-text').textContent =
+        'Verificando disponibilidad (' + s + ' s) — puede tardar hasta ~60 s.';
+    }
+  }
+
+  async function poll() {
+    updateElapsed();
+    if (Date.now() - startedAt > DEADLINE_MS) {
+      clearInterval(timer);
+      timer = null;
+      showError();
+      return;
+    }
+    try {
+      const r = await fetch(READY_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF }
+      });
+      const d = await r.json();
+      if (d.ready === true) {
+        clearInterval(timer);
+        timer = null;
+        mountIframe();
+      }
+    } catch (e) { /* red caída — seguir intentando */ }
+  }
+
+  window.obsStartPolling = function () {
+    if (timer) { clearInterval(timer); }
+    startedAt = Date.now();
+    document.getElementById('obs-status-text').textContent = 'Iniciando Grafana…';
+    document.getElementById('obs-status-text').style.color = '#94a3b8';
+    document.getElementById('obs-elapsed-text').textContent = 'Puede tardar hasta ~60 s en el primer arranque.';
+    document.getElementById('obs-spinner').style.display = 'block';
+    document.getElementById('obs-retry-btn').style.display = 'none';
+    poll();
+    timer = setInterval(poll, POLL_INTERVAL_MS);
+  };
+
+  obsStartPolling();
+})();
+</script>
+<style>
+@keyframes obs-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+</style>
 </html>

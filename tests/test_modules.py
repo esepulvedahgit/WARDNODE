@@ -58,7 +58,10 @@ def test_obs_fullscreen_renders_minimal_embedded_view(client, login_as):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Grafana fullscreen" in body
-    assert '<iframe src="/obs/"' in body
+    # El iframe se inyecta dinámicamente vía JS después del probe HTTP;
+    # verificamos que el scaffolding de readiness esté presente en lugar del tag estático.
+    assert "obs/grafana-ready" in body
+    assert "Iniciando Grafana" in body
     assert "sidebar" not in body
 
 
@@ -125,6 +128,45 @@ def test_obs_status_all_running(client, login_as, monkeypatch):
     assert data["grafana"] is True
     assert data["alloy"] is True
     assert data["prometheus"] is True
+
+
+def test_obs_grafana_ready_true(client, login_as, monkeypatch):
+    """obs_grafana_ready devuelve ready=True cuando el probe HTTP tiene éxito."""
+    login_as()
+    AppConfig.set("module_obs_enabled", "1")
+    monkeypatch.setattr("app.modules.routes._grafana_http_ready", lambda timeout=2.0: True)
+
+    response = client.post("/modules/obs/grafana-ready")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ready"] is True
+
+
+def test_obs_grafana_ready_false(client, login_as, monkeypatch):
+    """obs_grafana_ready devuelve ready=False cuando Grafana aún no responde HTTP."""
+    login_as()
+    AppConfig.set("module_obs_enabled", "1")
+    monkeypatch.setattr("app.modules.routes._grafana_http_ready", lambda timeout=2.0: False)
+
+    response = client.post("/modules/obs/grafana-ready")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ready"] is False
+
+
+def test_obs_grafana_ready_requires_module(client, login_as):
+    """obs_grafana_ready devuelve 403 si el módulo OBS no está habilitado."""
+    login_as()
+    AppConfig.set("module_obs_enabled", "0")
+
+    response = client.post("/modules/obs/grafana-ready")
+
+    assert response.status_code == 403
+    data = response.get_json()
+    assert data["ready"] is False
+
 
 
 def test_obs_activate_handles_docker_unavailable(client, login_as, monkeypatch):

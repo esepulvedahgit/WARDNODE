@@ -608,14 +608,16 @@
                       <td>
                         <span x-show="isReserved(p.host_port)"
                               class="badge bg-secondary" style="font-size:10px">Reservado</span>
-                        <span x-show="!isReserved(p.host_port)"
+                        <span x-show="!isReserved(p.host_port) && p.loopback_only"
+                              class="badge bg-info text-dark" style="font-size:10px">Solo local</span>
+                        <span x-show="!isReserved(p.host_port) && !p.loopback_only"
                               :class="p.blocked ? 'badge bg-success' : 'badge bg-warning text-dark'"
                               style="font-size:10px"
                               x-text="p.blocked ? 'Bloqueado' : 'Expuesto'"></span>
                       </td>
                       <td style="text-align:right">
                         {% if not current_user.has_role('reader') %}
-                        <button x-show="!isReserved(p.host_port)"
+                        <button x-show="!isReserved(p.host_port) && !p.loopback_only"
                                 @click="toggle(p.host_port, p.blocked)"
                                 :disabled="actionState[p.host_port] === 'loading'"
                                 :class="p.blocked ? 'btn btn-xs btn-outline-warning' : 'btn btn-xs btn-outline-danger'"
