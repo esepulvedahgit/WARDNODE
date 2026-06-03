@@ -686,6 +686,22 @@ def test_create_site_blocked_without_console_domain(client, login_as):
         assert Site.query.filter_by(domain="test.local").first() is None
 
 
+def test_default_server_conf_is_generated(app, tmp_path):
+    """render_nginx_configs genera 01-default-server.conf con default_server y modsecurity."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        render_nginx_configs()
+
+    content = (tmp_path / "01-default-server.conf").read_text(encoding="utf-8")
+    assert "listen 80 default_server" in content
+    assert "server_name _" in content
+    assert "modsecurity on" in content
+    assert "SecRuleEngine On" in content
+    assert "return 444" in content
+    assert "access_log" in content
+
+
 def test_dismiss_setup_prompt_sets_flag(client, login_as):
     from app.models import AppConfig
     login_as("admin")
