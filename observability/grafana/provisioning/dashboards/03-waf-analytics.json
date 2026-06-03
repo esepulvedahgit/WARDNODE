@@ -1,0 +1,512 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 200}
+            ]
+          },
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM attack_event WHERE $__timeFilter(created_at)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Total eventos WAF",
+      "type": "stat"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 10},
+              {"color": "red", "value": 100}
+            ]
+          },
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM attack_event WHERE $__timeFilter(created_at) AND action = 'block'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Bloqueados",
+      "type": "stat"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 10},
+              {"color": "red", "value": 50}
+            ]
+          },
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(DISTINCT source_ip) AS value FROM attack_event WHERE $__timeFilter(created_at)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "IPs únicas atacantes",
+      "type": "stat"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          },
+          "unit": "short",
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM attack_event WHERE $__timeFilter(created_at) AND severity IN ('critical', 'high')",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Críticos + High",
+      "type": "stat"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"hideFrom": {"legend": false, "tooltip": false, "viz": false}},
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "critical"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#F2495C", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "high"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "medium"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#FADE2A", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "low"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#73BF69", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "gridPos": {"h": 10, "w": 8, "x": 0, "y": 4},
+      "id": 5,
+      "options": {
+        "displayLabels": ["percent"],
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "values": ["value", "percent"]},
+        "pieType": "donut",
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) FILTER (WHERE severity = 'critical') AS \"critical\", count(*) FILTER (WHERE severity = 'high') AS \"high\", count(*) FILTER (WHERE severity = 'medium') AS \"medium\", count(*) FILTER (WHERE severity = 'low') AS \"low\" FROM attack_event WHERE $__timeFilter(created_at)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Eventos por criticidad",
+      "type": "piechart"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 1,
+            "scaleDistribution": {"type": "linear"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 16, "x": 8, "y": 4},
+      "id": 6,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {"mode": "single", "sort": "none"},
+        "xField": "category",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT category, count(*) AS total FROM attack_event WHERE $__timeFilter(created_at) GROUP BY category ORDER BY total DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Eventos por categoría de ataque",
+      "type": "barchart"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Bloqueados"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#F2495C", "mode": "fixed"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Detectados"},
+            "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 14},
+      "id": 7,
+      "options": {
+        "legend": {"calcs": ["sum", "max"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(created_at,'$__interval') AS \"time\", count(*) AS \"Bloqueados\" FROM attack_event WHERE $__timeFilter(created_at) AND action = 'block' GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(created_at,'$__interval') AS \"time\", count(*) AS \"Detectados\" FROM attack_event WHERE $__timeFilter(created_at) AND action = 'detect' GROUP BY 1 ORDER BY 1",
+          "format": "time_series",
+          "refId": "B"
+        }
+      ],
+      "title": "Actividad: Bloqueados vs Detectados",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "displayName", "value": "Eventos"}, {"id": "custom.width", "value": 80}]},
+          {"matcher": {"id": "byName", "options": "blocked"}, "properties": [{"id": "displayName", "value": "Bloqueados"}, {"id": "custom.width", "value": 90}]},
+          {"matcher": {"id": "byName", "options": "country"}, "properties": [{"id": "displayName", "value": "País"}, {"id": "custom.width", "value": 60}]},
+          {"matcher": {"id": "byName", "options": "source_ip"}, "properties": [{"id": "displayName", "value": "IP Origen"}]},
+          {"matcher": {"id": "byName", "options": "last_seen"}, "properties": [{"id": "displayName", "value": "Último evento"}, {"id": "unit", "value": "dateTimeAsLocal"}]}
+        ]
+      },
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 23},
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Eventos"}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT source_ip, count(*) AS total, count(*) FILTER (WHERE action = 'block') AS blocked, max(country_code) AS country, max(created_at) AS last_seen FROM attack_event WHERE $__timeFilter(created_at) GROUP BY source_ip ORDER BY total DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 20 IPs atacantes",
+      "type": "table"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "displayName", "value": "Eventos"}, {"id": "custom.width", "value": 80}]},
+          {"matcher": {"id": "byName", "options": "blocked"}, "properties": [{"id": "displayName", "value": "Bloqueados"}, {"id": "custom.width", "value": 90}]},
+          {"matcher": {"id": "byName", "options": "domain"}, "properties": [{"id": "displayName", "value": "Dominio / Host"}]}
+        ]
+      },
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 23},
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Eventos"}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT domain, count(*) AS total, count(*) FILTER (WHERE action = 'block') AS blocked FROM attack_event WHERE $__timeFilter(created_at) GROUP BY domain ORDER BY total DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Eventos por dominio / host objetivo",
+      "type": "table"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "total"}, "properties": [{"id": "displayName", "value": "Eventos"}, {"id": "custom.width", "value": 80}]},
+          {"matcher": {"id": "byName", "options": "rule_id"}, "properties": [{"id": "displayName", "value": "Rule ID"}, {"id": "custom.width", "value": 90}]},
+          {"matcher": {"id": "byName", "options": "category"}, "properties": [{"id": "displayName", "value": "Categoría"}, {"id": "custom.width", "value": 140}]},
+          {"matcher": {"id": "byName", "options": "message"}, "properties": [{"id": "displayName", "value": "Mensaje ModSecurity"}]}
+        ]
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 33},
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Eventos"}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT rule_id, count(*) AS total, max(category) AS category, max(message) AS message FROM attack_event WHERE $__timeFilter(created_at) AND rule_id IS NOT NULL GROUP BY rule_id ORDER BY total DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 20 reglas ModSecurity disparadas",
+      "type": "table"
+    },
+
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 1,
+            "scaleDistribution": {"type": "linear"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 43},
+      "id": 11,
+      "options": {
+        "barRadius": 0.05,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {"mode": "single", "sort": "none"},
+        "xField": "country_code",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT country_code, count(*) AS total FROM attack_event WHERE $__timeFilter(created_at) AND country_code IS NOT NULL GROUP BY country_code ORDER BY total DESC LIMIT 20",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Origen geográfico de ataques (requiere GeoIP configurado)",
+      "description": "Vacío hasta configurar credenciales MaxMind en WardNode → Configuración → MaxMind.",
+      "type": "barchart"
+    }
+
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["wardnode", "waf", "analytics"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "WardNode – WAF Analytics",
+  "uid": "wardnode-waf-analytics",
+  "version": 1
+}
