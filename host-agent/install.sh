@@ -51,6 +51,17 @@ ufw logging medium >/dev/null 2>&1 || warn "No se pudo activar logging UFW mediu
 touch /var/log/ufw.log 2>/dev/null || true
 chmod 640 /var/log/ufw.log 2>/dev/null || true
 
+# Permitir que contenedores del bridge Docker alcancen stub_status (nginx metrics)
+# El exporter wardnode-nginx-exporter (172.16/12) scrapea host:8081; sin esta regla
+# UFW default-deny bloquea el tráfico y los paneles nginx_* de Grafana quedan vacíos.
+if ! ufw status | grep -qE "8081.*(172\.16\.0\.0/12|Anywhere)|172\.16\.0\.0/12.*8081"; then
+    ufw allow from 172.16.0.0/12 to any port 8081 proto tcp >/dev/null 2>&1 \
+        && ok "Regla UFW añadida: 172.16.0.0/12 → :8081 (stub_status)" \
+        || warn "No se pudo añadir regla UFW para :8081 (UFW inactivo aún — se aplicará al activar)"
+else
+    ok "Regla UFW 172.16.0.0/12 → :8081 ya existe"
+fi
+
 # Garantizar que rsyslog enruta los eventos UFW al archivo de log
 if ! systemctl is-active --quiet rsyslog 2>/dev/null; then
     apt-get install -y -qq rsyslog && systemctl enable --now rsyslog
