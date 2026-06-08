@@ -1,24 +1,59 @@
+## Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 .pytest_cache/
 .coverage
 htmlcov/
-.env
-.env.prod
-.venv/
-instance/
-migrations/
-generated/
-*.log
-data/geoip/*.mmdb
 dist/
 build/
 *.egg-info/
+.mypy_cache/
+.ruff_cache/
 
-# Local tool/runtime state
+## Entornos virtuales
+.venv/
+venv/
+env/
+
+## Flask / SQLAlchemy
+instance/
+migrations/
+
+## Variables de entorno (nunca commitear secretos)
+.env
+.env.prod
+.env.local
+
+## WardNode — archivos generados en runtime
+generated/
+data/geoip/*.mmdb
+*.log
+certs/live/
+certs/archive/
+certs/renewal/
+
+## Docker
+*.tar
+
+## Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Editores e IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## Local tool/runtime state
 .opencode/
+.claude/
 
-# Exported Docker images and transfer artifacts
+## Exported Docker images and transfer artifacts
 export/
 root@*
 esepulvedah@*

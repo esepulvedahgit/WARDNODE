@@ -12,6 +12,7 @@
 ![Prometheus](https://img.shields.io/badge/Prometheus-latest-E6522C?style=flat-square&logo=prometheus&logoColor=white)
 ![pytest](https://img.shields.io/badge/pytest-8.0-0A9EDC?style=flat-square&logo=pytest&logoColor=white)
 ![Version](https://img.shields.io/badge/versión-1.0.0-brightgreen?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 
 **WardNode** es una consola de administración Flask para un stack de proxy inverso Nginx + ModSecurity + OWASP CRS. Separa el **plano de gestión** (consola Flask, puerto 5000) del **plano de tráfico** (proxy Nginx, puertos 80/443): la consola escribe configuración Nginx a disco y el proxy la lee, sin manejar tráfico de usuario directamente.
 
