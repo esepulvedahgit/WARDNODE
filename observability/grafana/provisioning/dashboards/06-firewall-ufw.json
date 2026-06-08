@@ -83,7 +83,29 @@
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "id": 9,
+      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (dpt) (count_over_time({job=\"ufw\"} |= \"[UFW ALLOW]\" | pattern `<_> DPT=<dpt> <_>` [$__range]))", "instant": true, "legendFormat": "{{dpt}}", "queryType": "instant", "refId": "A"}],
+      "title": "Top puertos aceptados",
+      "type": "table",
+      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "id": 10,
+      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (src) (count_over_time({job=\"ufw\"} |= \"[UFW ALLOW]\" | pattern `<_> SRC=<src> DST=<_>` [$__range]))", "instant": true, "legendFormat": "{{src}}", "queryType": "instant", "refId": "A"}],
+      "title": "Top IP origen aceptadas",
+      "type": "table",
+      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
+    },
+    {
+      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 28},
       "id": 8,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"ufw\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
@@ -100,5 +122,5 @@
   "timezone": "browser",
   "title": "WardNode – Firewall UFW",
   "uid": "wardnode-firewall-ufw",
-  "version": 1
+  "version": 2
 }

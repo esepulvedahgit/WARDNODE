@@ -71,7 +71,7 @@ def _ufw(*args) -> dict:
 
 
 def _enable_ufw_logging() -> dict:
-    result = _ufw("logging", "low")
+    result = _ufw("logging", "medium")
     try:
         open("/var/log/ufw.log", "a", encoding="utf-8").close()
         os.chmod("/var/log/ufw.log", 0o640)

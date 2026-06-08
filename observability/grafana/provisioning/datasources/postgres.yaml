@@ -5,14 +5,14 @@ datasources:
     type: postgres
     uid: wardnode-postgres
     url: db:5432
-    user: ${POSTGRES_USER:-app}
+    user: ${POSTGRES_USER}
     access: proxy
     isDefault: false
     editable: false
     jsonData:
-      database: ${POSTGRES_DB:-app}
+      database: ${POSTGRES_DB}
       sslmode: disable
       postgresVersion: 1600
       timescaledb: false
     secureJsonData:
-      password: ${POSTGRES_PASSWORD:-app}
+      password: ${POSTGRES_PASSWORD}

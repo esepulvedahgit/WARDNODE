@@ -47,7 +47,7 @@ if ! command -v ufw &>/dev/null; then
 else
     ok "UFW encontrado"
 fi
-ufw logging low >/dev/null 2>&1 || warn "No se pudo activar logging UFW low todavía"
+ufw logging medium >/dev/null 2>&1 || warn "No se pudo activar logging UFW medium todavía"
 touch /var/log/ufw.log 2>/dev/null || true
 chmod 640 /var/log/ufw.log 2>/dev/null || true
 
