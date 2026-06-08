@@ -355,6 +355,12 @@ def handle(cmd: dict) -> dict:
             _ufw("allow", f"{ssh_port}/tcp"),
             _ufw("allow", "80/tcp"),
             _ufw("allow", "443/tcp"),
+            # Permitir que los contenedores del bridge Docker (172.16/12) alcancen
+            # el endpoint interno stub_status (:8081) del proxy. Sin esta regla,
+            # UFW default-deny bloquea el tráfico del nginx-exporter y los paneles
+            # nginx_* de Grafana quedan vacíos. La regla es segura: 00-stub-status.conf
+            # cierra con `allow 172.16.0.0/12; deny all;` a nivel nginx.
+            _ufw("allow", "from", "172.16.0.0/12", "to", "any", "port", "8081", "proto", "tcp"),
             _enable_ufw_logging(),
             _ufw("--force", "enable"),
         ]
