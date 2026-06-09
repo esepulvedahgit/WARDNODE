@@ -74,7 +74,8 @@ def _get_service_states() -> dict:
         "grafana":        "wardnode-grafana"    in running,
         "alloy":          "wardnode-alloy"      in running,
         "prometheus":     "wardnode-prometheus" in running,
-        "fluent-bit":     "wardnode-fluent-bit" in running,
+        "fluent-bit":     "wardnode-fluent-bit"     in running,
+        "nginx-exporter": "wardnode-nginx-exporter" in running,
         "syslog_enabled": AppConfig.get("syslog_enabled") == "1",
     }
 
