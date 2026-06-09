@@ -485,6 +485,63 @@ def test_ingest_handles_malformed_json():
     assert _parse_line('{"transaction": {"messages": []}}') is None
 
 
+# libmodsecurity v3 con SecAuditLogFormat JSON emite severity como nivel syslog
+# numérico en string ("0".."7"), no como texto. Este test cubre el formato real
+# que produce el proxy en producción.
+_SAMPLE_LOG_LINE_V3_NUMERIC = """{
+  "transaction": {
+    "time": "2024-01-01T00:00:00Z",
+    "id": "v3numeric789",
+    "request": {
+      "method": "POST",
+      "http_version": 1.1,
+      "uri": "/login",
+      "headers": {"Host": "example.com"},
+      "remote_address": "9.10.11.12"
+    },
+    "response": {"http_code": 403, "headers": {}},
+    "messages": [
+      {
+        "message": "XSS Attack Detected",
+        "details": {
+          "ruleId": "941100",
+          "severity": "2",
+          "tags": ["OWASP_CRS/WEB_ATTACK/XSS"]
+        }
+      }
+    ]
+  }
+}"""
+
+
+def test_ingest_parses_v3_numeric_severity():
+    """libmodsecurity v3 emite severity como número syslog ("0".."7").
+    El map debe reconocerlo: "2" (CRITICAL) → "critical".
+    """
+    from app.proxy.ingest import _parse_line
+
+    result = _parse_line(_SAMPLE_LOG_LINE_V3_NUMERIC)
+
+    assert result is not None
+    assert result["severity"] == "critical"   # syslog 2 = CRITICAL
+    assert result["category"] == "xss"
+    assert result["transaction_id"] == "v3numeric789"
+
+
+def test_ingest_v3_numeric_all_severity_levels():
+    """Verifica que todos los niveles syslog numéricos mapeen correctamente."""
+    from app.proxy.ingest import _SEVERITY_MAP
+
+    assert _SEVERITY_MAP["0"] == "critical"  # EMERGENCY
+    assert _SEVERITY_MAP["1"] == "critical"  # ALERT
+    assert _SEVERITY_MAP["2"] == "critical"  # CRITICAL
+    assert _SEVERITY_MAP["3"] == "high"      # ERROR
+    assert _SEVERITY_MAP["4"] == "medium"    # WARNING
+    assert _SEVERITY_MAP["5"] == "low"       # NOTICE
+    assert _SEVERITY_MAP["6"] == "low"       # INFO
+    assert _SEVERITY_MAP["7"] == "low"       # DEBUG
+
+
 def test_ingest_resolves_site_by_domain(app, monkeypatch):
     from app.proxy.ingest import _process_line
     from app.extensions import db

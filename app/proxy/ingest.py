@@ -11,12 +11,16 @@ log = logging.getLogger(__name__)
 _DEFAULT_PROXY_CONTAINER = "wardnode-proxy"
 
 _SEVERITY_MAP = {
-    "CRITICAL": "critical",
-    "ERROR":    "high",
-    "WARNING":  "medium",
-    "NOTICE":   "low",
-    "INFO":     "low",
-    "DEBUG":    "low",
+    # Texto (ModSecurity v2 / fixtures de tests)
+    "EMERGENCY": "critical", "ALERT": "critical", "CRITICAL": "critical",
+    "ERROR": "high", "WARNING": "medium",
+    "NOTICE": "low", "INFO": "low", "DEBUG": "low",
+    # Numérico syslog (libmodsecurity v3 con SecAuditLogFormat JSON)
+    # 0=EMERGENCY, 1=ALERT, 2=CRITICAL → critical
+    # 3=ERROR → high  |  4=WARNING → medium  |  5-7=NOTICE/INFO/DEBUG → low
+    "0": "critical", "1": "critical", "2": "critical",
+    "3": "high", "4": "medium",
+    "5": "low", "6": "low", "7": "low",
 }
 
 _TAG_TO_CATEGORY = {
@@ -81,7 +85,10 @@ def _parse_line(line: str) -> dict | None:
     status_code = resp.get("http_code", 403)
     action = "block" if status_code == 403 else "detect"
 
-    raw_severity = details.get("severity", "WARNING").upper()
+    # libmodsecurity v3 con SecAuditLogFormat JSON emite severity como número
+    # syslog en string ("0".."7"); v2 lo emite como texto ("CRITICAL", etc.).
+    # str() tolera int, strip()+upper() normaliza ambos formatos.
+    raw_severity = str(details.get("severity", "")).strip().upper()
     severity = _SEVERITY_MAP.get(raw_severity, "medium")
 
     headers = req.get("headers", {})
