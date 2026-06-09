@@ -149,6 +149,19 @@ prometheus.scrape "host_metrics" {
   scrape_interval = "15s"
 }
 
+// ── Métricas de NGINX (nginx-prometheus-exporter sobre stub_status) ──────────
+// El contenedor wardnode-nginx-exporter scrapea /stub_status del proxy y expone
+// sus métricas en :9113. Alloy las reenvía a Prometheus como job "nginx".
+// Métricas clave: nginx_up, nginx_connections_active/reading/writing/waiting,
+// nginx_connections_accepted/handled, nginx_http_requests_total.
+
+prometheus.scrape "nginx" {
+  targets = [{ "__address__" = "wardnode-nginx-exporter:9113" }]
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+  job_name        = "nginx"
+  scrape_interval = "15s"
+}
+
 // ── Auto-observabilidad: métricas del propio Alloy ────────────────────────────
 
 prometheus.scrape "alloy_self" {

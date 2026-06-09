@@ -687,7 +687,7 @@ def obs_activate():
     except ImportError:
         return jsonify({"ok": False, "step": "docker", "error": "SDK de Docker no instalado en el contenedor"}), 500
 
-    _OBS_CONTAINERS = ["wardnode-loki", "wardnode-grafana", "wardnode-alloy", "wardnode-prometheus"]
+    _OBS_CONTAINERS = ["wardnode-loki", "wardnode-grafana", "wardnode-alloy", "wardnode-prometheus", "wardnode-nginx-exporter"]
 
     try:
         client = docker_sdk.from_env()
@@ -737,7 +737,7 @@ def obs_activate():
                 [
                     "docker", "compose", "-f", compose_file, "--profile", "obs",
                     "up", "-d", "--no-build", "--no-deps", "--no-recreate",
-                    "loki", "grafana", "alloy", "prometheus",
+                    "loki", "grafana", "alloy", "prometheus", "nginx-exporter",
                 ],
                 capture_output=True,
                 text=True,
@@ -880,6 +880,7 @@ def obs_status():
     grafana_ok = _is_running("wardnode-grafana")
     alloy_ok = _is_running("wardnode-alloy")
     prometheus_ok = _is_running("wardnode-prometheus")
+    nginx_exporter_ok = _is_running("wardnode-nginx-exporter")
 
     # Re-inyectar obs.conf si el proxy fue reiniciado y lo perdió
     if grafana_ok:
@@ -894,11 +895,12 @@ def obs_status():
         _inject_obs_nginx_conf(client)
 
     return jsonify({
-        "ok": loki_ok and grafana_ok and alloy_ok and prometheus_ok,
+        "ok": loki_ok and grafana_ok and alloy_ok and prometheus_ok and nginx_exporter_ok,
         "loki": loki_ok,
         "grafana": grafana_ok,
         "alloy": alloy_ok,
         "prometheus": prometheus_ok,
+        "nginx_exporter": nginx_exporter_ok,
     })
 
 
@@ -935,12 +937,13 @@ def _sys_container_states() -> dict:
     except Exception:
         pass
     return {
-        "proxy":      "wardnode-proxy"      in running,
-        "loki":       "wardnode-loki"       in running,
-        "grafana":    "wardnode-grafana"    in running,
-        "alloy":      "wardnode-alloy"      in running,
-        "prometheus": "wardnode-prometheus" in running,
-        "fluent-bit": "wardnode-fluent-bit" in running,
+        "proxy":          "wardnode-proxy"          in running,
+        "loki":           "wardnode-loki"           in running,
+        "grafana":        "wardnode-grafana"        in running,
+        "alloy":          "wardnode-alloy"          in running,
+        "prometheus":     "wardnode-prometheus"     in running,
+        "nginx-exporter": "wardnode-nginx-exporter" in running,
+        "fluent-bit":     "wardnode-fluent-bit"     in running,
     }
 
 
@@ -960,7 +963,7 @@ def sys_status():
 @bp.post("/sys/restart/<target>")
 @roles_required(ROLE_ADMIN)
 def sys_restart(target: str):
-    _DOCKER_TARGETS = {"proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit"}
+    _DOCKER_TARGETS = {"proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit", "nginx-exporter"}
 
     if target in _DOCKER_TARGETS:
         container_name = f"wardnode-{target}"

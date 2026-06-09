@@ -198,6 +198,24 @@ services:
     networks:
       - wardnode_internal
 
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1
+    container_name: wardnode-nginx-exporter
+    restart: unless-stopped
+    profiles:
+      - obs
+    # En VPS el proxy usa network_mode: host — stub_status queda en
+    # localhost del host, accesible vía host.docker.internal desde el bridge.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - -nginx.scrape-uri=http://host.docker.internal:8081/stub_status
+    depends_on:
+      console:
+        condition: service_healthy
+    networks:
+      - wardnode_internal
+
   # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:latest

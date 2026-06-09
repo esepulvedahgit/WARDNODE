@@ -46,7 +46,7 @@ def test_obs_activate_starts_only_obs_services(client, login_as, monkeypatch, tm
     assert state["cwd"] == str(tmp_path)
     assert "--no-deps" in state["cmd"]
     assert "--no-recreate" in state["cmd"]
-    assert state["cmd"][-4:] == ["loki", "grafana", "alloy", "prometheus"]
+    assert state["cmd"][-5:] == ["loki", "grafana", "alloy", "prometheus", "nginx-exporter"]
 
 
 def test_obs_fullscreen_renders_minimal_embedded_view(client, login_as):

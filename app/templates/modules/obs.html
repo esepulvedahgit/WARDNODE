@@ -24,10 +24,10 @@
       <p class="text-secondary mb-0 small">Observabilidad centralizada — logs (WAF, nginx, ModSecurity, SSH) y métricas (host, contenedores) en Grafana.</p>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
-      <span x-show="lokiOk === true && grafanaOk === true && alloyOk === true && prometheusOk === true" x-cloak class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">
+      <span x-show="lokiOk === true && grafanaOk === true && alloyOk === true && prometheusOk === true && nginxExporterOk === true" x-cloak class="badge-mode" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0">
         <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Stack operativo
       </span>
-      <span x-show="lokiOk === false || grafanaOk === false || alloyOk === false || prometheusOk === false" style="display:none" class="badge-mode badge-off">
+      <span x-show="lokiOk === false || grafanaOk === false || alloyOk === false || prometheusOk === false || nginxExporterOk === false" style="display:none" class="badge-mode badge-off">
         <i class="bi bi-circle-fill me-1" style="font-size:7px;vertical-align:middle"></i>Servicios inactivos
       </span>
       <span x-show="lokiOk === null" style="display:none" class="badge-mode" style="color:var(--text-muted)">
@@ -68,10 +68,16 @@
       <span :class="prometheusOk === true ? 'text-success' : prometheusOk === false ? 'text-danger' : 'text-secondary'"
             x-text="prometheusOk === true ? '● activo' : prometheusOk === false ? '● inactivo' : '● —'"></span>
     </div>
+    <div style="display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;padding:6px 12px;font-size:12px">
+      <i class="bi bi-speedometer2" style="color:var(--accent)"></i>
+      <span style="color:var(--text-secondary)">Nginx Exporter</span>
+      <span :class="nginxExporterOk === true ? 'text-success' : nginxExporterOk === false ? 'text-danger' : 'text-secondary'"
+            x-text="nginxExporterOk === true ? '● activo' : nginxExporterOk === false ? '● inactivo' : '● —'"></span>
+    </div>
   </div>
 
   {# ── Alerta + reinicio si servicios inactivos ── #}
-  <div x-show="lokiOk === false || grafanaOk === false || alloyOk === false || prometheusOk === false" style="display:none"
+  <div x-show="lokiOk === false || grafanaOk === false || alloyOk === false || prometheusOk === false || nginxExporterOk === false" style="display:none"
        x-data="obsRestart()">
 
     {# Overlay de carga durante reinicio #}
@@ -282,6 +288,7 @@ function obsPanel() {
     grafanaOk: null,
     alloyOk: null,
     prometheusOk: null,
+    nginxExporterOk: null,
     loading: false,
 
     // readiness HTTP de Grafana
@@ -306,11 +313,13 @@ function obsPanel() {
         this.grafanaOk = d.grafana === true;
         this.alloyOk = d.alloy === true;
         this.prometheusOk = d.prometheus === true;
+        this.nginxExporterOk = d.nginx_exporter === true;
       } catch (e) {
         this.lokiOk = false;
         this.grafanaOk = false;
         this.alloyOk = false;
         this.prometheusOk = false;
+        this.nginxExporterOk = false;
       }
       this.loading = false;
       // Arrancar probe HTTP de Grafana si el contenedor está activo

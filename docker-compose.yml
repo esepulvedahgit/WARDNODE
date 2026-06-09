@@ -164,6 +164,19 @@ services:
     networks:
       - wardnode_internal
 
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1
+    container_name: wardnode-nginx-exporter
+    restart: unless-stopped
+    profiles:
+      - obs
+    command:
+      - -nginx.scrape-uri=http://wardnode-proxy:8081/stub_status
+    depends_on:
+      - proxy
+    networks:
+      - wardnode_internal
+
   # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:latest

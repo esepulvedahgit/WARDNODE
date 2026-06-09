@@ -26,11 +26,12 @@
 
     {# Definición de servicios con meta #}
     {% set services = [
-      { "key": "proxy",      "label": "Nginx / ModSecurity",  "sub": "wardnode-proxy",      "icon": "bi-shield-fill-exclamation", "bg": "#fef2f2", "color": "#dc2626" },
-      { "key": "loki",       "label": "Loki",                 "sub": "wardnode-loki",        "icon": "bi-journal-code",            "bg": "#fff7ed", "color": "#d97706" },
-      { "key": "grafana",    "label": "Grafana",              "sub": "wardnode-grafana",     "icon": "bi-bar-chart-fill",          "bg": "#fdf4ff", "color": "#9333ea" },
-      { "key": "alloy",      "label": "Grafana Alloy",        "sub": "wardnode-alloy",       "icon": "bi-activity",                "bg": "#f0fdf4", "color": "#16a34a" },
-      { "key": "prometheus", "label": "Prometheus",           "sub": "wardnode-prometheus",  "icon": "bi-graph-up",                "bg": "#fff1f2", "color": "#e11d48" },
+      { "key": "proxy",          "label": "Nginx / ModSecurity",  "sub": "wardnode-proxy",          "icon": "bi-shield-fill-exclamation", "bg": "#fef2f2", "color": "#dc2626" },
+      { "key": "loki",           "label": "Loki",                 "sub": "wardnode-loki",            "icon": "bi-journal-code",            "bg": "#fff7ed", "color": "#d97706" },
+      { "key": "grafana",        "label": "Grafana",              "sub": "wardnode-grafana",         "icon": "bi-bar-chart-fill",          "bg": "#fdf4ff", "color": "#9333ea" },
+      { "key": "alloy",          "label": "Grafana Alloy",        "sub": "wardnode-alloy",           "icon": "bi-activity",                "bg": "#f0fdf4", "color": "#16a34a" },
+      { "key": "prometheus",     "label": "Prometheus",           "sub": "wardnode-prometheus",      "icon": "bi-graph-up",                "bg": "#fff1f2", "color": "#e11d48" },
+      { "key": "nginx-exporter", "label": "Nginx Exporter",       "sub": "wardnode-nginx-exporter",  "icon": "bi-speedometer2",            "bg": "#ecfeff", "color": "#0891b2" },
     ] %}
 
     <div class="col-sm-6 col-lg-4">
