@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block title %}Backups | WardNode{% endblock %}
+
+{% block head %}
+<style>
+  .backup-page .card-panel + .card-panel { margin-top: 1rem; }
+  .backup-page .form-actions {
+    display: flex; justify-content: flex-end;
+    padding-top: 1rem; border-top: 1px solid var(--card-border); margin-top: 1.25rem;
+  }
+  .backup-page .danger-card {
+    border: 1px solid var(--c-danger-border);
+  }
+  .backup-page .danger-card .card-panel-title { color: var(--c-danger); }
+  .backup-page .restore-warning {
+    background: var(--c-danger-bg); border: 1px solid var(--c-danger-border);
+    border-radius: 8px; padding: .75rem .9rem; font-size: 13px; color: #7f1d1d;
+    margin-bottom: 1rem;
+  }
+  .backup-page .last-status {
+    font-size: 12px; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 6px;
+  }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Backups</span>
+{% endblock %}
+
+{% block content %}
+<div class="backup-page">
+
+  {# ── Cabecera ─────────────────────────────────────────────────────── #}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+        <i class="bi bi-archive-fill" style="color:var(--accent)"></i>
+        Backups
+      </h1>
+      <p class="text-secondary mb-0 small">
+        Copia de seguridad cifrada (AES-256) de la base de datos, certificados TLS y estado del firewall.
+      </p>
+    </div>
+    <form method="post" action="{{ url_for('backup.run_now') }}"
+          hx-post="{{ url_for('backup.run_now') }}" hx-target="#backupRows" hx-swap="innerHTML"
+          x-data="{busy:false}" @htmx:before-request.camel="busy=true" @htmx:after-request.camel="busy=false">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary btn-sm" :disabled="busy">
+        <span x-show="!busy"><i class="bi bi-lightning-charge-fill me-1"></i>Backup ahora</span>
+        <span x-show="busy" x-cloak><span class="spinner-border spinner-border-sm me-1"></span>Generando…</span>
+      </button>
+    </form>
+  </div>
+
+  {% if not encryption_ok %}
+  <div class="alert alert-warning mb-4" style="font-size:13px">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+    <strong>Cifrado no configurado:</strong> la variable <code>WARDNODE_SECRET_KEY</code>
+    no está definida. No es posible guardar la contraseña del zip hasta configurarla.
+  </div>
+  {% endif %}
+
+  {# ── Backups en disco ─────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">
+        <i class="bi bi-hdd-stack me-2" style="color:var(--accent)"></i>Backups en disco
+      </h2>
+      {% if cfg.last_run_at %}
+      <span class="last-status">
+        {% if cfg.last_status == 'ok' %}
+          <i class="bi bi-check-circle-fill" style="color:var(--c-success)"></i>
+        {% else %}
+          <i class="bi bi-x-circle-fill" style="color:var(--c-danger)"></i>
+        {% endif %}
+        Último programado: {{ cfg.last_run_at[:19] }} UTC — {{ cfg.last_status }}
+      </span>
+      {% endif %}
+    </div>
+    <div class="card-panel-body" style="padding:0" id="backupRows">
+      {% include "backup/_backup_rows.html" %}
+    </div>
+  </div>
+
+  {# ── Programación ─────────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">
+        <i class="bi bi-clock-history me-2" style="color:var(--accent)"></i>Programación
+      </h2>
+    </div>
+    <div class="card-panel-body">
+      <form method="post" action="{{ url_for('backup.config_save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="scheduler">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <div class="form-check form-switch mt-4">
+              <input class="form-check-input" type="checkbox" id="bk-enabled" name="enabled"
+                     {% if cfg.enabled %}checked{% endif %}>
+              <label class="form-check-label" for="bk-enabled">Backup diario automático</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium" for="bk-hour">Hora (UTC, del servidor)</label>
+            <select id="bk-hour" name="hour" class="form-select form-select-sm">
+              {% for h in range(24) %}
+              <option value="{{ h }}" {% if cfg.hour|int == h %}selected{% endif %}>{{ '%02d:00'|format(h) }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium" for="bk-retention">Retención (backups en disco)</label>
+            <input type="number" id="bk-retention" name="retention" class="form-control form-control-sm"
+                   min="1" max="90" value="{{ cfg.retention }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium d-block">Componentes</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="bk-tls" name="include_tls"
+                     {% if cfg.include_tls %}checked{% endif %}>
+              <label class="form-check-label small" for="bk-tls">Certificados TLS</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="bk-host" name="include_host"
+                     {% if cfg.include_host %}checked{% endif %}>
+              <label class="form-check-label small" for="bk-host">Estado firewall (WF)</label>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm">Guardar programación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ── Email ────────────────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">
+        <i class="bi bi-envelope-fill me-2" style="color:var(--accent)"></i>Envío por correo
+      </h2>
+    </div>
+    <div class="card-panel-body">
+      <p class="text-secondary small mb-3">
+        Usa la configuración SMTP global (<a href="{{ url_for('proxy.settings') }}">Proxy → Settings</a>).
+        Si el zip excede el límite, el correo solo notifica y el archivo queda en disco.
+      </p>
+      <form method="post" action="{{ url_for('backup.config_save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="email">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <div class="form-check form-switch mt-4">
+              <input class="form-check-input" type="checkbox" id="bk-email-enabled" name="email_enabled"
+                     {% if cfg.email_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="bk-email-enabled">Enviar tras cada backup</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="bk-email-to">Destinatarios (separados por coma)</label>
+            <input type="text" id="bk-email-to" name="email_to" class="form-control form-control-sm"
+                   placeholder="ops@ejemplo.com, admin@ejemplo.com" value="{{ cfg.email_to }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-medium" for="bk-email-max">Límite adjunto (MB)</label>
+            <input type="number" id="bk-email-max" name="email_max_mb" class="form-control form-control-sm"
+                   min="1" max="100" value="{{ cfg.email_max_mb }}">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm">Guardar email</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ── Contraseña del zip ───────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">
+        <i class="bi bi-key-fill me-2" style="color:var(--accent)"></i>Contraseña del zip
+      </h2>
+    </div>
+    <div class="card-panel-body">
+      <p class="text-secondary small mb-3">
+        Cifra cada backup con AES-256. <strong>Sin esta contraseña el backup es irrecuperable</strong> —
+        guárdala en un gestor de contraseñas junto a <code>WARDNODE_SECRET_KEY</code>.
+      </p>
+      <form method="post" action="{{ url_for('backup.config_save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="password">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="bk-zip-pw">Contraseña (mínimo 12 caracteres)</label>
+            <input type="password" id="bk-zip-pw" name="zip_password" class="form-control form-control-sm"
+                   autocomplete="new-password" value="{{ masked_password }}"
+                   {% if not encryption_ok %}disabled{% endif %}>
+            <div class="form-text">Si no la cambias, se conserva la actual.</div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" {% if not encryption_ok %}disabled{% endif %}>
+            Guardar contraseña
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ── Restaurar (zona de peligro) ──────────────────────────────────── #}
+  <div class="card-panel danger-card">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">
+        <i class="bi bi-exclamation-octagon-fill me-2"></i>Restaurar desde backup
+      </h2>
+    </div>
+    <div class="card-panel-body">
+      <div class="restore-warning">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <strong>Acción destructiva e irreversible.</strong> La base de datos actual será reemplazada
+        por completo (sitios, reglas, usuarios, incidentes). Todas las sesiones se cerrarán, incluida
+        la tuya. Tras el restore, reinicia los contenedores
+        (<code>docker compose restart console proxy</code>). Recomendado solo en recuperación de desastres;
+        para servidores nuevos usa <code>flask backup-restore</code> por consola.
+      </div>
+      <form method="post" action="{{ url_for('backup.restore') }}" enctype="multipart/form-data"
+            x-data="{confirm:''}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="rs-file">Archivo de backup (.zip)</label>
+            <input type="file" id="rs-file" name="backup_file" class="form-control form-control-sm"
+                   accept=".zip" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-medium" for="rs-zip-pw">Contraseña del zip</label>
+            <input type="password" id="rs-zip-pw" name="zip_password" class="form-control form-control-sm"
+                   autocomplete="off" required>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-medium" for="rs-admin-pw">Tu contraseña de administrador</label>
+            <input type="password" id="rs-admin-pw" name="current_password" class="form-control form-control-sm"
+                   autocomplete="current-password" required>
+          </div>
+          {% if current_user.totp_enabled %}
+          <div class="col-md-4">
+            <label class="form-label fw-medium" for="rs-totp">Código TOTP</label>
+            <input type="text" id="rs-totp" name="totp_code" class="form-control form-control-sm"
+                   inputmode="numeric" autocomplete="one-time-code" required>
+          </div>
+          {% endif %}
+          <div class="col-md-4">
+            <label class="form-label fw-medium" for="rs-confirm">Escribe <code>RESTAURAR</code> para confirmar</label>
+            <input type="text" id="rs-confirm" name="confirm_text" class="form-control form-control-sm"
+                   autocomplete="off" x-model="confirm" required>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-danger btn-sm" :disabled="confirm !== 'RESTAURAR'">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar base de datos
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{# Parcial HTMX: filas de la tabla de backups en disco #}
+{% if backups %}
+<table class="data-table" style="margin:0">
+  <thead>
+    <tr>
+      <th>Archivo</th>
+      <th style="width:140px">Fecha (UTC)</th>
+      <th style="width:100px">Tamaño</th>
+      <th style="width:130px">Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in backups %}
+    <tr>
+      <td class="t-mono" style="font-size:12px">{{ b.name }}</td>
+      <td class="t-mono t-dim" style="font-size:12px;white-space:nowrap">{{ b.mtime.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td class="t-mono t-dim" style="font-size:12px">{{ '%.1f'|format(b.size_bytes / 1048576) }} MB</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <a href="{{ url_for('backup.download', name=b.name) }}"
+             class="btn btn-sm btn-outline-secondary" style="font-size:11px;padding:2px 8px" title="Descargar">
+            <i class="bi bi-download"></i>
+          </a>
+          <form method="post" action="{{ url_for('backup.delete', name=b.name) }}"
+                onsubmit="return confirm('¿Eliminar {{ b.name }}? Esta acción es irreversible.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger" style="font-size:11px;padding:2px 8px" title="Eliminar">
+              <i class="bi bi-trash"></i>
+            </button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div style="padding:32px 0;text-align:center;color:var(--text-muted)">
+  <i class="bi bi-archive" style="font-size:32px;display:block;margin-bottom:10px"></i>
+  <p style="font-size:13px;margin:0">No hay backups en disco todavía.</p>
+</div>
+{% endif %}

@@ -63,6 +63,7 @@ The `proxy/conf.d/generated.conf` template bootstraps the proxy with a single `i
 | `modules` | `/modules/` | Optional host-management modules (admin only) |
 | `audit` | `/audit/` | Audit log dashboard (KPI cards, timeline chart, CSV export) — admin only |
 | `soc` | `/soc/` | SOC: incident correlation, LLM analysis, alerts, ML anomaly scoring — admin only |
+| `backup` | `/backup/` | Disaster-recovery backups: AES-256 zip (pg_dump + TLS certs + WF host state), daily scheduler, email delivery, UI/CLI restore — admin only |
 
 ### Models and relationships
 
@@ -107,6 +108,16 @@ The `soc` blueprint (gated by `module_soc_enabled` + admin role) correlates `Att
 7. **ML scoring** (`ml.py`) — IsolationForest (scikit-learn) trained on hourly per-IP aggregates of the last 14 days (min 100 samples, max 50k rows), serialized with joblib into `SocMlModel` (DB blob → multi-worker consistent; never load external blobs — pickle). The heuristic score is always the severity floor; ML can only raise it (`max(score, ml_score)`). Opt-in via `soc_ml_enabled`; retrain every `soc_ml_retrain_hours` (default 24) inside the advisory lock, or manually via `POST /soc/ml-train`.
 
 UI: dashboard (`/soc/`), bitácora with filters + CSV export, incident detail (heuristic/ML/AbuseIPDB scores, MITRE chips with tactics, LLM analysis blocks), config (`/soc/config` — providers, keys, opt-in, alerts, ML, MITRE sync), notification bell (`/soc/notifications/count`).
+
+### Backup module
+
+The `backup` blueprint (admin only, toggle `module_backup_enabled`) produces disaster-recovery backups as AES-256 zips (pyzipper). All logic lives in `app/backup/`:
+
+- **Contents**: `db/wardnode.pgdump` (`pg_dump -Fc` exec'd inside the `wardnode-db` container via Docker SDK — password via `PGPASSWORD` env, never argv), `tls/letsencrypt.tar.gz` (read from the `letsencrypt` volume mounted ro into console, Docker SDK `get_archive` fallback), `host/ufw-rules.txt` + `host/protected_ports.json` (via WF socket, soft-fail), `manifest.json` (format version, alembic head, SHA-256 checksums, included/skipped components) and `README-RESTORE.md`. The zip **never** contains `WARDNODE_SECRET_KEY` or `.env` — that key must be kept separately or encrypted secrets in the dump are unrecoverable.
+- **Scheduler** (`worker.py`): daemon thread cloned from the SOC worker, advisory lock **815002**, daily at `backup_hour` (UTC). `is_backup_due()` is a pure function. Outcome persisted in `backup_last_run_at`/`backup_last_status` on success *and* failure. Email via `app/email.py:send_email()` (attachments support): attaches the zip if under `backup_email_max_mb` (default 20), otherwise notification-only; failure alert email on error.
+- **Restore**: CLI `flask backup-restore <zip>` (prompts password, validates manifest + checksums, `pg_restore --clean --if-exists --no-owner`, applies pending migrations, regenerates nginx configs) or UI upload gated by **re-authentication** (admin password + TOTP if enabled) + typed `RESTAURAR` confirmation. `validate_backup_zip()` enforces path whitelist, anti zip-bomb (ratio/size caps) and blocks dumps from newer alembic heads. TLS/WF state are documented manual steps, never auto-applied.
+- **Storage**: `WARDNODE_BACKUP_DIR` (default `/app/data/backups`, named volume `backups`). Filenames match `wardnode-backup-YYYYMMDD-HHMMSS.zip` — the regex doubles as path-traversal guard in download/delete. Retention via `backup_retention` (prune keeps newest N). Atomic writes (`.zip.part` + `os.replace`).
+- CLI: `flask backup-create`, `flask backup-restore`, `flask backup-prune [--keep N]`.
 
 ### Modules system
 
@@ -161,6 +172,8 @@ Jinja2 templates + **HTMX** for partial page updates + **Alpine.js** for local s
 | `PASSWORD_RESET_SHOW_TOKEN` | `false` | Dev only — never enable in prod |
 | `PASSWORD_RESET_TOKEN_MINUTES` | `30` | Reset token expiry |
 | `WARDNODE_PROXY_CONTAINER` | `wardnode-proxy` | Docker container name to stream ModSecurity logs from |
+| `WARDNODE_BACKUP_DIR` | `/app/data/backups` | Where encrypted backup zips are stored (named volume `backups`) |
+| `WARDNODE_DB_CONTAINER` | `wardnode-db` | Container name for pg_dump/pg_restore via Docker SDK |
 
 Copy `.env.example` to `.env` before first run.
 

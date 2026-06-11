@@ -21,6 +21,8 @@ services:
       - /run/wardnode:/app/sockets:rw
       - ${WARDNODE_PROJECT_DIR:-/home/esepulvedah/wardnode}:${WARDNODE_PROJECT_DIR:-/home/esepulvedah/wardnode}:ro
       - modsecurity_logs:/var/log/modsec:ro
+      - backups:/app/data/backups
+      - letsencrypt:/etc/letsencrypt:ro
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
     depends_on:
@@ -202,6 +204,7 @@ services:
 
 volumes:
   postgres_data:
+  backups:
   proxy_generated:
   fluent_bit_config:
   geoip_data:

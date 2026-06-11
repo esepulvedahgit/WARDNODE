@@ -7,6 +7,7 @@ from flask import Flask
 
 from app.audit.routes import bp as audit_bp
 from app.auth.routes import bp as auth_bp
+from app.backup import bp as backup_bp
 from app.config import Config
 from app.extensions import csrf, db, limiter, login_manager, migrate
 from app.main.routes import bp as main_bp
@@ -42,6 +43,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     app.register_blueprint(modules_bp)
     app.register_blueprint(audit_bp)
     app.register_blueprint(soc_bp)
+    app.register_blueprint(backup_bp)
 
     @app.context_processor
     def inject_module_states():
@@ -52,6 +54,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
                 "module_wf_enabled": AppConfig.get("module_wf_enabled") == "1",
                 "module_obs_enabled": AppConfig.get("module_obs_enabled") == "1",
                 "module_soc_enabled": AppConfig.get("module_soc_enabled") == "1",
+                "module_backup_enabled": (AppConfig.get("module_backup_enabled") or "1") == "1",
                 "console_site_configured": bool(console_site_id and console_site_id.isdigit()),
                 "setup_prompt_shown": AppConfig.get("setup_prompt_shown") == "1",
             }
@@ -60,6 +63,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
                 "module_wf_enabled": False,
                 "module_obs_enabled": False,
                 "module_soc_enabled": False,
+                "module_backup_enabled": False,
                 "console_site_configured": False,
                 "setup_prompt_shown": False,
             }
@@ -219,10 +223,99 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
             f"{result['totp']} 2FA restablecido(s)."
         )
 
+    import click
+
+    @app.cli.command("backup-create")
+    def backup_create_command():
+        """Genera un backup cifrado completo (DB + TLS + estado WF)."""
+        from app.backup.service import BackupError, create_backup
+
+        try:
+            result = create_backup(reason="cli")
+        except BackupError as exc:
+            click.echo(f"ERROR: {exc}", err=True)
+            raise SystemExit(1)
+        click.echo(f"Backup creado: {result.path}")
+        click.echo(f"Tamaño: {result.size_bytes / 1024**2:.1f} MB")
+        for component, status in result.components.items():
+            click.echo(f"  - {component}: {status}")
+
+    @app.cli.command("backup-restore")
+    @click.argument("zip_path")
+    @click.option("--yes", is_flag=True, help="Omitir la confirmación interactiva.")
+    @click.option("--skip-db", is_flag=True, help="Validar y extraer sin restaurar la DB.")
+    def backup_restore_command(zip_path, yes, skip_db):
+        """Restaura la base de datos desde un backup cifrado. DESTRUCTIVO."""
+        from pathlib import Path as _Path
+
+        from app.backup.service import (
+            BackupError,
+            RestoreValidationError,
+            restore_backup,
+            validate_backup_zip,
+        )
+
+        path = _Path(zip_path)
+        if not path.is_file():
+            click.echo(f"ERROR: no existe {zip_path}", err=True)
+            raise SystemExit(1)
+
+        password = click.prompt("Contraseña del zip", hide_input=True)
+        try:
+            info = validate_backup_zip(path, password)
+        except RestoreValidationError as exc:
+            click.echo(f"ERROR de validación: {exc}", err=True)
+            raise SystemExit(1)
+
+        manifest = info["manifest"]
+        click.echo(f"Backup del: {manifest.get('created_at')}")
+        click.echo(f"Motor DB: {manifest.get('db_engine')} · "
+                   f"Migración: {manifest.get('alembic_head')}")
+        for component, status in (manifest.get("components") or {}).items():
+            click.echo(f"  - {component}: {status}")
+        if info.get("needs_upgrade"):
+            click.echo("Nota: se aplicarán migraciones pendientes tras el restore.")
+        if info.get("pg_version_warning"):
+            click.echo(f"ADVERTENCIA: {info['pg_version_warning']}")
+
+        if not yes:
+            click.confirm(
+                "Esto DESTRUYE la base de datos actual y la reemplaza por el backup. ¿Continuar?",
+                abort=True,
+            )
+        try:
+            result = restore_backup(path, password, skip_db=skip_db)
+        except BackupError as exc:
+            click.echo(f"ERROR: {exc}", err=True)
+            raise SystemExit(1)
+        click.echo("Restore completado.")
+        if result["migrations_applied"]:
+            click.echo("Migraciones pendientes aplicadas.")
+        click.echo("Reinicia los contenedores: docker compose restart console proxy")
+
+    @app.cli.command("backup-prune")
+    @click.option("--keep", default=None, type=int, help="Backups a conservar (default: config).")
+    def backup_prune_command(keep):
+        """Elimina backups antiguos según la política de retención."""
+        from app.backup.service import prune_backups
+        from app.models import AppConfig
+
+        if keep is None:
+            try:
+                keep = int(AppConfig.get("backup_retention") or 7)
+            except (TypeError, ValueError):
+                keep = 7
+        removed = prune_backups(keep)
+        click.echo(f"{len(removed)} backup(s) eliminado(s)." +
+                   (f" ({', '.join(removed)})" if removed else ""))
+
     from app.proxy.ingest import start_ingest_thread
     start_ingest_thread(app)
 
     from app.soc.worker import start_soc_thread
     start_soc_thread(app)
+
+    from app.backup.worker import start_backup_thread
+    start_backup_thread(app)
 
     return app

@@ -98,6 +98,12 @@
           <i class="bi bi-clipboard-data-fill"></i><span>Auditoría</span>
         </a>
         {% endif %}
+        {% if module_backup_enabled and current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('backup.') %}active{% endif %}"
+           href="{{ url_for('backup.index') }}">
+          <i class="bi bi-archive-fill"></i><span>Backups</span>
+        </a>
+        {% endif %}
         <a class="nav-link-item {% if request.endpoint == 'auth.profile' %}active{% endif %}"
            href="{{ url_for('auth.profile') }}">
           <i class="bi bi-person-fill"></i><span>Mi perfil</span>
