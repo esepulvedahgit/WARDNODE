@@ -83,6 +83,7 @@ services:
 
   db:
     image: postgres:16-alpine
+    container_name: wardnode-db
     restart: unless-stopped
     env_file: .env.prod
     ports:

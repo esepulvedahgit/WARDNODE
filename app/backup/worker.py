@@ -55,17 +55,43 @@ def _persist_outcome(now: datetime, status: str) -> None:
     db.session.commit()
 
 
+def _failure_recipients(scheduled_raw: str) -> list[str]:
+    """Destinatarios para alertas de fallo: admins del sistema + email programado.
+
+    Reglas (case-insensitive):
+    - Si admin == programado → se envía una sola vez.
+    - Si son distintos → se envía a ambos.
+    - Si no hay programado → solo al admin.
+    """
+    from app.models import ROLE_ADMIN, User
+
+    admin_emails = [u.email for u in User.query.filter_by(role=ROLE_ADMIN).all()]
+    scheduled = [e.strip() for e in scheduled_raw.split(",") if e.strip()]
+    seen: set[str] = set()
+    result: list[str] = []
+    for addr in admin_emails + scheduled:
+        key = addr.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(addr)
+    return result
+
+
 def _send_result_email(result, error_msg: str | None) -> None:
-    """Email post-backup: adjunto si cabe, aviso si excede, alerta si falló."""
+    """Email post-backup: adjunto si cabe, aviso si excede, alerta si falló.
+
+    Fallos: siempre notifica a los admins del sistema + al destinatario
+    programado si está configurado (independiente de backup_email_enabled).
+    Éxitos: solo si backup_email_enabled == "1" y backup_email_to está definido.
+    """
     from app.email import send_email, smtp_configured
     from app.models import AppConfig
 
-    if (AppConfig.get("backup_email_enabled") or "0") != "1":
+    if not smtp_configured():
         return
-    to_raw = AppConfig.get("backup_email_to") or ""
-    to_emails = [e.strip() for e in to_raw.split(",") if e.strip()]
-    if not to_emails or not smtp_configured():
-        return
+
+    scheduled_raw = AppConfig.get("backup_email_to") or ""
+    email_enabled = (AppConfig.get("backup_email_enabled") or "0") == "1"
 
     try:
         max_mb = int(AppConfig.get("backup_email_max_mb") or 20)
@@ -74,11 +100,20 @@ def _send_result_email(result, error_msg: str | None) -> None:
 
     try:
         if error_msg is not None:
+            to_emails = _failure_recipients(scheduled_raw)
+            if not to_emails:
+                return
             send_email(
                 to_emails, "WardNode backup FALLÓ",
                 f"El backup programado falló:\n\n{error_msg}\n\n"
                 "Revisa la bitácora de auditoría para más detalle.",
             )
+            return
+
+        if not email_enabled:
+            return
+        to_emails = [e.strip() for e in scheduled_raw.split(",") if e.strip()]
+        if not to_emails:
             return
 
         size_mb = result.size_bytes / 1024**2
