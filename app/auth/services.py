@@ -19,7 +19,19 @@ def create_user(email: str, name: str, password: str, role: str) -> User:
     return user
 
 
+def purge_expired_reset_tokens() -> int:
+    from sqlalchemy import or_
+    now = datetime.now(timezone.utc)
+    q = PasswordResetToken.query.filter(
+        or_(PasswordResetToken.used_at.isnot(None), PasswordResetToken.expires_at < now)
+    )
+    n = q.delete(synchronize_session=False)
+    db.session.commit()
+    return n
+
+
 def create_password_reset_token(user: User, lifetime_minutes: int) -> tuple[PasswordResetToken, str]:
+    purge_expired_reset_tokens()
     raw_token = token_urlsafe(32)
     reset_token = PasswordResetToken(
         user=user,

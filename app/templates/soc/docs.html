@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación SOC | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('soc.index') }}" class="bc-link">SOC</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('soc.index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-speedometer2 me-1"></i>Dashboard
+</a>
+{% if current_user.has_role('admin') %}
+<a href="{{ url_for('soc.config') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-gear me-1"></i>Configuración
+</a>
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<style>
+  .soc-docs h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; scroll-margin-top: 80px; }
+  .soc-docs h3 { font-size: 14px; font-weight: 700; margin: 18px 0 8px; color: var(--text-primary); }
+  .soc-docs p, .soc-docs li { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+  .soc-docs pre { background: var(--bg-secondary, #f8fafc); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow-x: auto; margin: 10px 0; }
+  .soc-docs table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+  .soc-docs table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding: 6px 10px; }
+  .soc-docs table td { border-bottom: 1px solid var(--border-color); padding: 6px 10px; color: var(--text-secondary); vertical-align: top; }
+  .soc-docs code { font-size: 12px; }
+  .soc-docs .doc-note { border-left: 3px solid var(--accent); background: var(--bg-secondary, #f8fafc); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 12.5px; margin: 12px 0; }
+  .soc-docs .doc-warn { border-left-color: #f59e0b; }
+  .soc-toc { position: sticky; top: 80px; }
+  .soc-toc a { display: block; font-size: 12.5px; padding: 4px 10px; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+  .soc-toc a:hover { color: var(--accent); background: var(--bg-secondary, #f8fafc); border-left-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación del SOC
+    </h1>
+    <p class="text-secondary mb-0 small">Flujo de funcionamiento y lógica de decisiones — por qué se dispara un incidente, cómo se gradúa y cuándo se alerta.</p>
+  </div>
+</div>
+
+<div class="row g-4 soc-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel soc-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#por-que-incidente">2 · ¿Por qué se dispara un incidente?</a>
+      <a href="#ciclo-worker">3 · Ciclo del worker</a>
+      <a href="#enriquecimiento">4 · Enriquecimiento</a>
+      <a href="#analisis-llm">5 · Análisis con IA (LLM)</a>
+      <a href="#alertas">6 · Sistema de alertas</a>
+      <a href="#scoring-ml">7 · Scoring ML</a>
+      <a href="#estados">8 · Estados y revisión humana</a>
+      <a href="#garantias">9 · Garantías transversales</a>
+      <a href="#referencia">10 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>El módulo SOC convierte el flujo crudo de eventos del WAF (<code>AttackEvent</code>) en <strong>incidentes accionables</strong>: agrupa la actividad de cada IP atacante, la puntúa, la enriquece con threat intel, la explica con un LLM y notifica al operador.</p>
+<pre>Tráfico atacante
+      │
+      ▼
+┌─────────────┐  logs JSON   ┌──────────────────┐
+│ Proxy Nginx │ ───────────► │ Ingest thread    │ ──► AttackEvent (DB)
+│ ModSecurity │   (stdout)   │ (modsec-ingest)  │
+└─────────────┘              └──────────────────┘
+                                                      cada N minutos
+┌────────────────────────────────────────────────────────────────────┐
+│ soc-worker (thread daemon + advisory lock PostgreSQL)              │
+│                                                                    │
+│  1. DETECCIÓN heurística (SQL agregado por IP)                     │
+│  2. Scoring ML (IsolationForest, opcional)                         │
+│  3. ENRIQUECIMIENTO (AbuseIPDB + MITRE ATT&amp;CK)                     │
+│  4. Creación/actualización del INCIDENTE (dedupe)                  │
+│  5. ANÁLISIS LLM (opt-in, solo incidentes elegibles)               │
+│  6. ALERTAS (email / Telegram, opt-in)                             │
+│  7. Reentrenamiento ML (time-gated)                                │
+└────────────────────────────────────────────────────────────────────┘
+      │
+      ▼
+UI /soc/  →  dashboard · bitácora · detalle · campana  →  revisión humana</pre>
+      <div class="doc-note">
+        <strong>Principio rector:</strong> cada etapa degrada con gracia. Sin API keys → solo heurísticas.
+        Sin SMTP/Telegram → sin alertas pero con incidentes. Sin histórico → sin ML.
+        <strong>La detección nunca se detiene.</strong>
+      </div>
+    </div>
+
+    {# ── 2. Por qué se dispara un incidente ──────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="por-que-incidente">
+      <h2><i class="bi bi-exclamation-octagon" style="color:var(--accent)"></i>2 · ¿Por qué se dispara un incidente?</h2>
+      <p>Es la decisión central del módulo (<code>app/soc/detect.py</code>).</p>
+
+      <h3>2.1 La condición de entrada (filtro duro)</h3>
+<pre>≥ 20 eventos WAF de la MISMA IP dentro de los últimos 15 minutos</pre>
+      <p>Es la <strong>única</strong> condición que convierte una IP en candidata a incidente:</p>
+      <ul>
+        <li>Solo cuentan eventos que <strong>ModSecurity ya marcó</strong> (bloqueos o detecciones). El tráfico legítimo jamás entra al conteo.</li>
+        <li>Se agrupa <strong>solo por IP origen</strong>: un atacante que barre varios dominios es UN único incidente.</li>
+        <li>Las IPs no parseables se descartan; las IPs <strong>privadas sí se aceptan</strong> (un atacante interno es un incidente válido).</li>
+      </ul>
+      <table>
+        <thead><tr><th>Parámetro</th><th>Clave AppConfig</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>Ventana de correlación</td><td><code>soc_window_minutes</code></td><td>15 min</td></tr>
+          <tr><td>Mínimo de eventos</td><td><code>soc_threshold_events</code></td><td>20</td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note doc-warn">
+        <strong>⚠️ Limitación conocida (criterio volumétrico):</strong> 19 eventos en 15 minutos = ningún incidente,
+        aunque los payloads sean graves. Un atacante <em>low-and-slow</em> (1 request por hora) no genera incidente.
+        Los eventos sueltos siguen visibles en Eventos WAF.
+      </div>
+
+      <h3>2.2 El score heurístico (decide la severidad, no la existencia)</h3>
+      <p>Superado el umbral, el incidente <strong>se crea siempre</strong>. El score 0–100 solo gradúa su gravedad:</p>
+<pre>score = volumen       (0–40)  =  40 × eventos / (2 × umbral)
+      + diversidad    (0–20)  =  5 × nº de categorías CRS distintas
+      + ratio bloqueo (0–20)  =  20 × (eventos bloqueados / total)
+      + fan-out       (0–20)  =  2 × nº de paths distintos</pre>
+      <table>
+        <thead><tr><th>Componente</th><th>Pregunta que responde</th></tr></thead>
+        <tbody>
+          <tr><td>Volumen</td><td>¿Cuánto martilla? (satura a 40 con 2× el umbral)</td></tr>
+          <tr><td>Diversidad</td><td>¿Prueba varias clases de ataque (SQLi + XSS + LFI…)?</td></tr>
+          <tr><td>Ratio de bloqueo</td><td>¿El WAF lo está frenando activamente?</td></tr>
+          <tr><td>Fan-out</td><td>¿Escanea muchas rutas distintas (recon/scanner)?</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Score</th><th>Severidad</th></tr></thead>
+        <tbody>
+          <tr><td>≥ 80</td><td><span class="sev-badge sev-badge-critical">critical</span></td></tr>
+          <tr><td>≥ 60</td><td><span class="sev-badge sev-badge-high">high</span></td></tr>
+          <tr><td>≥ 40</td><td><span class="sev-badge sev-badge-medium">medium</span></td></tr>
+          <tr><td>&lt; 40</td><td><span class="sev-badge sev-badge-low">low</span></td></tr>
+        </tbody>
+      </table>
+
+      <h3>2.3 Los tres modificadores posteriores</h3>
+      <ol>
+        <li><strong>Score ML</strong> (si está activo y hay modelo): la severidad se calcula sobre <code>max(score_heurístico, ml_score)</code>. <strong>El ML solo puede SUBIR la severidad, nunca bajarla.</strong></li>
+        <li><strong>Reputación AbuseIPDB</strong>: si <code>abuseConfidenceScore ≥ 75</code>, la severidad <strong>sube un nivel</strong> (ej. high → critical).</li>
+        <li><strong>Dedupe</strong>: si ya existe un incidente <em>nuevo</em> de esa IP en la última hora, <strong>no se crea otro</strong> — se actualiza el existente (eventos, score y severidad solo al alza).</li>
+      </ol>
+
+      <h3>2.4 Ejemplos concretos</h3>
+      <p><strong>✅ Genera incidente</strong> — 50 requests SQLi + XSS contra 30 paths en 10 minutos, todo bloqueado:</p>
+<pre>volumen    = min(40, 40 × 50/40)  = 40
+diversidad = min(20, 5 × 2)       = 10
+bloqueo    = 20 × (50/50)         = 20
+fan-out    = min(20, 2 × 30)      = 20
+                            score = 90 → critical</pre>
+      <p><strong>❌ NO genera incidente:</strong></p>
+      <ul>
+        <li>19 eventos en 15 minutos (no alcanza el umbral).</li>
+        <li>5 requests RCE aislados (graves, pero volumétricamente insuficientes).</li>
+        <li>1 request por hora durante un día (<em>low-and-slow</em>).</li>
+      </ul>
+      <p><strong>🔁 NO genera un SEGUNDO incidente:</strong> la misma IP sigue atacando 20 minutos después → el dedupe actualiza el incidente abierto, no crea otro ni dispara otra alerta.</p>
+    </div>
+
+    {# ── 3. Ciclo del worker ─────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="ciclo-worker">
+      <h2><i class="bi bi-arrow-repeat" style="color:var(--accent)"></i>3 · Ciclo del worker</h2>
+      <p>Thread daemon <code>soc-worker</code> que arranca con la aplicación (<code>app/soc/worker.py</code>).</p>
+      <table>
+        <thead><tr><th>Aspecto</th><th>Valor</th></tr></thead>
+        <tbody>
+          <tr><td>Tick del loop</td><td>cada 15 s (comprueba si toca trabajar)</td></tr>
+          <tr><td>Intervalo real del ciclo</td><td><code>soc_worker_interval_min</code> (default 5 min, rango 1–60)</td></tr>
+          <tr><td>Delay tras boot</td><td>60 s</td></tr>
+          <tr><td>Backoff tras error</td><td>30 s</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><strong>Módulo apagado</strong>: el thread queda ocioso (costo ~0). Se puede activar sin reiniciar.</li>
+        <li><strong>Multi-worker (gunicorn + PostgreSQL)</strong>: un <em>advisory lock</em> garantiza que solo un proceso ejecute el ciclo y el reentrenamiento ML.</li>
+        <li><strong>Primera ejecución</strong>: si la tabla MITRE local está vacía, descarga el CTI oficial una única vez.</li>
+      </ul>
+      <div class="doc-note">
+        El SOC <strong>no es tiempo real puro</strong>: un ataque se convierte en incidente como máximo
+        ~<code>intervalo</code> minutos después (default ≤ 5 min).
+      </div>
+    </div>
+
+    {# ── 4. Enriquecimiento ──────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="enriquecimiento">
+      <h2><i class="bi bi-globe2" style="color:var(--accent)"></i>4 · Enriquecimiento del incidente</h2>
+      <p>Nunca bloquea la creación del incidente: cualquier fallo degrada con gracia (<code>enrich.py</code>, <code>mitre_cti.py</code>).</p>
+
+      <h3>4.1 AbuseIPDB (reputación de la IP)</h3>
+      <table>
+        <thead><tr><th>Control</th><th>Valor</th></tr></thead>
+        <tbody>
+          <tr><td>Solo IPs públicas</td><td>privadas/loopback/reservadas → no se consulta (no se envían datos atacante-controlados a terceros)</td></tr>
+          <tr><td>Cache local</td><td>TTL 24 h — IPs repetidas no consumen cuota</td></tr>
+          <tr><td>Tope por ciclo</td><td>25 llamadas — protege la cuota free (1.000/día)</td></tr>
+          <tr><td>Tope de respuesta</td><td>256 KB</td></tr>
+          <tr><td>Efecto</td><td>score ≥ 75 sube la severidad un nivel</td></tr>
+        </tbody>
+      </table>
+
+      <h3>4.2 MITRE ATT&amp;CK</h3>
+      <ul>
+        <li>Mapeo estático categoría CRS → técnicas (ej. <code>sql-injection → T1190</code>, <code>scanner → T1595/T1046</code>, <code>brute-force → T1110</code>).</li>
+        <li>Si la <strong>base CTI local</strong> está sincronizada (botón en Configuración o sync automática inicial), los nombres y tácticas se toman de ahí (~650 técnicas Enterprise del CTI oficial).</li>
+        <li>La misma base <strong>valida los IDs que sugiere el LLM</strong>: un ID inexistente en ATT&amp;CK real se descarta (anti-alucinación).</li>
+      </ul>
+    </div>
+
+    {# ── 5. Análisis LLM ─────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="analisis-llm">
+      <h2><i class="bi bi-robot" style="color:var(--accent)"></i>5 · Análisis con IA (LLM)</h2>
+
+      <h3>5.1 Los 4 guards (todos deben cumplirse)</h3>
+<pre>1. Opt-in de datos       soc_data_optin == "1"   (checkbox explícito; default OFF)
+2. Severidad ≥ umbral    soc_analyze_min_severity (default "medium")
+3. Proveedor disponible  alguna API key configurada (con fallback automático)
+4. Sin análisis previo   un incidente se analiza UNA sola vez</pre>
+      <p>Además: máximo <strong>5 análisis por ciclo</strong>, priorizando los de mayor severidad (control de costos).</p>
+
+      <h3>5.2 Qué se envía (minimización de datos)</h3>
+      <p>Solo metadatos agregados: IP, dominio, ventana, conteos, categorías CRS, reglas disparadas, top de paths <strong>truncados a 120 chars</strong>, scores y el contexto MITRE autorizado. <strong>Nunca</strong> bodies de peticiones ni mensajes completos de ModSecurity. Los valores atacante-controlados se neutralizan (defensa anti prompt-injection).</p>
+
+      <h3>5.3 Proveedores y fallback</h3>
+      <table>
+        <thead><tr><th>Proveedor</th><th>Modelo default</th></tr></thead>
+        <tbody>
+          <tr><td>OpenRouter</td><td><code>anthropic/claude-sonnet-4.5</code></td></tr>
+          <tr><td>Anthropic</td><td><code>claude-sonnet-4-5</code></td></tr>
+          <tr><td>OpenAI</td><td><code>gpt-4o-mini</code></td></tr>
+          <tr><td>DeepSeek</td><td><code>deepseek-chat</code></td></tr>
+          <tr><td>Gemini</td><td><code>gemini-2.0-flash</code></td></tr>
+        </tbody>
+      </table>
+      <p>Si el proveedor activo no tiene key, se recorre <code>openrouter → anthropic → openai → deepseek → gemini</code> y se usa el primero con key. Sin keys → solo heurísticas.</p>
+      <p>La salida (summary, hipótesis, recomendaciones, técnicas MITRE, IoCs) pasa por un normalizador <strong>tolerante que nunca lanza</strong>: enums inválidos se corrigen, listas se capan, IDs MITRE alucinados se descartan.</p>
+    </div>
+
+    {# ── 6. Alertas ──────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="alertas">
+      <h2><i class="bi bi-bell" style="color:var(--accent)"></i>6 · Sistema de alertas</h2>
+      <p><strong>Apagado por defecto</strong> (opt-in). Código: <code>app/soc/alerts.py</code>.</p>
+
+      <h3>6.1 La cadena de 7 condiciones (todas deben cumplirse)</h3>
+<pre>1. Módulo SOC activo        module_soc_enabled == "1"
+2. Worker corriendo          (siempre vivo, pero ocioso si el módulo está off)
+3. Alertas habilitadas       soc_alerts_enabled == "1"      ← DEFAULT: OFF
+4. Incidente NUEVO creado    solo al crearse (no por dedupe ni incidentes viejos)
+5. Severidad ≥ umbral        soc_alert_min_severity (default "high")
+6. Fuera del cooldown        sin otra alerta de la MISMA IP en
+                             soc_alert_cooldown_min (default 60 min)
+7. Canal configurado         email (SMTP global + destinos) y/o
+                             telegram (bot token cifrado + chat_id)</pre>
+
+      <h3>6.2 Comportamiento</h3>
+      <ul>
+        <li><strong>Anti-spam por diseño</strong>: dedupe (1 incidente/IP/hora) + cooldown (1 alerta/IP/cooldown).</li>
+        <li><strong>Best-effort por canal</strong>: si SMTP falla pero Telegram funciona, llega la de Telegram. Si ambos fallan → <code>soc.alert.failed</code> en auditoría y el ciclo sigue.</li>
+        <li><strong>Contenido mínimo</strong>: id, severidad, IP, dominio, conteos, scores, summary IA y link al detalle. <strong>Nunca paths de ataque ni payloads</strong> — el canal puede viajar en claro.</li>
+        <li><strong>Secretos</strong>: el bot token se guarda cifrado y jamás aparece en logs ni auditoría.</li>
+        <li>La alerta se evalúa <strong>después</strong> del análisis LLM, para incluir el summary de la IA.</li>
+      </ul>
+    </div>
+
+    {# ── 7. Scoring ML ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="scoring-ml">
+      <h2><i class="bi bi-graph-up-arrow" style="color:var(--accent)"></i>7 · Scoring ML (IsolationForest)</h2>
+      <p><strong>Opt-in</strong> (<code>soc_ml_enabled</code>, default OFF). Código: <code>app/soc/ml.py</code>.</p>
+      <table>
+        <thead><tr><th>Aspecto</th><th>Valor</th></tr></thead>
+        <tbody>
+          <tr><td>Algoritmo</td><td>IsolationForest (scikit-learn), <code>contamination="auto"</code></td></tr>
+          <tr><td>Features (6)</td><td><code>event_count</code>, <code>cat_diversity</code>, <code>path_fanout</code>, <code>block_ratio</code>, <code>method_diversity</code>, <code>status_diversity</code></td></tr>
+          <tr><td>Datos de entrenamiento</td><td>agregados por (IP, hora) de los últimos 14 días</td></tr>
+          <tr><td>Mínimo para entrenar</td><td>100 muestras (sin histórico no hay ML)</td></tr>
+          <tr><td>Reentrenamiento</td><td>cada <code>soc_ml_retrain_hours</code> (default 24 h) o manual con «Entrenar ahora»</td></tr>
+          <tr><td>Persistencia</td><td>blob en DB — consistente entre workers, sobrevive rebuilds</td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        <strong>Regla clave:</strong> el heurístico es siempre el piso —
+        <code>severidad = f(max(score, ml_score))</code>. Un modelo mal entrenado
+        no puede degradar la detección.
+      </div>
+      <ul>
+        <li>El score 0–100 se calibra con el rango del training set (más anómalo → más alto).</li>
+        <li>Si las features del modelo guardado no coinciden con las del código, el modelo se descarta y se reentrena solo.</li>
+      </ul>
+    </div>
+
+    {# ── 8. Estados ──────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="estados">
+      <h2><i class="bi bi-person-check" style="color:var(--accent)"></i>8 · Estados del incidente y revisión humana</h2>
+<pre>            ┌──────────┐
+   creación │  nuevo   │ ← cuenta en la campana 🔔
+            └────┬─────┘
+   operador      │
+   decide:       ▼
+   ┌────────────┬─────────────┬──────────────┐
+   │ confirmado │  revisado   │  descartado  │
+   │ (ataque    │ (visto, sin │ (falso       │
+   │  real)     │  acción)    │  positivo)   │
+   └────────────┴─────────────┴──────────────┘</pre>
+      <ul>
+        <li>La <strong>campana</strong> del topbar muestra el conteo de incidentes <em>nuevo</em>.</li>
+        <li>Cambiar el estado registra quién y cuándo, y queda en auditoría.</li>
+        <li>Un incidente <em>descartado/revisado</em> <strong>sale del dedupe</strong>: si la IP vuelve a atacar, se crea un incidente nuevo (y puede volver a alertar pasado el cooldown).</li>
+        <li><strong>Bitácora</strong>: filtros por estado/severidad/fechas, paginación y export CSV.</li>
+      </ul>
+    </div>
+
+    {# ── 9. Garantías ────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="garantias">
+      <h2><i class="bi bi-shield-check" style="color:var(--accent)"></i>9 · Garantías transversales</h2>
+      <table>
+        <thead><tr><th>Garantía</th><th>Implementación</th></tr></thead>
+        <tbody>
+          <tr><td>Degradación con gracia</td><td>cada etapa es best-effort; la detección heurística nunca depende de servicios externos</td></tr>
+          <tr><td>Secretos cifrados</td><td>API keys LLM, AbuseIPDB y bot Telegram cifrados (Fernet); enmascarados en UI; jamás en logs/audit</td></tr>
+          <tr><td>Caps de egress</td><td>2 MB respuesta LLM · 256 KB AbuseIPDB · 100 MB CTI MITRE</td></tr>
+          <tr><td>Anti prompt-injection</td><td>neutralización de saltos de línea en valores atacante-controlados + instrucción explícita al modelo</td></tr>
+          <tr><td>Anti-alucinación MITRE</td><td>IDs del LLM validados por regex y contra la base CTI local</td></tr>
+          <tr><td>RBAC</td><td>todas las rutas /soc/* son solo admin + módulo activo</td></tr>
+          <tr><td>Multi-worker seguro</td><td>advisory lock PostgreSQL para ciclo, ML y sync CTI</td></tr>
+          <tr><td>Auditoría</td><td>incidentes, análisis, alertas, sync y config — solo nombres de campos, jamás valores secretos</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 10. Referencia rápida ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning" style="color:var(--accent)"></i>10 · Referencia rápida</h2>
+
+      <h3>10.1 Claves de configuración del SOC</h3>
+      <table>
+        <thead><tr><th>Clave</th><th>Efecto</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td><code>module_soc_enabled</code></td><td>activa el módulo completo</td><td>0</td></tr>
+          <tr><td><code>soc_window_minutes</code></td><td>ventana de correlación</td><td>15</td></tr>
+          <tr><td><code>soc_threshold_events</code></td><td>mínimo de eventos por IP</td><td>20</td></tr>
+          <tr><td><code>soc_worker_interval_min</code></td><td>cadencia del ciclo (1–60)</td><td>5</td></tr>
+          <tr><td><code>soc_data_optin</code></td><td>consentimiento de envío al LLM</td><td>0</td></tr>
+          <tr><td><code>soc_llm_provider</code> / <code>soc_llm_model</code></td><td>proveedor y modelo LLM</td><td>openrouter / —</td></tr>
+          <tr><td><code>soc_analyze_min_severity</code></td><td>severidad mínima para análisis IA</td><td>medium</td></tr>
+          <tr><td><code>soc_abuse_cache_ttl_hours</code></td><td>TTL del cache de reputación</td><td>24</td></tr>
+          <tr><td><code>soc_alerts_enabled</code></td><td>activa alertas</td><td>0</td></tr>
+          <tr><td><code>soc_alert_min_severity</code></td><td>severidad mínima para alertar</td><td>high</td></tr>
+          <tr><td><code>soc_alert_email_to</code></td><td>destinos email (CSV)</td><td>—</td></tr>
+          <tr><td><code>soc_alert_telegram_token</code> / <code>…chat_id</code></td><td>canal Telegram</td><td>—</td></tr>
+          <tr><td><code>soc_alert_cooldown_min</code></td><td>cooldown por IP (5–1440)</td><td>60</td></tr>
+          <tr><td><code>soc_ml_enabled</code></td><td>activa scoring ML</td><td>0</td></tr>
+          <tr><td><code>soc_ml_retrain_hours</code></td><td>cadencia de reentrenamiento (1–168)</td><td>24</td></tr>
+        </tbody>
+      </table>
+
+      <h3>10.2 Tuning rápido de sensibilidad</h3>
+      <table>
+        <thead><tr><th>Quiero…</th><th>Ajuste</th></tr></thead>
+        <tbody>
+          <tr><td>Detectar atacantes más lentos</td><td>bajar <code>soc_threshold_events</code> (ej. 10) y/o subir <code>soc_window_minutes</code> (ej. 60)</td></tr>
+          <tr><td>Menos ruido de incidentes</td><td>subir <code>soc_threshold_events</code></td></tr>
+          <tr><td>Incidentes más rápido</td><td>bajar <code>soc_worker_interval_min</code> (mín. 1)</td></tr>
+          <tr><td>Más/menos alertas</td><td>ajustar <code>soc_alert_min_severity</code> y <code>soc_alert_cooldown_min</code></td></tr>
+          <tr><td>Más análisis IA</td><td>bajar <code>soc_analyze_min_severity</code> (ojo con el costo: cap 5/ciclo)</td></tr>
+        </tbody>
+      </table>
+
+      <p class="mb-0" style="font-size:12px;color:var(--text-muted)">
+        Documento fuente: <code>docuemntacion/documentacion_soc.md</code> ·
+        Referencias técnicas: <code>docs/architecture.md</code> y <code>docs/adr/0004-soc-module.md</code>.
+      </p>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

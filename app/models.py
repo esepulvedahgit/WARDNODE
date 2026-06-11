@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from flask_login import UserMixin
@@ -36,6 +37,7 @@ class User(UserMixin, db.Model, TimestampMixin):
     last_login_at = db.Column(db.DateTime, nullable=True)
     totp_secret = db.Column(db.Text, nullable=True)
     totp_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    session_token = db.Column(db.String(32), nullable=False, default=lambda: uuid.uuid4().hex)
 
     reset_tokens = db.relationship(
         "PasswordResetToken",
@@ -43,8 +45,12 @@ class User(UserMixin, db.Model, TimestampMixin):
         cascade="all, delete-orphan",
     )
 
+    def get_id(self) -> str:
+        return f"{self.id}:{self.session_token}"
+
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
+        self.session_token = uuid.uuid4().hex  # invalida todas las sesiones activas
 
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)
@@ -55,7 +61,7 @@ class User(UserMixin, db.Model, TimestampMixin):
 
 class PasswordResetToken(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     token_hash = db.Column(db.String(255), unique=True, nullable=False, index=True)
     expires_at = db.Column(db.DateTime, nullable=False)
     used_at = db.Column(db.DateTime, nullable=True)
@@ -237,6 +243,12 @@ class AttackEvent(db.Model, TimestampMixin):
     message = db.Column(db.Text, nullable=False)
     transaction_id = db.Column(db.String(64), nullable=True, unique=True, index=True)
 
+    # Índice compuesto para las agregaciones del SOC (detect.find_candidates y
+    # ml.build_training_matrix filtran por ventana temporal y agrupan por IP).
+    __table_args__ = (
+        db.Index("ix_attack_event_ip_created", "source_ip", "created_at"),
+    )
+
     site = db.relationship("Site", back_populates="attack_events")
 
 
@@ -315,3 +327,123 @@ class AppConfig(db.Model, TimestampMixin):
         row.value = value
         row.encrypted = encrypted
         db.session.commit()
+
+
+class SocIncident(db.Model, TimestampMixin):
+    """Incidente de seguridad correlacionado por el módulo SOC.
+
+    Agrupa AttackEvents de una misma IP origen dentro de una ventana temporal,
+    con score heurístico, enriquecimiento de threat intel y estado de revisión.
+    """
+
+    __tablename__ = "soc_incident"
+
+    id = db.Column(db.Integer, primary_key=True)
+    source_ip = db.Column(db.String(80), nullable=False, index=True)
+    domain = db.Column(db.String(255), nullable=True)
+    window_start = db.Column(db.DateTime, nullable=False)
+    window_end = db.Column(db.DateTime, nullable=False, index=True)
+    event_count = db.Column(db.Integer, nullable=False, default=0)
+    score = db.Column(db.Float, nullable=False, default=0.0)
+    # 0–100 heurístico (volumen + diversidad + ratio block + fan-out)
+    severity = db.Column(db.String(20), nullable=False, default="medium", index=True)
+    # critical · high · medium · low
+    status = db.Column(db.String(20), nullable=False, default="nuevo", index=True)
+    # nuevo · revisado · descartado · confirmado
+    reviewed_by = db.Column(
+        db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    review_comment = db.Column(db.String(1000), nullable=True)
+    # evidencia escrita de la revisión humana (obligatoria al marcar "revisado")
+    abuse_score = db.Column(db.Integer, nullable=True)
+    # abuseConfidenceScore 0–100 de AbuseIPDB
+    mitre = db.Column(db.Text, nullable=True)
+    # JSON: [{"id": "T1190", "name": "..."}]
+    ml_score = db.Column(db.Float, nullable=True)
+    # 0–100 anomalía IsolationForest (None = sin modelo entrenado o ML off)
+    alerted_at = db.Column(db.DateTime, nullable=True)
+    # cuándo se envió la alerta (email/Telegram) — base del cooldown anti-spam
+
+    __table_args__ = (
+        db.Index("ix_soc_incident_ip_status", "source_ip", "status"),
+    )
+
+    analyses = db.relationship(
+        "SocAnalysis", back_populates="incident", cascade="all, delete-orphan"
+    )
+    reviewer = db.relationship("User", foreign_keys=[reviewed_by], lazy="select")
+
+
+class SocAnalysis(db.Model, TimestampMixin):
+    """Análisis LLM de un incidente SOC (salida JSON estandarizada)."""
+
+    __tablename__ = "soc_analysis"
+
+    id = db.Column(db.Integer, primary_key=True)
+    incident_id = db.Column(
+        db.Integer,
+        db.ForeignKey("soc_incident.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    payload = db.Column(db.Text, nullable=False)
+    # JSON normalizado por app/soc/schema.py
+    provider = db.Column(db.String(40), nullable=False)
+    model = db.Column(db.String(120), nullable=False)
+    tokens_in = db.Column(db.Integer, nullable=True)
+    tokens_out = db.Column(db.Integer, nullable=True)
+    read_at = db.Column(db.DateTime, nullable=True)
+    # "auto" (worker) | "manual" (botón retroactivo en el detalle del incidente)
+    origin = db.Column(db.String(10), nullable=False, default="auto", server_default="auto")
+    manual_reason = db.Column(db.String(200), nullable=True)
+
+    incident = db.relationship("SocIncident", back_populates="analyses")
+
+
+class ThreatIntelCache(db.Model, TimestampMixin):
+    """Cache local de respuestas de threat intel (AbuseIPDB) por IP, con TTL."""
+
+    __tablename__ = "threat_intel_cache"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ip = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    payload = db.Column(db.Text, nullable=False)
+    fetched_at = db.Column(db.DateTime, nullable=False)
+
+
+class MitreAttackTechnique(db.Model, TimestampMixin):
+    """Técnica MITRE ATT&CK Enterprise sincronizada desde el CTI oficial.
+
+    Poblada por app/soc/mitre_cti.py:sync_mitre_attack(). Sirve como referencia
+    autorizada de nombres/tácticas y para validar IDs sugeridos por el LLM
+    (anti-alucinación en schema._coerce_mitre).
+    """
+
+    __tablename__ = "mitre_attack_technique"
+
+    id = db.Column(db.Integer, primary_key=True)
+    technique_id = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(255), nullable=False)
+    tactic = db.Column(db.String(255))  # "initial-access,execution" (comma-join)
+    is_subtechnique = db.Column(db.Boolean, default=False)
+    synced_at = db.Column(db.DateTime, nullable=False)
+
+
+class SocMlModel(db.Model, TimestampMixin):
+    """Modelo ML serializado (IsolationForest) para scoring de anomalías SOC.
+
+    SEGURIDAD: blob es un pickle de joblib. Solo se deserializan blobs escritos
+    por app/soc/ml.py:train_model() (sin input de usuario). Jamás cargar modelos
+    de origen externo en esta tabla.
+    """
+
+    __tablename__ = "soc_ml_model"
+
+    id = db.Column(db.Integer, primary_key=True)
+    blob = db.Column(db.LargeBinary, nullable=False)
+    n_samples = db.Column(db.Integer, nullable=False)
+    features = db.Column(db.Text, nullable=False)  # JSON list de nombres de features
+    score_min = db.Column(db.Float, nullable=False)  # calibración decision_function
+    score_max = db.Column(db.Float, nullable=False)
+    trained_at = db.Column(db.DateTime, nullable=False)

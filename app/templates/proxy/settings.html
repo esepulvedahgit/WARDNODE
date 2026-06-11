@@ -17,6 +17,21 @@
     </div>
   </div>
 
+  {% if secrets_broken %}
+  <div class="flash-item flash-danger mb-4" style="align-items:flex-start">
+    <i class="bi bi-shield-exclamation" style="margin-top:2px;flex-shrink:0"></i>
+    <div>
+      <strong>Secretos cifrados no descifrables con la clave actual</strong>
+      <p class="mb-0 mt-1" style="font-size:.85rem">
+        <code>WARDNODE_SECRET_KEY</code> fue cambiado pero la base de datos aún contiene
+        secretos cifrados con la clave anterior. Las funciones que dependen de estas
+        credenciales (LLM, SMTP, MaxMind, Telegram) no funcionarán hasta que uses el
+        <strong>reset de secretos</strong> en la Zona de peligro (al final de esta página).
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
   {% if not encryption_ready %}
   <div class="flash-item flash-warning mb-4" style="align-items:flex-start">
     <i class="bi bi-exclamation-triangle-fill" style="margin-top:2px;flex-shrink:0"></i>
@@ -445,6 +460,34 @@
       </ol>
     </div>
   </div>
+
+  {% if current_user.has_role('admin') %}
+  {# ── Zona de peligro — reset de secretos cifrados ─────────────────── #}
+  <div class="card-panel mb-4 border border-danger">
+    <div class="card-panel-body">
+      <h2 class="h5 mb-1 text-danger">
+        <i class="bi bi-exclamation-octagon-fill me-1"></i> Zona de peligro
+      </h2>
+      <p class="text-secondary mb-3" style="font-size:.85rem">
+        Usa esta acción <strong>solo tras rotar <code>WARDNODE_SECRET_KEY</code></strong>.
+        Borra de la base de datos todos los secretos cifrados (API keys de LLM, credenciales
+        SMTP, MaxMind, Telegram y SSH) y restablece el 2FA de <strong>todos los usuarios</strong>.
+        Deberás re-ingresar las credenciales en cada sección y pedir a cada usuario que
+        re-inscriba su autenticador TOTP.
+      </p>
+      <form method="POST" action="{{ url_for('proxy.settings_reset_secrets') }}"
+            x-data="{loading: false}"
+            @submit.prevent="if(confirm('¿Borrar TODOS los secretos cifrados y resetear el 2FA de todos los usuarios?\n\nEsta acción no se puede deshacer. Deberás re-ingresar las credenciales.')){loading=true; $el.submit()}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-danger" :disabled="loading">
+          <span x-show="loading" class="spinner-border spinner-border-sm me-1" role="status"></span>
+          <i x-show="!loading" class="bi bi-trash3 me-1"></i>
+          Borrar secretos cifrados y resetear 2FA
+        </button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
 
 </div>
 {% endblock %}

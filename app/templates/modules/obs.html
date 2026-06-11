@@ -240,12 +240,15 @@
             <div x-data="{c:false}" style="position:relative">
               <pre style="font-size:11px;background:var(--bg-subtle);padding:10px 36px 10px 12px;border-radius:6px;margin:0;overflow-x:auto">location /obs/ {
     auth_request /_wardnode_obs_auth;
+    auth_request_set $wn_user $upstream_http_x_webauth_user;
+    auth_request_set $wn_role $upstream_http_x_webauth_role;
     proxy_pass         http://127.0.0.1:3000/obs/;
     proxy_set_header   Host              $host;
     proxy_set_header   X-Real-IP         $remote_addr;
     proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header   X-Forwarded-Proto $scheme;
-    proxy_set_header   X-WEBAUTH-USER    admin;
+    proxy_set_header   X-WEBAUTH-USER    $wn_user;
+    proxy_set_header   X-WEBAUTH-ROLE    $wn_role;
     proxy_http_version 1.1;
     proxy_set_header   Upgrade           $http_upgrade;
     proxy_set_header   Connection        "upgrade";

@@ -1,0 +1,43 @@
+WardNode SOC — Reporte diario {{ date_label }} (últimas 24 h UTC)
+================================================================
+
+{% if llm_summary %}RESUMEN EJECUTIVO
+{{ llm_summary }}
+
+{% endif %}
+──────────────────────────────────────────────────────────────
+KPIs 24 h
+──────────────────────────────────────────────────────────────
+  Incidentes detectados : {{ total }}
+  Eventos WAF totales   : {{ total_events }}
+  IPs únicas atacantes  : {{ unique_ips }}
+  Pendientes de revisar : {{ pending_review }}
+  Analizados por IA     : {{ analyzed_pct }}%
+
+Por severidad:
+{% for sev in ['critical','high','medium','low'] %}{% if by_severity.get(sev) %}  {{ sev|upper }}: {{ by_severity[sev] }}
+{% endif %}{% endfor %}
+Por estado:
+{% for st in ['nuevo','confirmado','revisado','descartado'] %}{% if by_status.get(st) %}  {{ st }}: {{ by_status[st] }}
+{% endif %}{% endfor %}
+{% if top_ips %}──────────────────────────────────────────────────────────────
+Top IPs atacantes (por volumen de eventos)
+──────────────────────────────────────────────────────────────
+{% for ip in top_ips %}  {{ ip.ip }}{% if ip.domain %} / {{ ip.domain }}{% endif %} — {{ ip.event_count }} eventos, score {{ "%.0f"|format(ip.score) }}/100, {{ ip.severity }}{% if ip.abuse_score is not none %}, AbuseIPDB {{ ip.abuse_score }}/100{% endif %}
+{% endfor %}{% endif %}
+{% if top_mitre %}──────────────────────────────────────────────────────────────
+Técnicas MITRE ATT&CK más frecuentes
+──────────────────────────────────────────────────────────────
+{% for tech, count in top_mitre %}  {{ tech }}: {{ count }} incidente(s)
+{% endfor %}{% endif %}
+{% if critical_incidents %}──────────────────────────────────────────────────────────────
+Incidentes críticos del día
+──────────────────────────────────────────────────────────────
+{% for inc in critical_incidents %}  #{{ inc.id }} · {{ inc.source_ip }}{% if inc.domain %} / {{ inc.domain }}{% endif %} · score {{ "%.0f"|format(inc.score) }}/100 · {{ inc.status }}
+{% if base_url %}  {{ base_url }}/soc/incidente/{{ inc.id }}
+{% endif %}{% endfor %}{% endif %}
+──────────────────────────────────────────────────────────────
+{% if base_url %}Ver bitácora completa: {{ base_url }}/soc/bitacora
+Ver dashboard SOC   : {{ base_url }}/soc/
+{% endif %}
+Este correo es generado automáticamente por WardNode ({{ date_label }}).

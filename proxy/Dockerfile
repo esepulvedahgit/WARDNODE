@@ -1,5 +1,7 @@
 # Stage 1: compile ngx_http_geoip2_module against the exact installed nginx version.
-FROM owasp/modsecurity-crs:nginx AS builder
+# Pin reproducible: libmodsecurity 3.0.15 + OWASP CRS 4.26.0 (publicado 2026-05-20).
+# Para actualizar a futuro: bump de este tag (ver hub.docker.com/r/owasp/modsecurity-crs/tags).
+FROM owasp/modsecurity-crs:4.26.0-nginx-202605200705 AS builder
 
 USER root
 
@@ -22,7 +24,9 @@ RUN apt-get update \
     && cp objs/ngx_http_geoip2_module.so /usr/lib/nginx/modules/
 
 # Stage 2: final image — copy only the compiled .so, install runtime dep, patch template.
-FROM owasp/modsecurity-crs:nginx
+# Pin reproducible: libmodsecurity 3.0.15 + OWASP CRS 4.26.0 (publicado 2026-05-20).
+# Para actualizar a futuro: bump de este tag (ver hub.docker.com/r/owasp/modsecurity-crs/tags).
+FROM owasp/modsecurity-crs:4.26.0-nginx-202605200705
 
 USER root
 

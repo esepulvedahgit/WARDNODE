@@ -44,28 +44,30 @@
       <div class="nav-group">
         <span class="nav-group-label">Plataforma</span>
         {% if current_user.has_role('admin') %}
-        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint %}active{% endif %}"
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint and 'obs' not in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.index') }}">
           <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
         </a>
-        {% if module_wf_enabled %}
+        {% endif %}
+        {% if module_wf_enabled and current_user.has_role('admin', 'operator') %}
         <a class="nav-link-item {% if request.endpoint and 'wf' in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.wf_index') }}"
            style="padding-left:2rem">
           <i class="bi bi-shield-fill-exclamation"></i><span>WF · Firewall</span>
         </a>
         {% endif %}
-        {% if module_obs_enabled %}
+        {% if module_obs_enabled and current_user.has_role('admin', 'operator', 'reader') %}
         <a class="nav-link-item {% if request.endpoint and 'obs' in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.obs_index') }}"
            style="padding-left:2rem">
           <i class="bi bi-bar-chart-line-fill"></i><span>OBS · Grafana</span>
         </a>
         {% endif %}
-        {% else %}
-        <a class="nav-link-item nav-link-dim" href="#" tabindex="-1">
-          <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
-          <span class="nav-pill-soon">admin</span>
+        {% if module_soc_enabled and current_user.has_role('admin', 'operator', 'reader') %}
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('soc.') %}active{% endif %}"
+           href="{{ url_for('soc.index') }}"
+           style="padding-left:2rem">
+          <i class="bi bi-robot"></i><span>SOC · Incidentes</span>
         </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_role('admin') %}
@@ -130,6 +132,31 @@
         {% block breadcrumb %}{% endblock %}
       </nav>
       <div class="topbar-actions">
+        {% if module_soc_enabled and current_user.is_authenticated and current_user.has_role('admin', 'operator', 'reader') %}
+        <div x-data="socBell()" x-init="init()" class="soc-bell">
+          <a href="{{ url_for('soc.bitacora', estado='nuevo') }}" title="Incidentes SOC nuevos">
+            <i class="bi bi-bell"></i>
+            <span class="soc-bell-badge" x-show="count > 0" x-cloak x-text="count > 99 ? '99+' : count"></span>
+          </a>
+        </div>
+        <script>
+          function socBell() {
+            return {
+              count: 0,
+              init() {
+                this.refresh();
+                setInterval(() => this.refresh(), 30000);
+              },
+              refresh() {
+                fetch('{{ url_for("soc.notifications_count") }}')
+                  .then(r => r.json())
+                  .then(d => { this.count = d.count || 0; })
+                  .catch(() => {});
+              },
+            };
+          }
+        </script>
+        {% endif %}
         {% block page_actions %}{% endblock %}
       </div>
     </header>

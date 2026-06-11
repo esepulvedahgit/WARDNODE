@@ -19,36 +19,34 @@
       </div>
       <div>
         <label class="form-label" for="upstream_url">Aplicación protegida (upstream)</label>
-        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://app:8080" required>
+        <input class="form-control" id="upstream_url" name="upstream_url" placeholder="http://127.0.0.1:3000" required>
         <div style="margin-top:6px;padding:8px 10px;background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color,#e2e8f0);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
           <div style="margin-bottom:4px">
-            <i class="bi bi-box me-1" style="color:var(--accent)"></i>
-            <strong>Contenedor Docker</strong> — usa el nombre del servicio:<br>
-            <code>http://mi-app:8080</code>
-            <span style="color:var(--text-muted)"> · el contenedor debe estar en la red <code>wardnode_internal</code></span>
-          </div>
-          <div>
             <i class="bi bi-hdd me-1" style="color:var(--accent)"></i>
-            <strong>Puerto en el host</strong> — usa el DNS especial de Docker:<br>
-            <code>http://host.docker.internal:3000</code>
-            <span style="color:var(--text-muted)"> · requiere <code>extra_hosts: host-gateway</code> en el proxy</span>
+            <strong>Aplicación en el host</strong> — usa la dirección loopback:<br>
+            <code>http://127.0.0.1:3000</code>
+            <span style="color:var(--text-muted)"> · el proxy corre en <code>network_mode: host</code> y alcanza el servicio por loopback</span>
           </div>
           {% if not module_wf_enabled %}
           <div style="margin-top:8px;padding:6px 10px;background:#fff8e1;border:1px solid #f9a825;border-radius:5px;color:#7a5200;font-size:11px">
             <i class="bi bi-exclamation-triangle me-1"></i>
-            Para crear sitios con upstream <code>host.docker.internal:*</code> debes activar primero el módulo <strong>WardNode WF</strong>.
+            Para crear sitios con upstream <code>127.0.0.1:*</code> debes activar primero el módulo <strong>WardNode WF</strong> — esto permite bloquear el puerto en iptables para que solo el proxy WAF pueda alcanzar el servicio.
           </div>
           {% else %}
           <div style="margin-top:8px;padding:6px 10px;background:#e8f5e9;border:1px solid #66bb6a;border-radius:5px;color:#1b5e20;font-size:11px">
             <i class="bi bi-shield-check me-1"></i>
-            Los upstreams en <code>host.docker.internal:*</code> quedan protegidos automáticamente: el puerto se bloquea en iptables y solo el proxy WAF puede alcanzarlo.
+            Los upstreams en <code>127.0.0.1:*</code> quedan protegidos automáticamente: el puerto se bloquea en iptables (<code>raw/PREROUTING</code>) y solo el proxy WAF puede alcanzarlo desde loopback.
           </div>
           {% endif %}
         </div>
       </div>
       <div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled">
-        <label class="form-check-label" for="waf_enabled">Bloqueo WAF activo</label>
+        <label class="form-check-label" for="waf_enabled">Bloqueo de ataques</label>
+      </div>
+      <div class="form-text" style="padding-left:2.5rem;margin-top:-8px;font-size:11px">
+        <i class="bi bi-info-circle me-1"></i>Si lo dejas desactivado, el WAF arranca en <strong>modo solo detección</strong>
+        — las reglas CRS registran ataques en Eventos sin bloquearlos.
       </div>
       <div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" role="switch" id="letsencrypt_enabled" name="letsencrypt_enabled">

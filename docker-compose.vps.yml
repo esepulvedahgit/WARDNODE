@@ -12,6 +12,8 @@ services:
       WF_SOCKET_PATH: /app/sockets/wardnode-wf.sock
       WF_SSH_HOST: "127.0.0.1"
       WN_CONSOLE_URL: "http://127.0.0.1:5000"
+      # Contenedor del que se ingieren los eventos ModSecurity (WAF Events + módulo SOC)
+      WARDNODE_PROXY_CONTAINER: wardnode-proxy
     network_mode: host
     volumes:
       - proxy_generated:/app/generated/nginx
@@ -161,6 +163,8 @@ services:
       GF_AUTH_PROXY_HEADER_PROPERTY: "username"
       GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
+      GF_AUTH_PROXY_WHITELIST: "172.30.0.1/32"
       # Credenciales DB para el datasource PostgreSQL de Grafana
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
@@ -252,3 +256,7 @@ volumes:
 networks:
   wardnode_internal:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

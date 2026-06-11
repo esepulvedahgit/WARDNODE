@@ -31,6 +31,10 @@
         <div>
           <h2 class="h5 mb-1">Categorias y subcategorias CRS</h2>
           <p class="text-secondary mb-0 small">Expande una categoría para ver y ajustar sus reglas.</p>
+          <p class="text-secondary mb-0 small mt-1">
+            <i class="bi bi-info-circle me-1"></i>Las categorías activas aplican tanto en modo <strong>Bloqueo</strong> como en <strong>Solo detección</strong>
+            — en solo detección los ataques se registran en <a href="{{ url_for('proxy.events_list') }}" class="text-secondary">Eventos</a> sin bloquear.
+          </p>
         </div>
         <span class="badge text-bg-light border">{{ site.rule_settings|length }} reglas</span>
       </div>
@@ -241,13 +245,17 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" role="switch" id="waf_enabled" name="waf_enabled" {% if site.waf_enabled %}checked{% endif %} {% if current_user.has_role('reader') %}disabled{% endif %}>
-          <label class="form-check-label fw-medium" for="waf_enabled">Bloqueo WAF activo</label>
+          <label class="form-check-label fw-medium" for="waf_enabled">Bloqueo de ataques</label>
         </div>
         <div class="form-text" style="padding-left:2.5rem;margin-top:-8px">
           {% if site.waf_enabled %}
-            <i class="bi bi-shield-fill-check text-success me-1"></i>SecRuleEngine <code>On</code> — las peticiones maliciosas se bloquean.
+            <i class="bi bi-shield-fill-check text-success me-1"></i><strong>Modo bloqueo</strong> — SecRuleEngine <code>On</code>.
+            Las peticiones que coincidan con las reglas activas se <strong>bloquean</strong> (HTTP 403).
           {% else %}
-            <i class="bi bi-shield text-secondary me-1"></i>SecRuleEngine <code>DetectionOnly</code> — solo registra, no bloquea.
+            <i class="bi bi-shield text-warning me-1"></i><strong>Modo solo detección</strong> — SecRuleEngine <code>DetectionOnly</code>.
+            Las reglas activas <strong>siguen funcionando</strong>: los ataques se registran en
+            <a href="{{ url_for('proxy.events_list') }}" class="text-secondary">Eventos</a> pero <strong>no se bloquean</strong>.
+            Útil para afinar reglas antes de activar el bloqueo.
           {% endif %}
         </div>
         {% if not current_user.has_role('reader') %}
@@ -427,7 +435,7 @@
       </form>
     </div>
 
-    <div class="panel mt-4" x-data="{ preview: false }">
+    <div class="panel mt-4">
       <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
         <div class="d-flex align-items-center gap-2">
           <svg width="20" height="23" viewBox="0 0 100 114" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:{% if site.bot_protection.enabled %}#3b82f6{% else %}#94a3b8{% endif %}">
@@ -465,21 +473,12 @@
             <span x-show="s" class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width:.8rem;height:.8rem"></span>
           </label>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                @click="preview = !preview" x-text="preview ? 'Ocultar vista previa' : 'Ver desafío'"></button>
+        <a href="{{ url_for('proxy.bot_challenge_preview') }}" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-secondary" style="white-space:nowrap">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Ver desafío
+        </a>
       </form>
       {% endif %}
-
-      <div x-show="preview" x-transition style="display:none" class="mt-3">
-        <div style="border-radius:10px;overflow:hidden;border:1px solid var(--card-border)">
-          <iframe src="{{ url_for('proxy.bot_challenge_preview') }}" style="width:100%;height:420px;border:none;display:block"
-                  title="Vista previa del desafío"></iframe>
-        </div>
-        <p class="small text-secondary mt-2 mb-0">
-          <i class="bi bi-info-circle me-1"></i>
-          Esta es la pantalla que verán los visitantes al acceder al sitio protegido.
-        </p>
-      </div>
     </div>
 
     <div class="panel mt-4">
@@ -498,7 +497,7 @@
       {% if not current_user.has_role('reader') %}
       <form method="post" action="{{ url_for('proxy.geo_blocklist_add', site_id=site.id) }}" class="d-flex gap-2 mb-3" x-data="{s:false}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select class="form-select form-select-sm" name="country_code" required :disabled="s">
+        <select class="form-select form-select-sm" name="country_code" required>
           <option value="">Seleccionar país…</option>
           {% set blocked_codes = site.geo_blocklist | map(attribute='country_code') | list %}
           {% for code, name in country_names.items() | sort(attribute='1') %}
@@ -599,56 +598,43 @@
       </p>
     </div>
     {% else %}
-    {% if upstream_is_host_docker %}
-    <div class="panel mb-4" style="border-color:{% if site.host_port_blocked %}var(--c-success,#22c55e){% else %}var(--c-warning,#f59e0b){% endif %}">
+    <div class="panel mb-4">
       <div class="d-flex align-items-center gap-2 mb-2">
-        <i class="bi bi-shield-{% if site.host_port_blocked %}fill text-success{% else %}exclamation text-warning{% endif %}"></i>
-        <h2 class="h5 mb-0">Protección del puerto upstream</h2>
-        <span class="badge ms-auto {% if site.host_port_blocked %}bg-success{% else %}bg-warning text-dark{% endif %}">
-          {% if site.host_port_blocked %}Bloqueado{% else %}Expuesto{% endif %}
-        </span>
+        <i class="bi bi-arrow-repeat" style="color:var(--accent)"></i>
+        <h2 class="h5 mb-0">Upstream (aplicación protegida)</h2>
       </div>
       <p class="text-secondary small mb-3">
-        El upstream de este sitio apunta a <code>host.docker.internal:{{ upstream_host_port }}</code> —
-        un servicio corriendo directamente en el host.
-        {% if site.host_port_blocked %}
-        El acceso externo al puerto <strong>{{ upstream_host_port }}</strong> está bloqueado en iptables:
-        solo el proxy WAF puede alcanzarlo.
-        {% else %}
-        El puerto <strong>{{ upstream_host_port }}</strong> está accesible directamente desde Internet,
-        lo que permite saltarse el WAF.
+        Cambia el host y/o puerto al que el proxy envía el tráfico para
+        <code>{{ site.domain }}</code>. El dominio del sitio no se modifica.
+        {% if upstream_is_local %}
+        Si cambias el puerto, el bloqueo en iptables se reajusta automáticamente.
         {% endif %}
       </p>
-      {% if module_wf_enabled %}
-        {% if site.host_port_blocked %}
-        <form method="post" action="{{ url_for('proxy.host_port_unprotect', site_id=site.id) }}"
-              x-data="{s:false}"
-              @submit.prevent="if(confirm('¿Desproteger el puerto {{ upstream_host_port }}?\nEl servicio quedará accesible directamente desde Internet.')){s=true; $el.submit()}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-warning btn-sm" :disabled="s">
-            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-            <i x-show="!s" class="bi bi-shield-slash me-1"></i>
-            <span x-text="s ? 'Desprotegiendo…' : 'Desbloquear puerto {{ upstream_host_port }}'"></span>
-          </button>
-        </form>
-        {% else %}
-        <form method="post" action="{{ url_for('proxy.host_port_protect', site_id=site.id) }}" x-data="{s:false}" @submit="s=true">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-success btn-sm" :disabled="s">
-            <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-            <i x-show="!s" class="bi bi-shield-lock me-1"></i>
-            <span x-text="s ? 'Protegiendo…' : 'Bloquear puerto {{ upstream_host_port }}'"></span>
-          </button>
-        </form>
-        {% endif %}
-      {% else %}
-      <p class="text-secondary small mb-0">
-        <i class="bi bi-info-circle me-1"></i>
-        Activa el módulo <strong>WardNode WF</strong> para gestionar la protección del puerto.
-      </p>
-      {% endif %}
+      <form method="post" action="{{ url_for('proxy.update_site_upstream', site_id=site.id) }}"
+            x-data="{s:false}"
+            @submit.prevent="if(confirm('¿Actualizar el upstream?\nSe recargará la configuración de nginx.')){s=true; $el.submit()}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label class="form-label" for="upstream_url_edit">URL del upstream</label>
+          <input class="form-control font-monospace" id="upstream_url_edit" name="upstream_url"
+                 value="{{ site.upstream_url }}" placeholder="http://127.0.0.1:3000" required>
+          <div style="margin-top:6px;padding:8px 10px;background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color,#e2e8f0);border-radius:6px;font-size:11px;color:var(--text-secondary);line-height:1.6">
+            <div style="margin-bottom:4px">
+              <i class="bi bi-hdd me-1" style="color:var(--accent)"></i>
+              <strong>Aplicación en el host</strong> — usa la dirección loopback:<br>
+              <code>http://127.0.0.1:3000</code>
+              <span style="color:var(--text-muted)"> · el proxy corre en <code>network_mode: host</code> y alcanza el servicio por loopback · requiere WardNode WF activo</span>
+            </div>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+          <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+          <i x-show="!s" class="bi bi-check2 me-1"></i>
+          <span x-text="s ? 'Guardando…' : 'Guardar upstream'"></span>
+        </button>
+      </form>
     </div>
-    {% endif %}
+    {% if current_user.has_role('admin') %}
     <div class="panel border-danger" style="border-color:var(--c-danger)!important">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-exclamation-triangle-fill text-danger"></i>
@@ -668,6 +654,7 @@
         </button>
       </form>
     </div>
+    {% endif %}
   </div>
 </div>
 {% endif %}

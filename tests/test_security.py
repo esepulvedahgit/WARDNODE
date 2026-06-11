@@ -44,10 +44,11 @@ def test_csrf_blocks_mutating_request_when_enabled():
 
 def test_secure_cookie_config_can_be_enabled():
     class SecureCookieConfig(Config):
+        TESTING = True
         SESSION_COOKIE_SECURE = True
 
     app = create_app(SecureCookieConfig)
 
     assert app.config["SESSION_COOKIE_HTTPONLY"] is True
-    assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+    assert app.config["SESSION_COOKIE_SAMESITE"] == "Strict"
     assert app.config["SESSION_COOKIE_SECURE"] is True

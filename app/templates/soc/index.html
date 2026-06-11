@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}SOC | WardNode{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <span class="bc-current">SOC</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('soc.bitacora') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-journal-text me-1"></i>Bitácora
+</a>
+{% if current_user.has_role('admin') %}
+<a href="{{ url_for('soc.config') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-gear me-1"></i>Configuración
+</a>
+{% endif %}
+<a href="{{ url_for('soc.docs') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-book-half me-1"></i>Documentación
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-robot" style="color:var(--accent)"></i>
+      WardNode SOC
+    </h1>
+    <p class="text-secondary mb-0 small">Incidentes correlacionados desde eventos WAF, enriquecidos con threat intel y análisis IA.</p>
+  </div>
+</div>
+
+{# ── KPI cards ──────────────────────────────────────────────────── #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-panel" style="padding:16px 20px{% if open_count > 0 %};border-color:#fca5a5{% endif %}">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+        Incidentes nuevos
+      </div>
+      <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ open_count }}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">pendientes de revisión</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-panel" style="padding:16px 20px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+        High / Critical
+      </div>
+      <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ high_24h }}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-panel" style="padding:16px 20px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+        IPs únicas
+      </div>
+      <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ unique_ips_7d }}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimos 7 días</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-panel" style="padding:16px 20px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+        Analizados con IA
+      </div>
+      <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ analyzed_pct }}%</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">de incidentes (7 días)</div>
+    </div>
+  </div>
+</div>
+
+{# ── Charts ─────────────────────────────────────────────────────── #}
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card-panel" style="padding:18px 20px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:12px">
+        <i class="bi bi-bar-chart-fill me-1" style="color:var(--accent)"></i>Incidentes por día (14 días)
+      </div>
+      <canvas id="timelineChart" height="90"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card-panel" style="padding:18px 20px">
+      <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:12px">
+        <i class="bi bi-pie-chart-fill me-1" style="color:var(--accent)"></i>Severidad (7 días)
+      </div>
+      {% if sev_values %}
+      <canvas id="severityChart" height="180"></canvas>
+      {% else %}
+      <div style="padding:40px 0;text-align:center;color:var(--text-muted);font-size:12px">Sin incidentes en la ventana.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Feed de últimos incidentes ─────────────────────────────────── #}
+<div class="card-panel" style="padding:0">
+  <div style="padding:14px 20px;border-bottom:1px solid var(--border-color);font-size:13px;font-weight:600;color:var(--text-secondary)">
+    <i class="bi bi-lightning-fill me-1" style="color:var(--accent)"></i>Últimos incidentes
+  </div>
+  {% if feed %}
+  <div class="table-responsive">
+    <table class="data-table" style="margin:0">
+      <thead>
+        <tr>
+          <th style="width:130px">Fecha</th>
+          <th>IP origen</th>
+          <th>Dominio</th>
+          <th style="width:80px">Eventos</th>
+          <th style="width:80px">Score</th>
+          <th style="width:100px">Severidad</th>
+          <th style="width:110px">Estado</th>
+          <th>Resumen IA</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i in feed %}
+        <tr>
+          <td class="t-mono t-dim" style="white-space:nowrap;font-size:12px">{{ i.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="t-mono"><a href="{{ url_for('soc.detalle', incident_id=i.id) }}">{{ i.source_ip }}</a></td>
+          <td class="t-mono t-blue">{{ i.domain or '—' }}</td>
+          <td>{{ i.event_count }}</td>
+          <td class="t-mono">{{ i.score }}</td>
+          <td><span class="sev-badge sev-badge-{{ i.severity }}">{{ i.severity }}</span></td>
+          <td>
+            {% if i.status == 'nuevo' %}
+              <span style="background:#eff6ff;color:#1d4ed8;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">nuevo</span>
+            {% elif i.status == 'confirmado' %}
+              <span style="background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">confirmado</span>
+            {% elif i.status == 'descartado' %}
+              <span style="background:#f1f5f9;color:#475569;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">descartado</span>
+            {% else %}
+              <span style="background:#f0fdf4;color:#166534;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600">revisado</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px;color:var(--text-secondary)">
+            {{ (summaries.get(i.id) or '—') | truncate(90, True, '…') }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="padding:48px 0;text-align:center;color:var(--text-muted)">
+    <i class="bi bi-shield-check" style="font-size:36px;display:block;margin-bottom:12px;color:var(--c-success)"></i>
+    <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">Sin incidentes registrados</p>
+    <p style="font-size:12px;margin:0">El motor de detección no ha correlacionado actividad anómala todavía.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+
+  Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+  Chart.defaults.font.size   = 11;
+  Chart.defaults.color       = textColor;
+
+  // ── Timeline incidentes/día por severidad ─────────────────────
+  new Chart(document.getElementById('timelineChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ tl_labels | tojson }},
+      datasets: [
+        {
+          label: 'Low/Medium',
+          data: {{ tl_low_med | tojson }},
+          backgroundColor: '#3b82f6',
+          borderRadius: 3,
+          stack: 'a',
+        },
+        {
+          label: 'High',
+          data: {{ tl_high | tojson }},
+          backgroundColor: '#f59e0b',
+          borderRadius: 3,
+          stack: 'a',
+        },
+        {
+          label: 'Critical',
+          data: {{ tl_critical | tojson }},
+          backgroundColor: '#ef4444',
+          borderRadius: 3,
+          stack: 'a',
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, padding: 14 } },
+        tooltip: { mode: 'index' },
+      },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { color: textColor } },
+        y: { grid: { color: gridColor }, ticks: { color: textColor, stepSize: 1, precision: 0 }, beginAtZero: true },
+      },
+    },
+  });
+
+  // ── Donut severidad ───────────────────────────────────────────
+  {% if sev_values %}
+  const sevColors = { critical: '#ef4444', high: '#f59e0b', medium: '#3b82f6', low: '#94a3b8' };
+  const sevLabels = {{ sev_labels | tojson }};
+  new Chart(document.getElementById('severityChart'), {
+    type: 'doughnut',
+    data: {
+      labels: sevLabels,
+      datasets: [{
+        data: {{ sev_values | tojson }},
+        backgroundColor: sevLabels.map(l => sevColors[l] || '#94a3b8'),
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      cutout: '65%',
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 14 } } },
+    },
+  });
+  {% endif %}
+})();
+</script>
+{% endblock %}

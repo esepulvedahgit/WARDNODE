@@ -82,7 +82,7 @@
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('proxy.site_detail', site_id=site.id) }}">
                   Configurar <i class="bi bi-sliders ms-1"></i>
                 </a>
-                {% if not current_user.has_role('reader') and not site.is_console %}
+                {% if current_user.has_role('admin') and not site.is_console %}
                 <form method="post" action="{{ url_for('proxy.delete_site', site_id=site.id) }}"
                       style="display:inline" x-data="{s:false}"
                       @submit.prevent="if(confirm('¿Eliminar « {{ site.name }} » y toda su configuración?\n\nEsta acción no se puede deshacer.')){s=true; $el.submit()}">

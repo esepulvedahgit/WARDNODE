@@ -1,0 +1,700 @@
+{% extends "base.html" %}
+
+{% block title %}Configuración SOC | WardNode{% endblock %}
+
+{% block head %}
+<style>
+  /* Estilos acotados al contenedor .soc-config — no afectan al resto de la app */
+  .soc-config .card-panel {
+    border: 1px solid #dbe3ee;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, .08);
+  }
+  .soc-config .card-panel + .card-panel {
+    margin-top: 1rem;
+  }
+  /* Barra de pills responsive */
+  .soc-config .soc-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .375rem;
+    border-bottom: 1px solid var(--card-border);
+    padding-bottom: .75rem;
+    margin-bottom: 1.25rem;
+  }
+  .soc-config .soc-tabs .nav-link {
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: .35rem .85rem;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background .12s, color .12s, border-color .12s;
+    white-space: nowrap;
+  }
+  .soc-config .soc-tabs .nav-link:hover {
+    background: #f1f5f9;
+    color: var(--text-primary);
+  }
+  .soc-config .soc-tabs .nav-link.active {
+    background: rgba(59, 130, 246, .1);
+    color: var(--accent);
+    border-color: rgba(59, 130, 246, .3);
+  }
+  /* Barra de acción (guardar) al pie del form */
+  .soc-config .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 1rem;
+    border-top: 1px solid var(--card-border);
+    margin-top: 1.25rem;
+  }
+  /* Separador interno de sección */
+  .soc-config .section-divider {
+    border: 0;
+    border-top: 1px solid var(--card-border);
+    margin: 1.25rem 0;
+  }
+  /* Acciones de mantenimiento alineadas */
+  .soc-config .maint-status {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  /* Banner de estado del análisis IA */
+  .soc-config .ai-status {
+    display: flex; gap: .5rem; align-items: flex-start;
+    font-size: 13px; border-radius: 8px; padding: .6rem .8rem;
+    margin-bottom: 1rem; border: 1px solid transparent;
+  }
+  .soc-config .ai-status.is-off {
+    background: rgba(59, 130, 246, .08); border-color: rgba(59, 130, 246, .35);
+    color: #1e3a5f;
+  }
+  .soc-config .ai-status.is-on {
+    background: rgba(22, 163, 74, .08); border-color: rgba(22, 163, 74, .35);
+    color: #14532d;
+  }
+  .soc-config .ai-status i { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+  /* Recuadro de consentimiento opt-in */
+  .soc-config .optin-callout {
+    border: 2px solid; border-radius: 10px; padding: 1rem 1.1rem;
+    transition: border-color .15s, background .15s;
+  }
+  .soc-config .optin-callout.is-off {
+    border-color: var(--accent); background: rgba(59, 130, 246, .06);
+  }
+  .soc-config .optin-callout.is-on {
+    border-color: #16a34a; background: rgba(22, 163, 74, .06);
+  }
+  .soc-config .optin-callout .form-check-input {
+    width: 1.2em; height: 1.2em; margin-top: .15em;
+  }
+  .soc-config .optin-callout .form-check-label { font-size: 13px; }
+  .soc-config .optin-flag {
+    display: inline-block; margin-left: .4rem; font-size: 11px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+    padding: .05rem .45rem; border-radius: 999px;
+  }
+  .soc-config .optin-callout.is-off .optin-flag { background: var(--accent); color: #fff; }
+  .soc-config .optin-callout.is-on  .optin-flag { background: #16a34a;       color: #fff; }
+  @media (max-width: 575px) {
+    .soc-config .soc-tabs { gap: .25rem; }
+    .soc-config .soc-tabs .nav-link { font-size: 12px; padding: .3rem .65rem; }
+    .soc-config .card-panel-body { padding: 14px 14px 16px; }
+  }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('soc.index') }}" class="bc-link">SOC</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Configuración</span>
+{% endblock %}
+
+{% block content %}
+<div class="soc-config events-page">
+
+  {# ── Cabecera ──────────────────────────────────────────────────────── #}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+        <i class="bi bi-gear-fill" style="color:var(--accent)"></i>
+        Configuración del SOC
+      </h1>
+      <p class="text-secondary mb-0 small">
+        Proveedor de IA, threat intel y parámetros del motor de detección.
+      </p>
+    </div>
+    <a href="{{ url_for('soc.docs') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-book-half me-1"></i>Documentación
+    </a>
+  </div>
+
+  {% if not encryption_ok %}
+  <div class="alert alert-warning mb-4" style="font-size:13px">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+    <strong>Cifrado no configurado:</strong> la variable <code>WARDNODE_SECRET_KEY</code>
+    no está definida. No es posible guardar ni leer API keys hasta configurarla.
+  </div>
+  {% endif %}
+
+  {# ── Pestañas de navegación ────────────────────────────────────────── #}
+  <ul class="soc-tabs nav" role="tablist" id="socConfigTabs">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'ia' %}active{% endif %}"
+              id="tab-ia-btn" data-bs-toggle="pill" data-bs-target="#tab-ia"
+              type="button" role="tab" aria-controls="tab-ia"
+              aria-selected="{{ 'true' if active_tab == 'ia' else 'false' }}">
+        <i class="bi bi-cpu me-1"></i>IA / LLM
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'detection' %}active{% endif %}"
+              id="tab-detection-btn" data-bs-toggle="pill" data-bs-target="#tab-detection"
+              type="button" role="tab" aria-controls="tab-detection"
+              aria-selected="{{ 'true' if active_tab == 'detection' else 'false' }}">
+        <i class="bi bi-sliders me-1"></i>Detección
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'alerts' %}active{% endif %}"
+              id="tab-alerts-btn" data-bs-toggle="pill" data-bs-target="#tab-alerts"
+              type="button" role="tab" aria-controls="tab-alerts"
+              aria-selected="{{ 'true' if active_tab == 'alerts' else 'false' }}">
+        <i class="bi bi-bell-fill me-1"></i>Alertas
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'daily_report' %}active{% endif %}"
+              id="tab-daily-btn" data-bs-toggle="pill" data-bs-target="#tab-daily"
+              type="button" role="tab" aria-controls="tab-daily"
+              aria-selected="{{ 'true' if active_tab == 'daily_report' else 'false' }}">
+        <i class="bi bi-envelope-fill me-1"></i>Reporte diario
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'mantenimiento' %}active{% endif %}"
+              id="tab-maint-btn" data-bs-toggle="pill" data-bs-target="#tab-maint"
+              type="button" role="tab" aria-controls="tab-maint"
+              aria-selected="{{ 'true' if active_tab == 'mantenimiento' else 'false' }}">
+        <i class="bi bi-tools me-1"></i>Mantenimiento
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 1 — IA / LLM                                             #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'ia' %}show active{% endif %}"
+         id="tab-ia" role="tabpanel" aria-labelledby="tab-ia-btn">
+
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            x-data="{s:false, optin:{{ 'true' if optin else 'false' }}}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="llm">
+
+        {# — Proveedor y modelo — #}
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-cpu me-2" style="color:var(--accent)"></i>Análisis con IA (LLM)
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              El LLM solo analiza incidentes ya detectados por las heurísticas — nunca eventos individuales.
+            </p>
+
+            {# — Banner de estado reactivo (Alpine) — #}
+            <div class="ai-status" :class="optin ? 'is-on' : 'is-off'">
+              <i class="bi" :class="optin ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'"></i>
+              <span>
+                <span x-show="optin">Análisis IA <strong>ACTIVO</strong> — los incidentes que superen el umbral se analizarán automáticamente.</span>
+                <span x-show="!optin">Análisis IA <strong>INACTIVO</strong> — falta el consentimiento. Marca la casilla de abajo y guarda para activarlo. <em>(La API key configurada no basta por sí sola.)</em></span>
+              </span>
+            </div>
+
+            <div class="row g-3 mb-0">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="provider">Proveedor activo</label>
+                <select id="provider" name="provider" class="form-select form-select-sm">
+                  <option value="openrouter" {% if provider == 'openrouter' %}selected{% endif %}>OpenRouter (gateway multi-modelo)</option>
+                  <option value="anthropic"  {% if provider == 'anthropic'  %}selected{% endif %}>Anthropic (directo)</option>
+                  <option value="openai"     {% if provider == 'openai'     %}selected{% endif %}>OpenAI (directo)</option>
+                  <option value="deepseek"   {% if provider == 'deepseek'   %}selected{% endif %}>DeepSeek (directo)</option>
+                  <option value="gemini"     {% if provider == 'gemini'     %}selected{% endif %}>Google Gemini (directo)</option>
+                </select>
+                <div class="form-text">Si el proveedor activo no tiene key, se usa el primero configurado como fallback.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="model">Modelo</label>
+                <input type="text" id="model" name="model"
+                       class="form-control form-control-sm font-mono"
+                       value="{{ model }}" placeholder="{{ default_models[provider] }}">
+                <div class="form-text">Vacío = modelo por defecto del proveedor.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+
+            <p class="fw-medium mb-2" style="font-size:13px">API keys</p>
+            <div class="row g-3">
+              {% for field, label in [
+                  ('openrouter_key', 'OpenRouter'),
+                  ('anthropic_key',  'Anthropic'),
+                  ('openai_key',     'OpenAI'),
+                  ('deepseek_key',   'DeepSeek'),
+                  ('gemini_key',     'Google Gemini'),
+              ] %}
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="{{ field }}">API key {{ label }}</label>
+                <input type="password" id="{{ field }}" name="{{ field }}"
+                       class="form-control form-control-sm font-mono"
+                       placeholder="Nuevo valor…" autocomplete="new-password">
+                <div class="form-text">
+                  {% if masked[field] %}
+                    <i class="bi bi-check-circle-fill text-success me-1"></i>Configurada
+                    <span class="font-mono ms-1" style="letter-spacing:.05em">{{ masked[field][-8:] }}</span>
+                  {% else %}
+                    <i class="bi bi-dash-circle text-secondary me-1"></i>No configurada
+                  {% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <hr class="section-divider">
+
+            {# — Recuadro de consentimiento con borde reactivo (Alpine) — #}
+            <div class="optin-callout" :class="optin ? 'is-on' : 'is-off'">
+              <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="optin" name="optin" value="1"
+                       x-model="optin" {% if optin %}checked{% endif %}>
+                <label class="form-check-label" for="optin">
+                  <strong>Autorizo el envío de metadatos de ataques al proveedor LLM externo.</strong>
+                  <span class="optin-flag" x-text="optin ? 'Activo' : 'Requerido para usar IA'"></span>
+                </label>
+              </div>
+              <div class="form-text mt-2">
+                Se envían únicamente metadatos agregados del incidente: IP atacante, dominio,
+                rutas truncadas, categorías CRS y conteos. Nunca se envían cuerpos de petición
+                ni mensajes completos de ModSecurity. Sin este consentimiento el análisis IA
+                queda desactivado (las heurísticas siguen funcionando).
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar IA'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 2 — Detección + Threat Intel                              #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'detection' %}show active{% endif %}"
+         id="tab-detection" role="tabpanel" aria-labelledby="tab-detection-btn">
+
+      {# — Motor de detección — #}
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="detection">
+
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-sliders me-2" style="color:var(--accent)"></i>Motor de detección
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">Parámetros del worker periódico de correlación.</p>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="interval">Intervalo del worker (minutos)</label>
+                <input type="number" id="interval" name="interval"
+                       class="form-control form-control-sm" min="1" max="60"
+                       value="{{ interval }}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="min_severity">Severidad mínima para análisis IA</label>
+                <select id="min_severity" name="min_severity" class="form-select form-select-sm">
+                  {% for sev in ['low', 'medium', 'high', 'critical'] %}
+                  <option value="{{ sev }}" {% if min_severity == sev %}selected{% endif %}>{{ sev }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Incidentes por debajo de este umbral no se envían al LLM.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="ml_enabled" name="ml_enabled"
+                     value="1" {% if ml_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-medium" for="ml_enabled" style="font-size:13px">
+                Activar scoring ML (IsolationForest)
+              </label>
+              <div class="form-text">
+                Score de anomalía complementario entrenado con el histórico local de eventos.
+                Las heurísticas son siempre el piso de severidad — el ML solo puede subirla.
+                Los datos nunca salen del servidor.
+              </div>
+            </div>
+            <div class="row g-3 mt-1">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_retrain_hours">Reentrenamiento (horas)</label>
+                <input type="number" id="ml_retrain_hours" name="ml_retrain_hours"
+                       class="form-control form-control-sm" min="1" max="168"
+                       value="{{ ml_retrain_hours }}">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar detección'"></span>
+          </button>
+        </div>
+      </form>
+
+      {# — Threat Intel — form separado (sección independiente) #}
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            class="mt-4" x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="threat_intel">
+
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-globe2 me-2" style="color:var(--accent)"></i>Threat intel (AbuseIPDB)
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              Reputación de IPs atacantes con cache local (no consume cuota por incidente repetido).
+            </p>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="abuseipdb_key">API key AbuseIPDB</label>
+                <input type="password" id="abuseipdb_key" name="abuseipdb_key"
+                       class="form-control form-control-sm font-mono"
+                       placeholder="Nuevo valor…" autocomplete="new-password">
+                <div class="form-text">
+                  {% if masked.abuseipdb_key %}
+                    <i class="bi bi-check-circle-fill text-success me-1"></i>Configurada
+                    <span class="font-mono ms-1" style="letter-spacing:.05em">{{ masked.abuseipdb_key[-8:] }}</span>
+                  {% else %}
+                    <i class="bi bi-dash-circle text-secondary me-1"></i>No configurada — el enriquecimiento queda desactivado
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar threat intel'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 3 — Alertas                                               #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'alerts' %}show active{% endif %}"
+         id="tab-alerts" role="tabpanel" aria-labelledby="tab-alerts-btn">
+
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="alerts">
+
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-bell-fill me-2" style="color:var(--accent)"></i>Alertas
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              Notificación por email y/o Telegram cuando se crea un incidente que supera el umbral.
+              Cooldown anti-spam por IP atacante. Solo se envían metadatos del incidente — nunca payloads.
+            </p>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch"
+                     id="alerts_enabled" name="alerts_enabled" value="1"
+                     {% if alerts_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-medium" for="alerts_enabled" style="font-size:13px">
+                Activar alertas
+              </label>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="alert_min_severity">Severidad mínima para alertar</label>
+                <select id="alert_min_severity" name="alert_min_severity" class="form-select form-select-sm">
+                  {% for sev in ['low', 'medium', 'high', 'critical'] %}
+                  <option value="{{ sev }}" {% if alert_min_severity == sev %}selected{% endif %}>{{ sev }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="alert_cooldown">Cooldown por IP (minutos)</label>
+                <input type="number" id="alert_cooldown" name="alert_cooldown"
+                       class="form-control form-control-sm" min="5" max="1440"
+                       value="{{ alert_cooldown }}">
+                <div class="form-text">No se re-alerta la misma IP dentro de esta ventana.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="alert_email_to">Emails destino</label>
+                <input type="text" id="alert_email_to" name="alert_email_to"
+                       class="form-control form-control-sm font-mono"
+                       value="{{ alert_email_to }}"
+                       placeholder="soc@ejemplo.com, admin@ejemplo.com">
+                <div class="form-text">Separados por coma. Usa la config SMTP global de WardNode.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="telegram_token">Bot token Telegram</label>
+                <input type="password" id="telegram_token" name="telegram_token"
+                       class="form-control form-control-sm font-mono"
+                       placeholder="Nuevo valor…" autocomplete="new-password">
+                <div class="form-text">
+                  {% if masked.telegram_token %}
+                    <i class="bi bi-check-circle-fill text-success me-1"></i>Configurado
+                    <span class="font-mono ms-1" style="letter-spacing:.05em">{{ masked.telegram_token[-8:] }}</span>
+                  {% else %}
+                    <i class="bi bi-dash-circle text-secondary me-1"></i>No configurado
+                  {% endif %}
+                </div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="alert_telegram_chat_id">Chat ID Telegram</label>
+                <input type="text" id="alert_telegram_chat_id" name="alert_telegram_chat_id"
+                       class="form-control form-control-sm font-mono"
+                       value="{{ alert_telegram_chat_id }}"
+                       placeholder="-1001234567890">
+                <div class="form-text">Numérico (negativo para grupos/canales).</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar alertas'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 4 — Reporte diario                                        #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'daily_report' %}show active{% endif %}"
+         id="tab-daily" role="tabpanel" aria-labelledby="tab-daily-btn">
+
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="daily_report">
+
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-envelope-fill me-2" style="color:var(--accent)"></i>Reporte estadístico diario
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              Correo con el resumen de las últimas 24 h: KPIs, top IPs, categorías CRS, técnicas MITRE y
+              (si el opt-in IA está activo) una narrativa generada por el LLM. Se envía una vez al día a
+              la hora UTC configurada. Si no llega el correo en el día esperado, indica un fallo del pipeline.
+            </p>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch"
+                     id="daily_report_enabled" name="daily_report_enabled" value="1"
+                     {% if daily_report_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-medium" for="daily_report_enabled" style="font-size:13px">
+                Activar reporte diario
+              </label>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-5">
+                <label class="form-label fw-medium" for="daily_report_email_to">Destinatarios del reporte</label>
+                <input type="text" id="daily_report_email_to" name="daily_report_email_to"
+                       class="form-control form-control-sm font-mono"
+                       value="{{ daily_report_email_to }}"
+                       placeholder="soc@ejemplo.com, ciso@ejemplo.com">
+                <div class="form-text">Separados por coma. Independiente de los destinatarios de alertas.</div>
+              </div>
+              <div class="col-sm-6 col-md-2">
+                <label class="form-label fw-medium" for="daily_report_hour">Hora de envío (UTC)</label>
+                <input type="number" id="daily_report_hour" name="daily_report_hour"
+                       class="form-control form-control-sm" min="0" max="23"
+                       value="{{ daily_report_hour }}">
+                <div class="form-text">0–23 (hora UTC del servidor).</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar reporte'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 5 — Mantenimiento                                         #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'mantenimiento' %}show active{% endif %}"
+         id="tab-maint" role="tabpanel" aria-labelledby="tab-maint-btn">
+
+      {# — Enviar reporte de prueba — #}
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">
+            <i class="bi bi-send me-2" style="color:var(--accent)"></i>Enviar reporte ahora
+          </h2>
+        </div>
+        <div class="card-panel-body">
+          <p class="text-secondary small mb-3">
+            Fuerza el envío del reporte estadístico de inmediato, sin esperar a la hora programada.
+            Útil para verificar la configuración de SMTP y la plantilla del correo.
+            No altera la fecha de último envío — el reporte programado del día se envía igualmente.
+          </p>
+          <form method="post" action="{{ url_for('soc.daily_report_test') }}"
+                class="mb-0" x-data="{s:false}" @submit="s=true">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-primary btn-sm" :disabled="s">
+              <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                    role="status" aria-hidden="true"></span>
+              <i class="bi bi-envelope-arrow-up me-1" x-show="!s"></i>
+              <span x-text="s ? 'Enviando…' : 'Enviar reporte de prueba'"></span>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {# — Modelo ML — #}
+      <div class="card-panel mt-3">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">
+            <i class="bi bi-graph-up-arrow me-2" style="color:var(--accent)"></i>Modelo ML (IsolationForest)
+          </h2>
+        </div>
+        <div class="card-panel-body">
+          <p class="text-secondary small mb-3">
+            Entrenado con agregados por IP/hora del histórico local de AttackEvent. Requiere histórico
+            suficiente (≥100 muestras). El reentrenamiento periódico ocurre en el worker; aquí puedes forzarlo.
+          </p>
+          <div class="d-flex flex-wrap align-items-center gap-3">
+            <div class="maint-status">
+              {% if ml_model %}
+                <i class="bi bi-check-circle-fill text-success me-1"></i>
+                Entrenado con <strong>{{ ml_model.n_samples }}</strong> muestras
+                · <span class="font-mono">{{ ml_model.trained_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>
+              {% else %}
+                <i class="bi bi-dash-circle text-secondary me-1"></i>
+                Sin modelo entrenado — los incidentes usan solo score heurístico
+              {% endif %}
+            </div>
+            <form method="post" action="{{ url_for('soc.ml_train') }}"
+                  class="mb-0" x-data="{s:false}" @submit="s=true">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-primary btn-sm" :disabled="s">
+                <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                      role="status" aria-hidden="true"></span>
+                <i class="bi bi-cpu me-1" x-show="!s"></i>
+                <span x-text="s ? 'Entrenando…' : 'Entrenar ahora'"></span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {# — Base de conocimiento MITRE ATT&CK — #}
+      <div class="card-panel mt-3">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">
+            <i class="bi bi-diagram-3 me-2" style="color:var(--accent)"></i>Base de conocimiento MITRE ATT&amp;CK
+          </h2>
+        </div>
+        <div class="card-panel-body">
+          <p class="text-secondary small mb-3">
+            Referencia autorizada de técnicas Enterprise (CTI oficial). Actualiza nombres/tácticas
+            del mapeo CRS→MITRE y valida los IDs sugeridos por el LLM (anti-alucinación).
+          </p>
+          <div class="d-flex flex-wrap align-items-center gap-3">
+            <div class="maint-status">
+              {% if mitre_count %}
+                <i class="bi bi-check-circle-fill text-success me-1"></i>
+                <strong>{{ mitre_count }}</strong> técnicas cargadas
+                {% if mitre_synced_at %}
+                  · última sync: <span class="font-mono">{{ mitre_synced_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>
+                {% endif %}
+              {% else %}
+                <i class="bi bi-dash-circle text-secondary me-1"></i>
+                Sin datos — se usan los nombres estáticos del mapeo interno
+              {% endif %}
+            </div>
+            <form method="post" action="{{ url_for('soc.mitre_sync') }}"
+                  class="mb-0" x-data="{s:false}" @submit="s=true">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-primary btn-sm" :disabled="s">
+                <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                      role="status" aria-hidden="true"></span>
+                <i class="bi bi-arrow-repeat me-1" x-show="!s"></i>
+                <span x-text="s ? 'Sincronizando…' : 'Sincronizar MITRE ATT&CK'"></span>
+              </button>
+            </form>
+            <span class="text-secondary" style="font-size:11px">
+              Descarga ~50 MB del CTI de MITRE (una vez; cache 7 días).
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>{# /tab-maint #}
+
+  </div>{# /tab-content #}
+
+</div>{# /soc-config #}
+{% endblock %}

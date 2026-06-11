@@ -62,6 +62,7 @@ The `proxy/conf.d/generated.conf` template bootstraps the proxy with a single `i
 | `proxy` | `/proxy/` | All WAF management routes |
 | `modules` | `/modules/` | Optional host-management modules (admin only) |
 | `audit` | `/audit/` | Audit log dashboard (KPI cards, timeline chart, CSV export) — admin only |
+| `soc` | `/soc/` | SOC: incident correlation, LLM analysis, alerts, ML anomaly scoring — admin only |
 
 ### Models and relationships
 
@@ -90,12 +91,26 @@ The `proxy/conf.d/generated.conf` template bootstraps the proxy with a single `i
 
 Module state is injected into every template via a context processor in `app/__init__.py`:
 ```python
-{"module_wf_enabled": ..., "module_cs_enabled": ..., "module_obs_enabled": ...}
+{"module_wf_enabled": ..., "module_cs_enabled": ..., "module_obs_enabled": ..., "module_soc_enabled": ...}
 ```
+
+### SOC module
+
+The `soc` blueprint (gated by `module_soc_enabled` + admin role) correlates `AttackEvent` rows into `SocIncident`s. Pipeline (all in `app/soc/`):
+
+1. **Worker** (`worker.py`) — daemon thread (`soc-worker`) started at app startup; runs `run_detection_cycle()` every `soc_worker_interval_min` minutes. Under gunicorn multi-worker, a PostgreSQL advisory lock (`pg_try_advisory_lock`, key 815001) ensures a single process runs the cycle and ML retraining.
+2. **Detection** (`detect.py`) — SQL aggregation per source IP within a time window (volume, category diversity, path fan-out, block ratio, method/status diversity) → deterministic heuristic score 0–100 → severity. Dedupe: an open incident from the same IP within 1h is updated, not duplicated.
+3. **Enrichment** (`enrich.py`) — AbuseIPDB reputation (cached in `ThreatIntelCache`, TTL 24h, capped at `MAX_ENRICH_PER_CYCLE=25` calls/cycle, only public IPs) + static CRS→MITRE mapping whose names/tactics are refreshed from the local CTI table.
+4. **MITRE CTI** (`mitre_cti.py`) — downloads the official `enterprise-attack.json` (~50 MB, capped at 100 MB, manual trigger `POST /soc/mitre-sync` or auto-once if table empty) into `MitreAttackTechnique`. Used to (a) authorize names/tactics in `map_mitre`, (b) reject hallucinated technique IDs from the LLM (`schema._coerce_mitre`), (c) inject an authorized-reference section into the LLM prompt.
+5. **LLM analysis** (`llm/`) — multi-provider via pure httpx (openrouter/anthropic/openai/deepseek/gemini), router with fallback, 2 MB response cap, API keys Fernet-encrypted in `AppConfig`. Guards: `soc_data_optin == "1"`, severity threshold, `MAX_LLM_ANALYSES_PER_CYCLE=5`. Only aggregated metadata is sent — never request bodies. Output normalized by `schema.normalize_llm_output()` (tolerant, never raises).
+6. **Alerts** (`alerts.py`) — email (reuses global SMTP config via `app/email.py:send_soc_alert_email`) + Telegram (`soc_alert_telegram_token` encrypted; chat_id regex-validated). Severity threshold + per-IP cooldown via `SocIncident.alerted_at`. The bot token never appears in logs or audit entries.
+7. **ML scoring** (`ml.py`) — IsolationForest (scikit-learn) trained on hourly per-IP aggregates of the last 14 days (min 100 samples, max 50k rows), serialized with joblib into `SocMlModel` (DB blob → multi-worker consistent; never load external blobs — pickle). The heuristic score is always the severity floor; ML can only raise it (`max(score, ml_score)`). Opt-in via `soc_ml_enabled`; retrain every `soc_ml_retrain_hours` (default 24) inside the advisory lock, or manually via `POST /soc/ml-train`.
+
+UI: dashboard (`/soc/`), bitácora with filters + CSV export, incident detail (heuristic/ML/AbuseIPDB scores, MITRE chips with tactics, LLM analysis blocks), config (`/soc/config` — providers, keys, opt-in, alerts, ML, MITRE sync), notification bell (`/soc/notifications/count`).
 
 ### Modules system
 
-Optional modules are catalogued in `modules/routes.py:MODULES` and toggled via `AppConfig`. There are three modules:
+Optional modules are catalogued in `modules/routes.py:MODULES` and toggled via `AppConfig`. There are four modules (WF, CS, OBS below — the SOC module is described in its own section above):
 
 **WardNode WF** — UFW firewall management without SSH by running a privileged daemon on the host:
 

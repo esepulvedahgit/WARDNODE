@@ -12,21 +12,29 @@ class Config:
     WN_CONSOLE_URL = os.getenv("WN_CONSOLE_URL", "http://console:5000")
     WTF_CSRF_TIME_LIMIT = 3600
     SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SAMESITE = "Strict"
     SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
     REMEMBER_COOKIE_HTTPONLY = True
-    REMEMBER_COOKIE_SAMESITE = "Lax"
+    REMEMBER_COOKIE_SAMESITE = "Strict"
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
     RATELIMIT_DEFAULT = os.getenv("RATELIMIT_DEFAULT", "200 per day;50 per hour")
     RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
     PROPAGATE_EXCEPTIONS = False
     PASSWORD_RESET_TOKEN_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30"))
     PASSWORD_RESET_SHOW_TOKEN = os.getenv("PASSWORD_RESET_SHOW_TOKEN", "false").lower() == "true"
+    # URL pública de la consola usada para construir los enlaces en correos salientes.
+    # Obligatoria en producción (debe ser https://). Si está vacía, no se envían correos de reset.
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip()
+    # Hosts permitidos en el header Host — rechaza requests con Host no listado (Flask 3.1+).
+    # Ej: TRUSTED_HOSTS=wardnode.midominio.com
+    _th = os.getenv("TRUSTED_HOSTS", "").strip()
+    TRUSTED_HOSTS: list[str] | None = [h.strip() for h in _th.split(",") if h.strip()] or None
 
 
 class ProductionConfig(Config):
     DEBUG = False
     TESTING = False
+    PASSWORD_RESET_SHOW_TOKEN = False  # nunca exponer el token en prod, ignora el env
     # Defaults to True in production; set SESSION_COOKIE_SECURE=false in .env.prod for HTTP-only testing
     SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true"
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE

@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block title %}Incidente #{{ incident.id }} | WardNode SOC{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('soc.index') }}" class="bc-link">SOC</a>
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('soc.bitacora') }}" class="bc-link">Bitácora</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Incidente #{{ incident.id }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-exclamation-octagon-fill" style="color:var(--accent)"></i>
+      Incidente #{{ incident.id }}
+      <span class="sev-badge sev-badge-{{ incident.severity }}">{{ incident.severity }}</span>
+    </h1>
+    <p class="text-secondary mb-0 small">
+      IP <code>{{ incident.source_ip }}</code>
+      {% if incident.domain %} contra <code>{{ incident.domain }}</code>{% endif %}
+      · estado: <strong>{{ incident.status }}</strong>
+      {% if incident.reviewer %} · revisado por {{ incident.reviewer.email }}{% endif %}
+    </p>
+  </div>
+  <div style="display:flex;gap:6px">
+    {% for accion, label, cls, icon in [
+      ('confirmado', 'Confirmar', 'btn-danger', 'bi-shield-fill-exclamation'),
+      ('descartado', 'Descartar', 'btn-outline-secondary', 'bi-x-lg'),
+    ] %}
+    {% if incident.status != accion %}
+    <form method="post" action="{{ url_for('soc.set_estado', incident_id=incident.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="estado" value="{{ accion }}">
+      <button type="submit" class="btn btn-sm {{ cls }}">
+        <i class="bi {{ icon }} me-1"></i>{{ label }}
+      </button>
+    </form>
+    {% endif %}
+    {% endfor %}
+    {% if incident.status != 'revisado' %}
+    <button type="button" class="btn btn-sm btn-success"
+            data-bs-toggle="modal" data-bs-target="#reviewModal"
+            data-action="{{ url_for('soc.set_estado', incident_id=incident.id) }}"
+            data-incident="{{ incident.id }}">
+      <i class="bi bi-check2 me-1"></i>Revisado
+    </button>
+    {% endif %}
+    {% if incident.status == 'revisado' and incident.review_comment %}
+    <button type="button" class="btn btn-sm btn-outline-success"
+            data-bs-toggle="modal" data-bs-target="#viewReviewModal"
+            data-reviewer="{{ incident.reviewer.email if incident.reviewer else 'desconocido' }}"
+            data-reviewed-at="{{ incident.reviewed_at.strftime('%Y-%m-%d %H:%M UTC') if incident.reviewed_at else '—' }}"
+            data-comment="{{ incident.review_comment }}">
+      <i class="bi bi-journal-check me-1"></i>Ver revisión
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+{% include "soc/_review_modals.html" %}
+
+{# ── Metadatos del incidente ────────────────────────────────────── #}
+<div class="card-panel mb-4" style="padding:18px 20px">
+  <h2 class="h6 mb-3"><i class="bi bi-info-circle me-2" style="color:var(--accent)"></i>Resumen del incidente</h2>
+  <div class="row g-3" style="font-size:13px">
+    <div class="col-6 col-md-3">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">IP origen</div>
+      <div class="t-mono">
+        {{ incident.source_ip }}
+        <a href="https://www.abuseipdb.com/check/{{ incident.source_ip }}" target="_blank" rel="noopener" title="Ver en AbuseIPDB" style="font-size:11px">
+          <i class="bi bi-box-arrow-up-right"></i>
+        </a>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Ventana</div>
+      <div class="t-mono" style="font-size:12px">
+        {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} → {{ incident.window_end.strftime('%H:%M') }} UTC
+      </div>
+    </div>
+    <div class="col-6 col-md-2">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Eventos</div>
+      <div>{{ incident.event_count }}</div>
+    </div>
+    <div class="col-6 col-md-2">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Score heurístico</div>
+      <div class="t-mono">{{ incident.score }}/100</div>
+    </div>
+    <div class="col-6 col-md-1">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Score ML</div>
+      <div class="t-mono">
+        {% if incident.ml_score is not none %}{{ incident.ml_score }}/100{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="col-6 col-md-1">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">AbuseIPDB</div>
+      <div class="t-mono">
+        {% if incident.abuse_score is not none %}
+          <span {% if incident.abuse_score >= 75 %}style="color:#b91c1c;font-weight:700"{% endif %}>{{ incident.abuse_score }}/100</span>
+        {% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+  {% if mitre %}
+  <hr class="my-3" style="border-color:var(--border-color)">
+  <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Técnicas MITRE ATT&CK (mapeo CRS)</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    {% for t in mitre %}
+    <a href="https://attack.mitre.org/techniques/{{ t.id | replace('.', '/') }}/" target="_blank" rel="noopener"
+       class="t-mono" style="background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color);border-radius:4px;padding:2px 8px;font-size:11px;text-decoration:none">
+      {{ t.id }} · {{ t.name }}{% if t.tactic %} <span class="t-dim">({{ t.tactic }})</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Análisis IA ────────────────────────────────────────────────── #}
+{% if analysis %}
+<div class="card-panel mb-4" style="padding:18px 20px;border-left:3px solid var(--accent)">
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <h2 class="h6 mb-0" style="display:flex;align-items:center;gap:8px">
+      <i class="bi bi-robot me-2" style="color:var(--accent)"></i>Análisis IA
+      {% if analysis.origin == 'manual' %}
+      <span class="badge text-bg-warning" style="font-size:10px">
+        <i class="bi bi-hand-index-thumb me-1"></i>Manual (retroactivo)
+      </span>
+      {% endif %}
+    </h2>
+    <span class="t-mono t-dim" style="font-size:11px">
+      {{ analysis.provider }} · {{ analysis.model }}
+      {% if analysis.tokens_in %} · {{ analysis.tokens_in }}/{{ analysis.tokens_out }} tokens{% endif %}
+    </span>
+  </div>
+  {% if analysis.origin == 'manual' and analysis.manual_reason %}
+  <div class="small text-secondary mb-2" style="font-size:12px">
+    <i class="bi bi-chat-left-text me-1"></i>Motivo del análisis manual: {{ analysis.manual_reason }}
+  </div>
+  {% endif %}
+
+  {% if payload.summary %}
+  <p style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:8px;
+            white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">{{ payload.summary }}</p>
+  {% endif %}
+  {% if payload.explanation %}
+  <p class="text-secondary" style="font-size:13px;line-height:1.6;
+            white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">{{ payload.explanation }}</p>
+  {% endif %}
+
+  <div style="font-size:12px;color:var(--text-muted)">
+    Severidad sugerida: <span class="sev-badge sev-badge-{{ payload.severity_suggested }}">{{ payload.severity_suggested }}</span>
+    · Confianza del análisis: <strong>{{ payload.confidence }}%</strong>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  {% if payload.hypotheses %}
+  <div class="col-lg-6">
+    <div class="card-panel h-100" style="padding:18px 20px">
+      <h2 class="h6 mb-3"><i class="bi bi-lightbulb me-2" style="color:var(--accent)"></i>Hipótesis</h2>
+      {% for h in payload.hypotheses %}
+      <div class="mb-3">
+        <div style="font-size:13px;margin-bottom:4px">{{ h.text }}</div>
+        <div class="progress" style="height:6px">
+          <div class="progress-bar" role="progressbar" style="width:{{ h.confidence }}%"
+               aria-valuenow="{{ h.confidence }}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">confianza {{ h.confidence }}%</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if payload.recommendations %}
+  <div class="col-lg-6">
+    <div class="card-panel h-100" style="padding:18px 20px">
+      <h2 class="h6 mb-3"><i class="bi bi-list-check me-2" style="color:var(--accent)"></i>Recomendaciones</h2>
+      {% for rec in payload.recommendations %}
+      <div class="mb-2 d-flex align-items-start gap-2">
+        {% if rec.priority == 'alta' %}
+        <span style="background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600;white-space:nowrap">alta</span>
+        {% elif rec.priority == 'baja' %}
+        <span style="background:#f1f5f9;color:#475569;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600;white-space:nowrap">baja</span>
+        {% else %}
+        <span style="background:#fffbeb;color:#b45309;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600;white-space:nowrap">media</span>
+        {% endif %}
+        <div style="font-size:13px">
+          {{ rec.text }}
+          <span class="t-mono t-dim" style="font-size:10px;margin-left:4px">[{{ rec.action_type }}]</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  {% if payload.mitre_techniques %}
+  <div class="col-lg-6">
+    <div class="card-panel h-100" style="padding:18px 20px">
+      <h2 class="h6 mb-3"><i class="bi bi-diagram-3 me-2" style="color:var(--accent)"></i>MITRE ATT&CK (según IA)</h2>
+      {# SEGURIDAD (M-2): t.id viene del LLM y se usa directamente en un atributo href.
+         Solo es seguro porque schema._coerce_mitre valida t.id contra ^T\d{4}(\.\d{3})?$
+         antes de persistirlo. Si modificas esa regex en schema.py, revisa este bloque. #}
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        {% for t in payload.mitre_techniques %}
+        <a href="https://attack.mitre.org/techniques/{{ t.id | replace('.', '/') }}/" target="_blank" rel="noopener"
+           class="t-mono" style="background:var(--bg-secondary,#f8fafc);border:1px solid var(--border-color);border-radius:4px;padding:2px 8px;font-size:11px;text-decoration:none">
+          {{ t.id }} · {{ t.name }}{% if t.tactic %} <span class="t-dim">({{ t.tactic }})</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if payload.iocs %}
+  <div class="col-lg-6">
+    <div class="card-panel h-100" style="padding:18px 20px">
+      <h2 class="h6 mb-3"><i class="bi bi-fingerprint me-2" style="color:var(--accent)"></i>Indicadores de compromiso (IoCs)</h2>
+      <table class="data-table" style="margin:0">
+        <thead><tr><th style="width:110px">Tipo</th><th>Valor</th></tr></thead>
+        <tbody>
+          {% for ioc in payload.iocs %}
+          <tr>
+            <td><span class="t-mono t-dim" style="font-size:11px">{{ ioc.type }}</span></td>
+            <td class="t-mono" style="font-size:12px;word-break:break-all">{{ ioc.value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="card-panel mb-4" style="padding:24px 20px;text-align:center;color:var(--text-muted)">
+  <i class="bi bi-robot" style="font-size:28px;display:block;margin-bottom:8px"></i>
+  <p style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Sin análisis IA</p>
+  <p style="font-size:12px;margin:0">
+    {% if not optin %}
+      El <strong>consentimiento</strong> para enviar metadatos al proveedor LLM no está activado.
+      Tener la API key configurada no basta: actívalo en
+      {% if current_user.has_role('admin') %}
+      <a href="{{ url_for('soc.config', tab='ia') }}">Configuración → IA</a>
+      {% else %}
+      Configuración → IA (requiere rol administrador)
+      {% endif %}
+      marcando la casilla de autorización y guardando.
+    {% else %}
+      Este incidente no superó el umbral de severidad, no había proveedor LLM configurado,
+      o el análisis falló.
+      {% if current_user.has_role('admin') %}
+      Revisa la <a href="{{ url_for('soc.config', tab='ia') }}">configuración IA</a>.
+      {% else %}
+      Contacta a un administrador para revisar la configuración IA.
+      {% endif %}
+    {% endif %}
+  </p>
+  {% if optin %}
+  <form method="post" action="{{ url_for('soc.analizar', incident_id=incident.id) }}"
+        class="mt-3 d-flex flex-wrap gap-2 justify-content-center"
+        x-data="{s:false}" @submit="s=true">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="text" name="reason" maxlength="200" class="form-control form-control-sm"
+           style="max-width:340px" placeholder="Motivo del análisis manual (opcional)"
+           :disabled="s">
+    <button type="submit" class="btn btn-sm btn-primary" :disabled="s">
+      <span x-show="s" class="spinner-border spinner-border-sm me-1"
+            role="status" aria-hidden="true"></span>
+      <i class="bi bi-stars me-1" x-show="!s"></i>
+      <span x-text="s ? 'Analizando…' : 'Analizar con IA'"></span>
+    </button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

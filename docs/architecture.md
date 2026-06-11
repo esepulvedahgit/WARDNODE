@@ -15,8 +15,9 @@ WardNode es una consola Flask para administrar un proxy inverso Nginx con ModSec
 - `auth`: login, setup inicial, usuarios, recuperacion de password y MFA TOTP.
 - `main`: redireccion raiz y endpoints simples de estado.
 - `proxy`: gestion de sitios, WAF, TLS, headers, reglas, GeoIP, bot protection, syslog y render de configs.
-- `modules`: modulos opcionales WF, CS, OBS y reinicio de servicios.
+- `modules`: modulos opcionales WF, CS, OBS, SOC y reinicio de servicios.
 - `audit`: consulta y exportacion de auditoria.
+- `soc`: correlacion de incidentes, analisis LLM, alertas y scoring ML (solo admin).
 
 ## Flujo De Configuracion Del Proxy
 
@@ -55,6 +56,21 @@ Si los contenedores ya existen, se arrancan con Docker SDK. Si no existen, se ej
 
 Alloy recolecta logs de Nginx, ModSecurity y CrowdSec hacia Loki. Tambien expone metricas del host mediante `prometheus.exporter.unix` y las envia a Prometheus con `remote_write`. Grafana se sirve bajo `/obs/` a traves del proxy; la consola inyecta `obs.conf` en el contenedor proxy y recarga Nginx.
 
+## SOC
+
+El modulo SOC convierte los `AttackEvent` ingestados desde el proxy en incidentes accionables. Todo vive en `app/soc/` y se ejecuta dentro de la consola (sin contenedores nuevos).
+
+Pipeline del worker (`soc-worker`, thread daemon con advisory lock PostgreSQL para entornos gunicorn multi-worker):
+
+1. **Deteccion** (`detect.py`): agregacion SQL por IP origen en ventana temporal — volumen, diversidad de categorias, fan-out de paths, ratio de bloqueo, diversidad de metodos/status — y score heuristico determinista 0–100.
+2. **Enriquecimiento** (`enrich.py`): reputacion AbuseIPDB con cache local TTL (`ThreatIntelCache`, solo IPs publicas, tope de llamadas por ciclo) y mapeo CRS→MITRE ATT&CK.
+3. **Base CTI MITRE** (`mitre_cti.py`): tabla local `mitre_attack_technique` sincronizada desde el `enterprise-attack.json` oficial (URL fija, tope 100 MB). Autoriza nombres/tacticas, valida IDs sugeridos por el LLM (anti-alucinacion) y enriquece el prompt.
+4. **Analisis LLM** (`llm/`): multi-proveedor via httpx puro (OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini) con fallback, keys cifradas, tope de respuesta 2 MB y salida normalizada tolerante. Requiere opt-in explicito (`soc_data_optin`); solo se envian metadatos agregados.
+5. **Alertas** (`alerts.py`): email (config SMTP global) y Telegram (token cifrado), con umbral de severidad y cooldown por IP (`SocIncident.alerted_at`).
+6. **ML** (`ml.py`): IsolationForest entrenado con agregados por IP/hora del historico local; modelo serializado en DB (`SocMlModel`) para consistencia multi-worker. El score heuristico es siempre el piso de severidad — el ML solo puede subirla.
+
+Decisiones clave: el LLM analiza solo incidentes ya agregados (nunca eventos individuales — control de costo); el modelo ML se guarda como blob en DB y jamas se cargan blobs externos (joblib/pickle); el reentrenamiento ocurre dentro del mismo advisory lock del ciclo de deteccion.
+
 ## Seguridad
 
 - CSRF global en formularios y HTMX mutante; `/proxy/bot-verify` esta exento porque usa token HMAC propio.
@@ -68,5 +84,5 @@ Alloy recolecta logs de Nginx, ModSecurity y CrowdSec hacia Loki. Tambien expone
 
 - `proxy/routes.py` y `modules/routes.py` concentran bastante logica de aplicacion y side effects.
 - `_apply_nginx()` silencia errores para facilitar desarrollo local; en produccion conviene hacer visible el fallo de render/reload.
-- `AttackEvent` existe en base de datos, pero la ingesta real de eventos ModSecurity hacia esa tabla no esta implementada en el flujo principal.
+- `AttackEvent` crece sin limite; conviene definir una politica de retencion (el SOC ya consulta con SQL agregado e indices, pero la tabla no se poda).
 - Faltan tests de integracion para WF, CS y OBS.

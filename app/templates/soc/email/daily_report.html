@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WardNode SOC — Reporte diario {{ date_label }}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a202c">
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6f8;padding:24px 0">
+  <tr><td align="center">
+  <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+
+    {# ── Cabecera ─────────────────────────────────────────────── #}
+    <tr>
+      <td style="background:#1a202c;padding:20px 28px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td>
+              <span style="font-size:18px;font-weight:700;color:#e2e8f0;letter-spacing:.5px">WardNode</span>
+              <span style="font-size:12px;color:#718096;margin-left:8px">Security Operations Center</span>
+            </td>
+            <td align="right">
+              <span style="font-size:11px;color:#718096">{{ date_label }}</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Título ───────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:24px 28px 8px">
+        <h1 style="margin:0;font-size:20px;font-weight:700;color:#1a202c">Reporte diario SOC</h1>
+        <p style="margin:4px 0 0;font-size:12px;color:#718096">Últimas 24 horas · UTC</p>
+      </td>
+    </tr>
+
+    {# ── Narrativa LLM ────────────────────────────────────────── #}
+    {% if llm_summary %}
+    <tr>
+      <td style="padding:16px 28px">
+        <div style="background:#eff6ff;border-left:4px solid #3b82f6;border-radius:4px;padding:14px 16px">
+          <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;color:#3b82f6;letter-spacing:.5px">Análisis IA</p>
+          <p style="margin:0;font-size:13px;color:#1e3a5f;line-height:1.6">{{ llm_summary }}</p>
+        </div>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── KPI cards ────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:16px 28px 0">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td width="25%" style="padding:0 6px 0 0">
+              <div style="background:#fef2f2;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:24px;font-weight:700;color:#b91c1c">{{ total }}</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">Incidentes</div>
+              </div>
+            </td>
+            <td width="25%" style="padding:0 6px">
+              <div style="background:#fff7ed;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:24px;font-weight:700;color:#c2410c">{{ unique_ips }}</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">IPs únicas</div>
+              </div>
+            </td>
+            <td width="25%" style="padding:0 6px">
+              <div style="background:#f0fdf4;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:24px;font-weight:700;color:#166534">{{ total_events }}</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">Eventos WAF</div>
+              </div>
+            </td>
+            <td width="25%" style="padding:0 0 0 6px">
+              <div style="background:#eff6ff;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:24px;font-weight:700;color:#1d4ed8">{{ pending_review }}</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">Pendientes</div>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Distribución por severidad ───────────────────────────── #}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">Severidad</h2>
+        <table width="100%" cellpadding="0" cellspacing="4" border="0">
+          {% set sev_colors = {'critical': '#b91c1c', 'high': '#c2410c', 'medium': '#b45309', 'low': '#166534'} %}
+          {% set sev_bg = {'critical': '#fef2f2', 'high': '#fff7ed', 'medium': '#fffbeb', 'low': '#f0fdf4'} %}
+          {% for sev in ['critical','high','medium','low'] %}
+          {% if by_severity.get(sev, 0) > 0 %}
+          <tr>
+            <td width="80" style="padding:4px 0">
+              <span style="display:inline-block;background:{{ sev_bg[sev] }};color:{{ sev_colors[sev] }};border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;text-transform:uppercase">{{ sev }}</span>
+            </td>
+            <td style="padding:4px 0">
+              <div style="background:#f1f5f9;border-radius:3px;height:12px;position:relative">
+                <div style="background:{{ sev_colors[sev] }};border-radius:3px;height:12px;width:{{ [(by_severity[sev] * 100 // (total or 1)), 100]|min }}%"></div>
+              </div>
+            </td>
+            <td width="40" align="right" style="padding:4px 0 4px 8px;font-size:13px;font-weight:700;color:#1a202c">{{ by_severity[sev] }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+          {% if not total %}
+          <tr><td colspan="3" style="font-size:12px;color:#9ca3af;padding:4px 0">Sin incidentes en las últimas 24 h.</td></tr>
+          {% endif %}
+        </table>
+      </td>
+    </tr>
+
+    {# ── Top IPs ──────────────────────────────────────────────── #}
+    {% if top_ips %}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">Top IPs atacantes</h2>
+        <table width="100%" cellpadding="6" cellspacing="0" border="0" style="border-collapse:collapse">
+          <thead>
+            <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0">
+              <th align="left" style="font-size:11px;color:#64748b;font-weight:600;padding:6px 8px">IP / Dominio</th>
+              <th align="right" style="font-size:11px;color:#64748b;font-weight:600;padding:6px 8px">Eventos</th>
+              <th align="right" style="font-size:11px;color:#64748b;font-weight:600;padding:6px 8px">Score</th>
+              <th align="center" style="font-size:11px;color:#64748b;font-weight:600;padding:6px 8px">Severidad</th>
+              <th align="right" style="font-size:11px;color:#64748b;font-weight:600;padding:6px 8px">Abuse</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set sev_colors = {'critical': '#b91c1c', 'high': '#c2410c', 'medium': '#b45309', 'low': '#166534'} %}
+            {% set sev_bg = {'critical': '#fef2f2', 'high': '#fff7ed', 'medium': '#fffbeb', 'low': '#f0fdf4'} %}
+            {% for ip in top_ips %}
+            <tr style="border-bottom:1px solid #f1f5f9">
+              <td style="padding:6px 8px;font-size:12px">
+                <span style="font-family:monospace;color:#1a202c">{{ ip.ip }}</span>
+                {% if ip.domain %}<br><span style="font-size:11px;color:#64748b">{{ ip.domain }}</span>{% endif %}
+              </td>
+              <td align="right" style="padding:6px 8px;font-size:12px;font-family:monospace">{{ ip.event_count }}</td>
+              <td align="right" style="padding:6px 8px;font-size:12px;font-family:monospace">{{ "%.0f"|format(ip.score) }}</td>
+              <td align="center" style="padding:6px 8px">
+                <span style="background:{{ sev_bg.get(ip.severity,'#f1f5f9') }};color:{{ sev_colors.get(ip.severity,'#475569') }};border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;text-transform:uppercase">{{ ip.severity }}</span>
+              </td>
+              <td align="right" style="padding:6px 8px;font-size:12px;font-family:monospace">
+                {% if ip.abuse_score is not none %}{{ ip.abuse_score }}/100{% else %}—{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── Técnicas MITRE ───────────────────────────────────────── #}
+    {% if top_mitre %}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">Técnicas MITRE ATT&amp;CK frecuentes</h2>
+        <table width="100%" cellpadding="4" cellspacing="0" border="0">
+          {% for tech, count in top_mitre %}
+          <tr>
+            <td style="font-size:12px;font-family:monospace;color:#1a202c;padding:4px 0">{{ tech }}</td>
+            <td align="right" style="font-size:12px;color:#64748b;padding:4px 0">{{ count }} incidente(s)</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── Incidentes críticos ───────────────────────────────────── #}
+    {% if critical_incidents %}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#b91c1c;letter-spacing:.5px">⚠ Incidentes críticos del día</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          {% for inc in critical_incidents %}
+          <tr>
+            <td style="padding:6px 0;border-bottom:1px solid #fef2f2">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-size:12px">
+                    <strong style="color:#b91c1c">#{{ inc.id }}</strong>
+                    <span style="font-family:monospace;margin-left:6px">{{ inc.source_ip }}</span>
+                    {% if inc.domain %}<span style="color:#64748b;margin-left:4px">/ {{ inc.domain }}</span>{% endif %}
+                  </td>
+                  <td align="right" style="font-size:11px;color:#64748b">
+                    score {{ "%.0f"|format(inc.score) }}/100 · {{ inc.status }}
+                  </td>
+                </tr>
+                {% if base_url %}
+                <tr>
+                  <td colspan="2" style="padding-top:2px">
+                    <a href="{{ base_url }}/soc/incidente/{{ inc.id }}" style="font-size:11px;color:#3b82f6;text-decoration:none">Ver detalle →</a>
+                  </td>
+                </tr>
+                {% endif %}
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── Pie ──────────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:24px 28px">
+        {% if base_url %}
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:0 8px 0 0">
+              <a href="{{ base_url }}/soc/" style="display:inline-block;background:#1a202c;color:#e2e8f0;text-decoration:none;font-size:12px;font-weight:600;padding:8px 16px;border-radius:6px">Dashboard SOC</a>
+            </td>
+            <td>
+              <a href="{{ base_url }}/soc/bitacora" style="display:inline-block;border:1px solid #e2e8f0;color:#1a202c;text-decoration:none;font-size:12px;font-weight:600;padding:8px 16px;border-radius:6px">Bitácora completa</a>
+            </td>
+          </tr>
+        </table>
+        {% endif %}
+      </td>
+    </tr>
+
+    {# ── Footer ───────────────────────────────────────────────── #}
+    <tr>
+      <td style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0">
+        <p style="margin:0;font-size:11px;color:#9ca3af">
+          Generado automáticamente por WardNode el {{ date_label }} UTC.
+          {% if not llm_summary and analyzed_pct == 0 %}El análisis IA está desactivado o no hay incidentes analizados.{% endif %}
+        </p>
+      </td>
+    </tr>
+
+  </table>
+  </td></tr>
+</table>
+
+</body>
+</html>

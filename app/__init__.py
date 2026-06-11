@@ -13,11 +13,20 @@ from app.main.routes import bp as main_bp
 from app.modules import bp as modules_bp
 from app.proxy.routes import bp as proxy_bp
 from app.security import register_security_controls
+from app.soc import bp as soc_bp
 
 
 def create_app(config_object: type[Config] | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_object or Config)
+
+    if not app.config.get("DEBUG") and not app.config.get("TESTING"):
+        base = app.config.get("PUBLIC_BASE_URL", "")
+        if not base or not base.startswith("https://"):
+            raise RuntimeError(
+                "PUBLIC_BASE_URL debe ser una URL https:// en producción. "
+                "Configúrala en .env o en las variables de entorno del contenedor."
+            )
 
     csrf.init_app(app)
     db.init_app(app)
@@ -32,6 +41,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     app.register_blueprint(proxy_bp)
     app.register_blueprint(modules_bp)
     app.register_blueprint(audit_bp)
+    app.register_blueprint(soc_bp)
 
     @app.context_processor
     def inject_module_states():
@@ -41,6 +51,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
             return {
                 "module_wf_enabled": AppConfig.get("module_wf_enabled") == "1",
                 "module_obs_enabled": AppConfig.get("module_obs_enabled") == "1",
+                "module_soc_enabled": AppConfig.get("module_soc_enabled") == "1",
                 "console_site_configured": bool(console_site_id and console_site_id.isdigit()),
                 "setup_prompt_shown": AppConfig.get("setup_prompt_shown") == "1",
             }
@@ -48,6 +59,7 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
             return {
                 "module_wf_enabled": False,
                 "module_obs_enabled": False,
+                "module_soc_enabled": False,
                 "console_site_configured": False,
                 "setup_prompt_shown": False,
             }
@@ -180,11 +192,37 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
 
     @login_manager.user_loader
     def load_user(user_id):
-        if not user_id.isdigit():
+        raw, _, token = str(user_id).partition(":")
+        if not raw.isdigit():
             return None
-        return db.session.get(models.User, int(user_id))
+        user = db.session.get(models.User, int(raw))
+        if user is None or user.session_token != token:
+            return None
+        return user
+
+    @app.cli.command("reap-reset-tokens")
+    def reap_reset_tokens_command():
+        """Elimina tokens de recuperación de contraseña usados o expirados."""
+        import click
+        from app.auth.services import purge_expired_reset_tokens
+        n = purge_expired_reset_tokens()
+        click.echo(f"{n} token(s) eliminado(s).")
+
+    @app.cli.command("reset-encrypted-secrets")
+    def reset_encrypted_secrets_command():
+        """Borra secretos cifrados en app_config y restablece 2FA tras rotar WARDNODE_SECRET_KEY."""
+        import click
+        from app.encryption import reset_encrypted_secrets
+        result = reset_encrypted_secrets()
+        click.echo(
+            f"{result['secrets']} secreto(s) cifrado(s) eliminado(s), "
+            f"{result['totp']} 2FA restablecido(s)."
+        )
 
     from app.proxy.ingest import start_ingest_thread
     start_ingest_thread(app)
+
+    from app.soc.worker import start_soc_thread
+    start_soc_thread(app)
 
     return app

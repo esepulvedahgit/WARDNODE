@@ -1,8 +1,14 @@
 import base64
+import collections
+import csv
 import hashlib
 import hmac as _hmac_mod
+import io
+import ipaddress
 import json as _json
+import math
 import random
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,10 +41,21 @@ def parse_upstream_host_port(upstream_url: str) -> tuple[str | None, int | None]
     return host, port
 
 
-def is_host_docker_internal(upstream_url: str) -> bool:
-    """Return True when the upstream resolves to host.docker.internal (a host-exposed port)."""
+LOCAL_UPSTREAM_HOSTS = {"host.docker.internal", "127.0.0.1", "localhost"}
+
+
+def is_local_upstream(upstream_url: str) -> bool:
+    """True cuando el upstream apunta al propio host (loopback / host network).
+
+    Reconoce host.docker.internal (compat.), 127.0.0.1 y localhost.
+    """
     host, _ = parse_upstream_host_port(upstream_url)
-    return host == "host.docker.internal"
+    return host in LOCAL_UPSTREAM_HOSTS
+
+
+def is_host_docker_internal(upstream_url: str) -> bool:
+    """Alias de compatibilidad — preferir is_local_upstream en código nuevo."""
+    return is_local_upstream(upstream_url)
 
 
 def ensure_default_rule_categories() -> None:
@@ -345,12 +362,15 @@ def _render_obs_location(site: Site) -> str:
     return """    location /obs/ {
         modsecurity off;
         auth_request /_wardnode_obs_auth;
+        auth_request_set $wn_user $upstream_http_x_webauth_user;
+        auth_request_set $wn_role $upstream_http_x_webauth_role;
         proxy_pass http://127.0.0.1:3000$request_uri;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-WEBAUTH-USER admin;
+        proxy_set_header X-WEBAUTH-USER $wn_user;
+        proxy_set_header X-WEBAUTH-ROLE $wn_role;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -1053,3 +1073,203 @@ def _build_waf_block_html() -> str:
 
 </body>
 </html>"""
+
+
+# ── Export CSV con feature engineering para SOC/ML ──────────────────────────
+
+# Regex precompiladas (nivel de módulo — compiladas una sola vez)
+_RE_PATH_TRAVERSAL = re.compile(r"\.\./|\.\.%2f", re.IGNORECASE)
+_RE_SQL_KEYWORD    = re.compile(
+    r"\bunion\b|\bselect\b|\binsert\b|\bdrop\b|or\s+1\s*=\s*1|--|;",
+    re.IGNORECASE,
+)
+_RE_XSS            = re.compile(
+    r"<script|onerror\s*=|onload\s*=|javascript\s*:|<img", re.IGNORECASE
+)
+_RE_CMD_INJECTION  = re.compile(
+    r"[;|`&$]|\bcat\b|/bin/", re.IGNORECASE
+)
+_RE_NULL_BYTE      = re.compile(r"%00|\x00")
+_RE_LFI            = re.compile(r"/etc/passwd|/proc/|php://", re.IGNORECASE)
+_RE_PCT_ENCODED    = re.compile(r"%[0-9A-Fa-f]{2}")
+
+# Columnas del CSV (orden canónico para el dataset del SOC)
+ATTACK_EVENT_CSV_COLUMNS: list[str] = [
+    # -- Identificación --
+    "event_id",
+    "transaction_id",
+    # -- Temporal --
+    "timestamp_utc",
+    "date",
+    "time_utc",
+    "hour",
+    "day_of_week",
+    "is_weekend",
+    "is_business_hours",
+    # -- Red / Origen --
+    "domain",
+    "source_ip",
+    "country_code",
+    "ip_version",
+    "ip_is_private",
+    # -- Petición HTTP --
+    "method",
+    "status_code",
+    "path_only",
+    "query_string",
+    # -- Features URI --
+    "path_length",
+    "path_depth",
+    "num_query_params",
+    "path_num_digits",
+    "path_num_special_chars",
+    "path_num_uppercase",
+    "pct_encoded_count",
+    "path_shannon_entropy",
+    "has_file_extension",
+    "file_extension",
+    # -- Indicadores de ataque (0/1) --
+    "has_path_traversal",
+    "has_sql_keyword",
+    "has_xss_pattern",
+    "has_cmd_injection",
+    "has_null_byte",
+    "has_lfi_pattern",
+    # -- Clasificación WAF --
+    "action",
+    "waf_category",
+    "rule_id",
+    "severity",
+    # -- Mensaje --
+    "message",
+    "message_length",
+    # -- Etiqueta para ML --
+    "label_source",
+]
+
+
+def _shannon_entropy(s: str) -> float:
+    """Entropía de Shannon de una cadena (en bits). Devuelve 0.0 para cadena vacía."""
+    if not s:
+        return 0.0
+    counts = collections.Counter(s)
+    total = len(s)
+    return -sum((c / total) * math.log2(c / total) for c in counts.values())
+
+
+def build_attack_event_features(event) -> dict:
+    """Deriva todas las features disponibles de un AttackEvent para el export CSV.
+
+    Combina campos crudos del modelo con features calculadas sobre el URI,
+    la IP, la hora y el mensaje — diseñadas para ser ingeridas por el SOC con IA.
+    """
+    uri = event.path or ""
+    # Separar ruta de query string
+    if "?" in uri:
+        path_only, query_string = uri.split("?", 1)
+    else:
+        path_only, query_string = uri, ""
+
+    # --- Features temporales ---
+    dt = event.created_at
+    hour         = dt.hour
+    dow          = dt.weekday()          # 0=lunes … 6=domingo
+    is_weekend   = int(dow >= 5)
+    is_biz_hours = int(9 <= hour < 18 and not is_weekend)
+
+    # --- Features IP ---
+    ip_version    = None
+    ip_is_private = None
+    try:
+        addr = ipaddress.ip_address(event.source_ip)
+        ip_version    = addr.version
+        ip_is_private = int(addr.is_private)
+    except (ValueError, TypeError):
+        pass
+
+    # --- Features URI ---
+    path_length        = len(uri)
+    path_depth         = uri.count("/")
+    num_query_params   = len(query_string.split("&")) if query_string else 0
+    path_num_digits    = sum(c.isdigit() for c in uri)
+    path_num_special   = sum(c in r"!@#$%^&*()-_=+[]{}|;:',.<>?/\`~" for c in uri)
+    path_num_uppercase = sum(c.isupper() for c in uri)
+    pct_encoded_count  = len(_RE_PCT_ENCODED.findall(uri))
+    entropy            = round(_shannon_entropy(uri), 4)
+
+    # Extensión de archivo (sobre el segmento de ruta, sin query)
+    ext_match = re.search(r"\.([a-zA-Z0-9]{1,8})$", path_only.split("/")[-1])
+    has_ext   = int(bool(ext_match))
+    file_ext  = ext_match.group(1).lower() if ext_match else ""
+
+    # --- Indicadores de ataque sobre el URI completo (incluye query) ---
+    has_traversal = int(bool(_RE_PATH_TRAVERSAL.search(uri)))
+    has_sql       = int(bool(_RE_SQL_KEYWORD.search(uri)))
+    has_xss       = int(bool(_RE_XSS.search(uri)))
+    has_cmd       = int(bool(_RE_CMD_INJECTION.search(uri)))
+    has_null      = int(bool(_RE_NULL_BYTE.search(uri)))
+    has_lfi       = int(bool(_RE_LFI.search(uri)))
+
+    msg = event.message or ""
+
+    return {
+        "event_id":               event.id,
+        "transaction_id":         event.transaction_id or "",
+        "timestamp_utc":          dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "date":                   dt.strftime("%Y-%m-%d"),
+        "time_utc":               dt.strftime("%H:%M:%S"),
+        "hour":                   hour,
+        "day_of_week":            dow,
+        "is_weekend":             is_weekend,
+        "is_business_hours":      is_biz_hours,
+        "domain":                 event.domain,
+        "source_ip":              event.source_ip,
+        "country_code":           event.country_code or "",
+        "ip_version":             ip_version if ip_version is not None else "",
+        "ip_is_private":          ip_is_private if ip_is_private is not None else "",
+        "method":                 event.method,
+        "status_code":            event.status_code,
+        "path_only":              path_only,
+        "query_string":           query_string,
+        "path_length":            path_length,
+        "path_depth":             path_depth,
+        "num_query_params":       num_query_params,
+        "path_num_digits":        path_num_digits,
+        "path_num_special_chars": path_num_special,
+        "path_num_uppercase":     path_num_uppercase,
+        "pct_encoded_count":      pct_encoded_count,
+        "path_shannon_entropy":   entropy,
+        "has_file_extension":     has_ext,
+        "file_extension":         file_ext,
+        "has_path_traversal":     has_traversal,
+        "has_sql_keyword":        has_sql,
+        "has_xss_pattern":        has_xss,
+        "has_cmd_injection":      has_cmd,
+        "has_null_byte":          has_null,
+        "has_lfi_pattern":        has_lfi,
+        "action":                 event.action,
+        "waf_category":           event.category,
+        "rule_id":                event.rule_id or "",
+        "severity":               event.severity,
+        "message":                msg,
+        "message_length":         len(msg),
+        "label_source":           "crs",
+    }
+
+
+def attack_events_to_csv(events) -> str:
+    """Serializa una lista de AttackEvent a CSV con feature engineering completo.
+
+    Reutiliza el patrón de audit/routes.py (io.StringIO + csv.DictWriter).
+    """
+    buf = io.StringIO()
+    w = csv.DictWriter(
+        buf,
+        fieldnames=ATTACK_EVENT_CSV_COLUMNS,
+        extrasaction="ignore",
+        lineterminator="\r\n",
+    )
+    w.writeheader()
+    for event in events:
+        w.writerow(build_attack_event_features(event))
+    return buf.getvalue()

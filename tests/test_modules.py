@@ -2,7 +2,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
-from app.models import AppConfig, ROLE_OPERATOR
+from app.models import AppConfig, ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER
 
 
 def test_obs_activate_starts_only_obs_services(client, login_as, monkeypatch, tmp_path):
@@ -65,19 +65,37 @@ def test_obs_fullscreen_renders_minimal_embedded_view(client, login_as):
     assert "sidebar" not in body
 
 
-def test_obs_auth_requires_admin_session(client, login_as):
+def test_obs_auth_anon_is_rejected(client):
     AppConfig.set("module_obs_enabled", "1")
-
     response = client.get("/modules/obs/auth")
     assert response.status_code == 401
 
-    login_as(ROLE_OPERATOR)
-    response = client.get("/modules/obs/auth")
-    assert response.status_code == 403
 
-    login_as(email="admin-obs@example.com")
+def test_obs_auth_operator_gets_viewer_role(client, login_as):
+    AppConfig.set("module_obs_enabled", "1")
+    op = login_as(ROLE_OPERATOR)
     response = client.get("/modules/obs/auth")
     assert response.status_code == 204
+    assert response.headers.get("X-WEBAUTH-USER") == f"wn-{op.id}"
+    assert response.headers.get("X-WEBAUTH-ROLE") == "Viewer"
+
+
+def test_obs_auth_reader_gets_viewer_role(client, login_as):
+    AppConfig.set("module_obs_enabled", "1")
+    rd = login_as(ROLE_READER)
+    response = client.get("/modules/obs/auth")
+    assert response.status_code == 204
+    assert response.headers.get("X-WEBAUTH-USER") == f"wn-{rd.id}"
+    assert response.headers.get("X-WEBAUTH-ROLE") == "Viewer"
+
+
+def test_obs_auth_admin_gets_editor_role(client, login_as):
+    AppConfig.set("module_obs_enabled", "1")
+    adm = login_as(email="admin-obs@example.com")
+    response = client.get("/modules/obs/auth")
+    assert response.status_code == 204
+    assert response.headers.get("X-WEBAUTH-USER") == f"wn-{adm.id}"
+    assert response.headers.get("X-WEBAUTH-ROLE") == "Editor"
 
 
 def test_obs_auth_is_exempt_from_rate_limit(app, client, login_as):

@@ -2,6 +2,7 @@ from app.models import (
     AppConfig,
     CustomModSecurityRule,
     NginxExtraConfig,
+    ROLE_ADMIN,
     ROLE_OPERATOR,
     RuleCategory,
     SecurityHeader,
@@ -10,6 +11,7 @@ from app.models import (
 from app.proxy.services import (
     ensure_site_traffic_policy,
     is_host_docker_internal,
+    is_local_upstream,
     parse_upstream_host_port,
     render_nginx_configs,
     sync_site_rule_settings,
@@ -103,7 +105,7 @@ def test_obs_location_is_rendered_before_catch_all_location(app, tmp_path):
     assert "auth_request /_wardnode_obs_auth;" in content
     assert "location = /_wardnode_obs_auth" in content
     assert "proxy_pass http://127.0.0.1:3000$request_uri;" in content
-    assert "proxy_set_header X-WEBAUTH-USER admin;" in content
+    assert "proxy_set_header X-WEBAUTH-USER $wn_user;" in content
     assert "proxy_hide_header X-Frame-Options;" in content
     assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in content
     assert content.index("location /obs/") < content.index("\n    location / {\n")
@@ -579,7 +581,7 @@ def test_ingest_skips_duplicate_transaction_ids(app, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# parse_upstream_host_port / is_host_docker_internal helpers
+# parse_upstream_host_port / is_local_upstream helpers
 # ---------------------------------------------------------------------------
 
 def test_parse_upstream_host_port_explicit():
@@ -612,6 +614,28 @@ def test_parse_upstream_host_port_ip():
     assert port == 8081
 
 
+# is_local_upstream reconoce host.docker.internal, 127.0.0.1 y localhost
+def test_is_local_upstream_hdi():
+    assert is_local_upstream("http://host.docker.internal:3000") is True
+
+
+def test_is_local_upstream_loopback():
+    assert is_local_upstream("http://127.0.0.1:3000") is True
+
+
+def test_is_local_upstream_localhost():
+    assert is_local_upstream("http://localhost:8080") is True
+
+
+def test_is_local_upstream_false_container():
+    assert is_local_upstream("http://myapp:8080") is False
+
+
+def test_is_local_upstream_false_external_ip():
+    assert is_local_upstream("http://10.0.0.1:8080") is False
+
+
+# is_host_docker_internal es alias de compatibilidad — sigue funcionando
 def test_is_host_docker_internal_true():
     assert is_host_docker_internal("http://host.docker.internal:3000") is True
 
@@ -620,15 +644,17 @@ def test_is_host_docker_internal_false_container():
     assert is_host_docker_internal("http://myapp:8080") is False
 
 
-def test_is_host_docker_internal_false_ip():
-    assert is_host_docker_internal("http://10.0.0.1:8080") is False
+def test_is_host_docker_internal_loopback_now_true():
+    """Tras la migración, 127.0.0.1 se reconoce como upstream local."""
+    assert is_host_docker_internal("http://127.0.0.1:3000") is True
 
 
 # ---------------------------------------------------------------------------
-# create_site gating: host.docker.internal sin módulo WF activo
+# create_site gating: upstream local sin módulo WF activo
 # ---------------------------------------------------------------------------
 
-def test_create_site_hdi_blocked_without_wf(client, login_as):
+def test_create_site_local_blocked_without_wf_hdi(client, login_as):
+    """host.docker.internal sin WF activo → rechazado."""
     login_as(ROLE_OPERATOR)
     response = client.post(
         "/proxy/sites",
@@ -645,6 +671,26 @@ def test_create_site_hdi_blocked_without_wf(client, login_as):
 
     with client.application.app_context():
         assert Site.query.filter_by(domain="hostapp.local").first() is None
+
+
+def test_create_site_local_blocked_without_wf_loopback(client, login_as):
+    """127.0.0.1 sin WF activo → rechazado (nueva validación)."""
+    login_as(ROLE_OPERATOR)
+    response = client.post(
+        "/proxy/sites",
+        data={
+            "name": "LoopApp",
+            "domain": "loopapp.local",
+            "upstream_url": "http://127.0.0.1:8081",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "WardNode WF" in body
+
+    with client.application.app_context():
+        assert Site.query.filter_by(domain="loopapp.local").first() is None
 
 
 def test_create_site_docker_container_allowed_without_wf(client, login_as):
@@ -664,7 +710,8 @@ def test_create_site_docker_container_allowed_without_wf(client, login_as):
         assert Site.query.filter_by(domain="containerapp.local").first() is not None
 
 
-def test_create_site_hdi_reserved_port_blocked(client, login_as):
+def test_create_site_local_reserved_port_blocked_hdi(client, login_as):
+    """Puerto reservado en host.docker.internal → rechazado."""
     login_as(ROLE_OPERATOR)
     with client.application.app_context():
         AppConfig.set("module_wf_enabled", "1")
@@ -686,6 +733,99 @@ def test_create_site_hdi_reserved_port_blocked(client, login_as):
         assert Site.query.filter_by(domain="badport.local").first() is None
 
 
+def test_create_site_local_reserved_port_blocked_loopback(client, login_as):
+    """Puerto reservado en 127.0.0.1 → rechazado (nueva validación)."""
+    login_as(ROLE_OPERATOR)
+    with client.application.app_context():
+        AppConfig.set("module_wf_enabled", "1")
+
+    response = client.post(
+        "/proxy/sites",
+        data={
+            "name": "BadPortLoop",
+            "domain": "badportloop.local",
+            "upstream_url": "http://127.0.0.1:5000",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "reservado" in body
+
+    with client.application.app_context():
+        assert Site.query.filter_by(domain="badportloop.local").first() is None
+
+
+def test_create_site_local_calls_send_command_verified(client, login_as, monkeypatch):
+    """Upstream 127.0.0.1: llama protect_host_port; con blocked=True → host_port_blocked=True."""
+    login_as(ROLE_OPERATOR)
+    with client.application.app_context():
+        AppConfig.set("module_wf_enabled", "1")
+
+    captured = {}
+
+    def fake_send(action, **kwargs):
+        captured["action"] = action
+        captured["kwargs"] = kwargs
+        return {"ok": True, "blocked": True, "output": "ok"}
+
+    monkeypatch.setattr("app.proxy.routes.os.path.exists", lambda p: True)
+    monkeypatch.setattr("app.modules.socket_client.send_command", fake_send)
+
+    response = client.post(
+        "/proxy/sites",
+        data={
+            "name": "LoopApp2",
+            "domain": "loopapp2.local",
+            "upstream_url": "http://127.0.0.1:8082",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert captured.get("action") == "protect_host_port"
+    assert captured["kwargs"].get("port") == 8082
+
+    body = response.get_data(as_text=True)
+    assert "verificado" in body
+
+    with client.application.app_context():
+        site = Site.query.filter_by(domain="loopapp2.local").first()
+        assert site is not None
+        assert site.host_port_blocked is True
+
+
+def test_create_site_local_calls_send_command_unverified(client, login_as, monkeypatch):
+    """protect_host_port ok pero blocked=False → advertencia 'no pudo verificarse'."""
+    login_as(ROLE_OPERATOR)
+    with client.application.app_context():
+        AppConfig.set("module_wf_enabled", "1")
+
+    def fake_send(action, **kwargs):
+        return {"ok": True, "blocked": False, "output": "reglas insertadas sin verificación"}
+
+    monkeypatch.setattr("app.proxy.routes.os.path.exists", lambda p: True)
+    monkeypatch.setattr("app.modules.socket_client.send_command", fake_send)
+
+    response = client.post(
+        "/proxy/sites",
+        data={
+            "name": "LoopApp3",
+            "domain": "loopapp3.local",
+            "upstream_url": "http://127.0.0.1:8083",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "verificarse" in body or "WardNode WF" in body
+
+    with client.application.app_context():
+        site = Site.query.filter_by(domain="loopapp3.local").first()
+        assert site is not None
+        assert site.host_port_blocked is False
+
+
+# Mantener alias para compatibilidad — verifica que hdi sigue llamando send_command
 def test_create_site_hdi_calls_send_command(client, login_as, monkeypatch):
     login_as(ROLE_OPERATOR)
     with client.application.app_context():
@@ -696,7 +836,7 @@ def test_create_site_hdi_calls_send_command(client, login_as, monkeypatch):
     def fake_send(action, **kwargs):
         captured["action"] = action
         captured["kwargs"] = kwargs
-        return {"ok": True, "output": "ok"}
+        return {"ok": True, "blocked": True, "output": "ok"}
 
     monkeypatch.setattr("app.proxy.routes.os.path.exists", lambda p: True)
     monkeypatch.setattr("app.modules.socket_client.send_command", fake_send)
@@ -771,3 +911,600 @@ def test_dismiss_setup_prompt_sets_flag(client, login_as):
 
     with client.application.app_context():
         assert AppConfig.get("setup_prompt_shown") == "1"
+
+
+# ---------------------------------------------------------------------------
+# update_site_upstream — edición del upstream desde site_detail
+# ---------------------------------------------------------------------------
+
+def test_update_site_upstream_normal(client, login_as):
+    """Un operator puede cambiar el upstream; el nuevo valor queda persistido."""
+    login_as(ROLE_OPERATOR)
+
+    with client.application.app_context():
+        from app.extensions import db
+        site = Site(name="EditUpstream", domain="edit2.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", "9999")
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://app:9090"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    with client.application.app_context():
+        updated = Site.query.get(site_id)
+        assert updated.upstream_url == "http://app:9090"
+
+
+def test_update_site_upstream_renders_nginx_config(app, tmp_path):
+    """Tras actualizar el upstream el config nginx generado usa el nuevo proxy_pass."""
+    from app.extensions import db
+    from app.proxy.services import (
+        ensure_site_nginx_extra_config,
+        ensure_site_security_headers,
+    )
+
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        site = Site(name="EditNginx", domain="editnginx.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        sync_site_rule_settings(site)
+        ensure_site_traffic_policy(site)
+        ensure_site_security_headers(site)
+        ensure_site_nginx_extra_config(site)
+        AppConfig.set("console_site_id", "9999")
+
+        # Simular el cambio que haría la ruta
+        site.upstream_url = "http://app:9090"
+        db.session.commit()
+        render_nginx_configs()
+
+    conf = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    assert "proxy_pass http://app:9090" in conf
+    assert "proxy_pass http://app:8080" not in conf
+
+
+def test_update_site_upstream_console_rejected(client, login_as):
+    """El upstream del sitio consola no puede modificarse desde esta ruta."""
+    login_as(ROLE_OPERATOR)
+
+    with client.application.app_context():
+        from app.extensions import db
+        site = Site(
+            name="Console",
+            domain="console.local",
+            upstream_url="http://console:5000",
+            is_console=True,
+        )
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", str(site.id))
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://console:9999"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "consola" in body.lower() or "Ajustes" in body
+
+    with client.application.app_context():
+        unchanged = Site.query.get(site_id)
+        assert unchanged.upstream_url == "http://console:5000"
+
+
+def test_update_site_upstream_reader_rejected(client, login_as):
+    """Un reader recibe 403 al intentar editar el upstream."""
+    from app.models import ROLE_READER
+    login_as(ROLE_READER)
+
+    with client.application.app_context():
+        from app.extensions import db
+        site = Site(name="ReadOnly", domain="readonly.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", "9999")
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://app:9000"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+def test_update_site_upstream_hdi_reserved_port_rejected(client, login_as):
+    """Un puerto reservado en host.docker.internal es rechazado."""
+    login_as(ROLE_OPERATOR)
+
+    with client.application.app_context():
+        from app.extensions import db
+        AppConfig.set("module_wf_enabled", "1")
+        site = Site(name="HDIApp", domain="hdi.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", "9999")
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://host.docker.internal:443"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "reservado" in body
+
+    with client.application.app_context():
+        unchanged = Site.query.get(site_id)
+        assert unchanged.upstream_url == "http://app:8080"
+
+
+def test_update_site_upstream_loopback_reserved_port_rejected(client, login_as):
+    """Un puerto reservado en 127.0.0.1 también es rechazado (nueva validación)."""
+    login_as(ROLE_OPERATOR)
+
+    with client.application.app_context():
+        from app.extensions import db
+        AppConfig.set("module_wf_enabled", "1")
+        site = Site(name="LoopRes", domain="loopres.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", "9999")
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://127.0.0.1:5000"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "reservado" in body
+
+    with client.application.app_context():
+        unchanged = Site.query.get(site_id)
+        assert unchanged.upstream_url == "http://app:8080"
+
+
+def test_update_site_upstream_no_change(client, login_as):
+    """Si el upstream es idéntico al actual, no se produce ningún cambio."""
+    login_as(ROLE_OPERATOR)
+
+    with client.application.app_context():
+        from app.extensions import db
+        site = Site(name="NoChange", domain="nochange.local", upstream_url="http://app:8080")
+        db.session.add(site)
+        db.session.commit()
+        AppConfig.set("console_site_id", "9999")
+        site_id = site.id
+
+    response = client.post(
+        f"/proxy/sites/{site_id}/upstream",
+        data={"upstream_url": "http://app:8080"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "cambió" in body or "cambio" in body
+
+
+# ---------------------------------------------------------------------------
+# events_list — filtros por dominio, IP y rango de fechas
+# ---------------------------------------------------------------------------
+
+def _seed_attack_events(app):
+    """Siembra tres AttackEvents con dominios, IPs y fechas distintas."""
+    from app.extensions import db
+    from app.models import AttackEvent
+    from datetime import datetime, timezone
+
+    events = [
+        AttackEvent(
+            domain="alpha.local",
+            source_ip="10.0.0.1",
+            method="GET",
+            path="/admin",
+            status_code=403,
+            action="block",
+            severity="high",
+            message="SQLi attempt",
+            created_at=datetime(2026, 1, 10, 12, 0, 0, tzinfo=timezone.utc),
+        ),
+        AttackEvent(
+            domain="beta.local",
+            source_ip="203.0.113.55",
+            method="POST",
+            path="/login",
+            status_code=403,
+            action="detect",
+            severity="medium",
+            message="XSS attempt",
+            created_at=datetime(2026, 2, 15, 8, 0, 0, tzinfo=timezone.utc),
+        ),
+        AttackEvent(
+            domain="alpha.local",
+            source_ip="10.0.0.2",
+            method="GET",
+            path="/etc/passwd",
+            status_code=403,
+            action="block",
+            severity="critical",
+            message="Path traversal",
+            created_at=datetime(2026, 3, 20, 18, 0, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    with app.app_context():
+        for ev in events:
+            db.session.add(ev)
+        db.session.commit()
+
+
+def test_events_filter_by_domain(client, login_as, app):
+    """Filtrar por dominio devuelve solo eventos de ese dominio."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    resp = client.get("/proxy/events?domain=alpha.local")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # IPs de alpha.local deben aparecer en la tabla
+    assert "10.0.0.1" in body or "10.0.0.2" in body
+    # La IP exclusiva de beta.local NO debe aparecer en la tabla (no es placeholder ni dropdown)
+    assert "203.0.113.55" not in body
+
+
+def test_events_filter_by_ip_partial(client, login_as, app):
+    """Filtrar por IP parcial devuelve coincidencias de prefijo de subred."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    # "10.0.0" debe coincidir con 10.0.0.1 y 10.0.0.2 pero no con 203.0.113.55
+    resp = client.get("/proxy/events?ip=10.0.0")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # La IP filtrada aparece en la tabla
+    assert "10.0.0.1" in body or "10.0.0.2" in body
+    # La IP completa del evento excluido no debe aparecer en tabla
+    # (nota: el placeholder del campo IP puede contener "203.0.113"; usamos la IP completa)
+    assert "203.0.113.55" not in body
+
+
+def test_events_filter_by_date_range(client, login_as, app):
+    """Filtrar por rango de fechas acota los resultados incluyendo el día completo de date_to."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    # Solo el evento del 2026-02-15 debería quedar dentro de [2026-02-01, 2026-02-28]
+    resp = client.get("/proxy/events?date_from=2026-02-01&date_to=2026-02-28")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    # La IP exclusiva de beta.local (el evento de Feb) debe estar en la tabla
+    assert "203.0.113.55" in body
+    # Las IPs exclusivas de alpha.local (Jan y Mar) NO deben aparecer en la tabla
+    assert "10.0.0.1" not in body
+    assert "10.0.0.2" not in body
+
+
+def test_events_filter_invalid_date_ignored(client, login_as, app):
+    """Una fecha inválida se ignora sin provocar error 500."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    resp = client.get("/proxy/events?date_from=not-a-date&date_to=also-bad")
+    assert resp.status_code == 200
+
+
+def test_events_filter_combined_domain_and_severity(client, login_as, app):
+    """Dominio + severidad se intersecan correctamente."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    # alpha.local tiene un evento high y uno critical; filtrar por high debe devolver solo ese
+    resp = client.get("/proxy/events?domain=alpha.local&severity=high")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "alpha.local" in body
+    # El evento critical de alpha.local no debe aparecer
+    assert "critical" not in body.lower().split("sev-badge")[-1][:50]
+
+
+def test_events_filter_domains_list_in_context(client, login_as, app):
+    """El desplegable de dominios incluye los dominios distintos con eventos."""
+    login_as(ROLE_ADMIN)
+    _seed_attack_events(app)
+
+    resp = client.get("/proxy/events")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "alpha.local" in body
+    assert "beta.local" in body
+
+
+# ── Tests de export CSV ──────────────────────────────────────────────────────
+
+def _seed_rich_attack_events(app):
+    """Siembra AttackEvents con paths que activan múltiples indicadores de ataque."""
+    from app.extensions import db
+    from app.models import AttackEvent
+    from datetime import datetime, timezone
+
+    events = [
+        AttackEvent(
+            domain="attack.local",
+            source_ip="203.0.113.10",
+            country_code="US",
+            method="GET",
+            path="/index.php?id=1%27+OR+1=1--",
+            status_code=403,
+            action="block",
+            severity="high",
+            category="sql-injection",
+            rule_id="942100",
+            message="SQL Injection Attack Detected via libinjection",
+            created_at=datetime(2026, 5, 7, 14, 30, 0, tzinfo=timezone.utc),
+        ),
+        AttackEvent(
+            domain="attack.local",
+            source_ip="198.51.100.7",
+            country_code="DE",
+            method="GET",
+            path="/../../etc/passwd",
+            status_code=403,
+            action="block",
+            severity="critical",
+            category="lfi",
+            rule_id="930100",
+            message="Path Traversal Attack",
+            created_at=datetime(2026, 5, 8, 22, 0, 0, tzinfo=timezone.utc),
+        ),
+        AttackEvent(
+            domain="other.local",
+            source_ip="10.0.0.5",
+            country_code=None,
+            method="POST",
+            path="/search?q=<script>alert(1)</script>",
+            status_code=200,
+            action="detect",
+            severity="medium",
+            category="xss",
+            rule_id="941100",
+            message="XSS Attack Detected via libinjection",
+            created_at=datetime(2026, 5, 9, 9, 15, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    with app.app_context():
+        for ev in events:
+            db.session.add(ev)
+        db.session.commit()
+
+
+def test_events_export_csv_returns_csv(client, login_as, app):
+    """El endpoint devuelve un CSV válido con las columnas de feature engineering."""
+    login_as(ROLE_ADMIN)
+    _seed_rich_attack_events(app)
+
+    resp = client.get("/proxy/events/export.csv")
+    assert resp.status_code == 200
+    assert "text/csv" in resp.content_type
+    cd = resp.headers.get("Content-Disposition", "")
+    assert "attachment" in cd
+    assert "wardnode_waf_events_" in cd
+    assert ".csv" in cd
+
+    body = resp.get_data(as_text=True)
+    lines = [l for l in body.splitlines() if l.strip()]
+    # Cabecera + al menos 3 filas de datos
+    assert len(lines) >= 4
+
+    header = lines[0]
+    # Columnas clave de feature engineering presentes en la cabecera
+    for col in (
+        "event_id", "timestamp_utc", "domain", "source_ip", "country_code",
+        "path_shannon_entropy", "has_sql_keyword", "has_xss_pattern",
+        "has_path_traversal", "has_lfi_pattern", "has_null_byte",
+        "ip_version", "ip_is_private", "pct_encoded_count",
+        "has_file_extension", "file_extension", "label_source",
+    ):
+        assert col in header, f"Columna '{col}' ausente en la cabecera del CSV"
+
+    # Verificar que al menos una fila contiene datos de los eventos sembrados
+    assert "attack.local" in body
+    assert "sql-injection" in body
+    assert "crs" in body  # label_source siempre es "crs"
+
+
+def test_events_export_feature_flags(app):
+    """build_attack_event_features activa los flags correctos según el URI del ataque."""
+    from app.proxy.services import build_attack_event_features, ATTACK_EVENT_CSV_COLUMNS
+    from app.models import AttackEvent
+    from datetime import datetime, timezone
+
+    with app.app_context():
+        # SQLi + path traversal en la misma URL
+        ev = AttackEvent(
+            domain="test.local",
+            source_ip="1.2.3.4",
+            method="GET",
+            path="/../admin?id=1 UNION SELECT 1--",
+            status_code=403,
+            action="block",
+            severity="critical",
+            category="sql-injection",
+            rule_id="942100",
+            message="SQLi detected",
+            created_at=datetime(2026, 6, 9, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        ev.id = 999
+        ev.transaction_id = "txn-test"
+
+        features = build_attack_event_features(ev)
+
+        assert features["has_sql_keyword"] == 1
+        assert features["has_path_traversal"] == 1
+        assert features["has_xss_pattern"] == 0
+        assert features["label_source"] == "crs"
+        assert features["domain"] == "test.local"
+        assert features["hour"] == 10
+        assert features["day_of_week"] == 1           # 2026-06-09 es martes
+        assert features["is_weekend"] == 0
+        assert features["is_business_hours"] == 1     # 10h laborable
+        # path_depth > 0 (hay barras)
+        assert features["path_depth"] > 0
+        # Todas las columnas del schema deben estar presentes
+        for col in ATTACK_EVENT_CSV_COLUMNS:
+            assert col in features, f"Feature '{col}' ausente en el dict"
+
+    # XSS
+    with app.app_context():
+        ev_xss = AttackEvent(
+            domain="test.local",
+            source_ip="5.6.7.8",
+            method="GET",
+            path="/search?q=<script>alert(1)</script>",
+            status_code=200,
+            action="detect",
+            severity="medium",
+            category="xss",
+            rule_id="941100",
+            message="XSS",
+            created_at=datetime(2026, 6, 7, 20, 0, 0, tzinfo=timezone.utc),
+        )
+        ev_xss.id = 998
+        ev_xss.transaction_id = "txn-xss"
+        feats_xss = build_attack_event_features(ev_xss)
+        assert feats_xss["has_xss_pattern"] == 1
+        assert feats_xss["is_weekend"] == 1           # domingo
+        assert feats_xss["is_business_hours"] == 0    # 20h + fin de semana
+
+    # LFI + null byte
+    with app.app_context():
+        ev_lfi = AttackEvent(
+            domain="test.local",
+            source_ip="9.8.7.6",
+            method="GET",
+            path="/etc/passwd%00.jpg",
+            status_code=403,
+            action="block",
+            severity="critical",
+            category="lfi",
+            rule_id="930100",
+            message="LFI",
+            created_at=datetime(2026, 6, 9, 3, 0, 0, tzinfo=timezone.utc),
+        )
+        ev_lfi.id = 997
+        ev_lfi.transaction_id = "txn-lfi"
+        feats_lfi = build_attack_event_features(ev_lfi)
+        assert feats_lfi["has_lfi_pattern"] == 1
+        assert feats_lfi["has_null_byte"] == 1
+        assert feats_lfi["has_file_extension"] == 1
+        assert feats_lfi["file_extension"] == "jpg"
+        assert feats_lfi["is_business_hours"] == 0    # 3h madrugada
+
+    # IP privada vs. pública
+    with app.app_context():
+        ev_priv = AttackEvent(
+            domain="test.local",
+            source_ip="192.168.1.100",
+            method="GET",
+            path="/admin",
+            status_code=403,
+            action="block",
+            severity="medium",
+            category="unknown",
+            message="test",
+            created_at=datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        ev_priv.id = 996
+        ev_priv.transaction_id = None
+        feats_priv = build_attack_event_features(ev_priv)
+        assert feats_priv["ip_version"] == 4
+        assert feats_priv["ip_is_private"] == 1
+
+    with app.app_context():
+        ev_pub = AttackEvent(
+            domain="test.local",
+            source_ip="8.8.8.8",
+            method="GET",
+            path="/admin",
+            status_code=403,
+            action="block",
+            severity="medium",
+            category="unknown",
+            message="test",
+            created_at=datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc),
+        )
+        ev_pub.id = 995
+        ev_pub.transaction_id = None
+        feats_pub = build_attack_event_features(ev_pub)
+        assert feats_pub["ip_is_private"] == 0
+
+
+def test_events_export_respects_filters(client, login_as, app):
+    """El CSV solo contiene eventos que coinciden con los filtros activos."""
+    login_as(ROLE_ADMIN)
+    _seed_rich_attack_events(app)
+
+    # Filtrar por dominio=attack.local — other.local no debe aparecer
+    resp = client.get("/proxy/events/export.csv?domain=attack.local")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "attack.local" in body
+    assert "other.local" not in body
+
+    # Filtrar por severidad=critical — solo el path traversal (LFI)
+    resp2 = client.get("/proxy/events/export.csv?severity=critical")
+    assert resp2.status_code == 200
+    body2 = resp2.get_data(as_text=True)
+    # El evento LFI (rule_id=930100) debe estar
+    assert "930100" in body2
+    # El evento XSS (rule_id=941100, severity=medium) NO debe estar
+    assert "941100" not in body2
+
+
+def test_events_export_scope_all(client, login_as, app):
+    """scope=all exporta todos los eventos sin importar filtros adicionales."""
+    login_as(ROLE_ADMIN)
+    _seed_rich_attack_events(app)
+
+    # Con scope=all + domain=attack.local — ambos dominios deben aparecer
+    resp = client.get("/proxy/events/export.csv?scope=all&domain=attack.local")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "attack.local" in body
+    assert "other.local" in body
+
+
+def test_events_export_operator_allowed(client, login_as, app):
+    """Un usuario con rol ROLE_OPERATOR puede acceder al endpoint de export."""
+    from app.models import ROLE_OPERATOR
+    login_as(ROLE_OPERATOR)
+    _seed_rich_attack_events(app)
+
+    resp = client.get("/proxy/events/export.csv")
+    assert resp.status_code == 200
+    assert "text/csv" in resp.content_type
+
+
+def test_events_export_empty_returns_header_only(client, login_as, app):
+    """Cuando no hay eventos el CSV devuelve solo la fila de cabecera."""
+    login_as(ROLE_ADMIN)
+    # No sembramos eventos — BD vacía para AttackEvent
+
+    resp = client.get("/proxy/events/export.csv")
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    lines = [l for l in body.splitlines() if l.strip()]
+    assert len(lines) == 1   # solo cabecera
+    assert "event_id" in lines[0]
+    assert "label_source" in lines[0]

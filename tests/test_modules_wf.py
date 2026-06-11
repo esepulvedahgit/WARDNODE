@@ -1,4 +1,4 @@
-from app.models import AppConfig, ROLE_OPERATOR
+from app.models import AppConfig, ROLE_OPERATOR, ROLE_READER
 
 
 def _enable_wf():
@@ -155,12 +155,35 @@ def test_wf_init_calls_init_firewall(client, login_as, monkeypatch):
 
 # ── RBAC ──────────────────────────────────────────────────────────────────────
 
-def test_wf_requires_admin_role(client, login_as, monkeypatch):
+def test_wf_operator_can_access_status(client, login_as, monkeypatch):
+    """Operador tiene acceso completo a WF (sin restricción de rol)."""
     _enable_wf()
     login_as(role=ROLE_OPERATOR)
     monkeypatch.setattr("app.modules.routes.send_command", _fake_cmd_ok)
 
     response = client.post("/modules/wf/status")
+
+    assert response.status_code == 200
+
+
+def test_wf_reader_cannot_access_status(client, login_as, monkeypatch):
+    """Reader no tiene acceso a WF."""
+    _enable_wf()
+    login_as(role=ROLE_READER)
+    monkeypatch.setattr("app.modules.routes.send_command", _fake_cmd_ok)
+
+    response = client.post("/modules/wf/status")
+
+    assert response.status_code == 403
+
+
+def test_wf_reader_cannot_access_docker_ports(client, login_as, monkeypatch):
+    """Reader no puede enumerar puertos Docker del host vía WF."""
+    _enable_wf()
+    login_as(role=ROLE_READER)
+    monkeypatch.setattr("app.modules.routes.send_command", _fake_cmd_ok)
+
+    response = client.post("/modules/wf/docker-ports")
 
     assert response.status_code == 403
 

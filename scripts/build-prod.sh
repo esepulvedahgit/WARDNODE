@@ -6,7 +6,7 @@ DIST=dist
 mkdir -p "$DIST"
 
 echo "==> Construyendo imágenes de producción..."
-docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml build --pull
 
 echo "==> Exportando wardnode-console:prod ..."
 docker save wardnode-console:prod | gzip > "$DIST/wardnode-console.tar.gz"

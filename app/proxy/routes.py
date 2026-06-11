@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote as _url_quote
 
-from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for, Response
 from sqlalchemy import func
 
 from app.audit.helpers import log_audit
@@ -27,10 +27,11 @@ from app.proxy import bp
 from flask_login import current_user
 
 from app.proxy.services import (
+    attack_events_to_csv,
     ensure_default_rule_categories,
     ensure_site_bot_protection,
     ensure_site_traffic_policy,
-    is_host_docker_internal,
+    is_local_upstream,
     parse_upstream_host_port,
     provision_letsencrypt,
     render_nginx_configs,
@@ -47,6 +48,9 @@ from app.proxy.security_headers import (
 from app.proxy.custom_rules import validate_custom_rule
 from app.proxy.geoip import get_country_code
 from app.proxy.geoip_blocklist import write_blocklist_conf, reload_nginx, COUNTRY_NAMES
+
+
+_RESERVED_PORTS = {22, 80, 443, 5000}
 
 
 @bp.before_app_request
@@ -140,31 +144,143 @@ def dashboard():
     )
 
 
-@bp.get("/events")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
-def events_list():
-    severity = request.args.get("severity", "")
-    action = request.args.get("action", "")
+# Tope máximo de filas para el export CSV (evita OOM en tablas grandes)
+_MAX_EXPORT_ROWS = 50_000
 
-    q = AttackEvent.query.order_by(AttackEvent.created_at.desc())
+
+def _parse_event_date(s: str):
+    """Parsea una fecha en formato YYYY-MM-DD; devuelve None si inválida."""
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_filtered_events_query(args):
+    """Construye la query de AttackEvent aplicando los filtros de la request.
+
+    Reutilizado tanto por events_list (vista paginada) como por events_export (CSV).
+    Devuelve la query ordenada por fecha descendente, lista para .limit().
+    """
+    severity  = args.get("severity", "")
+    action    = args.get("action", "")
+    domain    = args.get("domain", "").strip()
+    ip        = args.get("ip", "").strip()
+    date_from = args.get("date_from", "").strip()
+    date_to   = args.get("date_to", "").strip()
+
+    dt_from = _parse_event_date(date_from)
+    dt_to   = _parse_event_date(date_to)
+
+    q = AttackEvent.query
+    if domain:
+        q = q.filter(AttackEvent.domain == domain)
+    if ip:
+        q = q.filter(AttackEvent.source_ip.ilike(f"%{ip}%"))
+    if dt_from:
+        q = q.filter(AttackEvent.created_at >= dt_from)
+    if dt_to:
+        q = q.filter(AttackEvent.created_at < dt_to + timedelta(days=1))
     if severity in {"critical", "high", "medium", "low"}:
         q = q.filter(AttackEvent.severity == severity)
     if action in {"block", "detect"}:
         q = q.filter(AttackEvent.action == action)
-    events = q.limit(500).all()
+    return q.order_by(AttackEvent.created_at.desc())
 
-    counts = {"all": AttackEvent.query.count()}
+
+@bp.get("/events")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def events_list():
+    severity  = request.args.get("severity", "")
+    action    = request.args.get("action", "")
+    domain    = request.args.get("domain", "").strip()
+    ip        = request.args.get("ip", "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to   = request.args.get("date_to", "").strip()
+
+    events = _build_filtered_events_query(request.args).limit(500).all()
+
+    # Contadores coherentes con los filtros de dominio/IP/fechas (sin filtro sev/acción).
+    base_args = {k: v for k, v in request.args.items() if k not in ("severity", "action")}
+
+    def _apply_base(q):
+        """Aplica solo filtros de dominio, IP y fechas para contar por severidad/acción."""
+        _domain    = base_args.get("domain", "").strip()
+        _ip        = base_args.get("ip", "").strip()
+        _date_from = _parse_event_date(base_args.get("date_from", ""))
+        _date_to   = _parse_event_date(base_args.get("date_to", ""))
+        if _domain:
+            q = q.filter(AttackEvent.domain == _domain)
+        if _ip:
+            q = q.filter(AttackEvent.source_ip.ilike(f"%{_ip}%"))
+        if _date_from:
+            q = q.filter(AttackEvent.created_at >= _date_from)
+        if _date_to:
+            q = q.filter(AttackEvent.created_at < _date_to + timedelta(days=1))
+        return q
+
+    counts = {"all": _apply_base(AttackEvent.query).count()}
     for sev in ("critical", "high", "medium", "low"):
-        counts[sev] = AttackEvent.query.filter(AttackEvent.severity == sev).count()
-    counts["block"] = AttackEvent.query.filter(AttackEvent.action == "block").count()
-    counts["detect"] = AttackEvent.query.filter(AttackEvent.action == "detect").count()
+        counts[sev] = _apply_base(AttackEvent.query).filter(AttackEvent.severity == sev).count()
+    counts["block"]  = _apply_base(AttackEvent.query).filter(AttackEvent.action == "block").count()
+    counts["detect"] = _apply_base(AttackEvent.query).filter(AttackEvent.action == "detect").count()
+
+    # Dominios distintos que tienen eventos (para el desplegable de filtro).
+    domains = [
+        row[0] for row in
+        db.session.query(AttackEvent.domain).distinct().order_by(AttackEvent.domain).all()
+    ]
 
     return render_template(
         "proxy/events.html",
         events=events,
         severity=severity,
         action=action,
+        domain=domain,
+        ip=ip,
+        date_from=date_from,
+        date_to=date_to,
+        domains=domains,
         counts=counts,
+    )
+
+
+@bp.get("/events/export.csv")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def events_export():
+    """Exporta eventos WAF a CSV con feature engineering para el SOC con IA.
+
+    Parámetros de query:
+      - Filtros estándar (domain, ip, date_from, date_to, severity, action):
+        respetan la selección activa en la vista de eventos.
+      - scope=all: ignora los filtros y exporta todos los eventos (dump completo
+        para entrenamiento del modelo). Limitado a _MAX_EXPORT_ROWS filas.
+    """
+    scope = request.args.get("scope", "")
+
+    if scope == "all":
+        q = AttackEvent.query.order_by(AttackEvent.created_at.desc())
+    else:
+        q = _build_filtered_events_query(request.args)
+
+    events = q.limit(_MAX_EXPORT_ROWS).all()
+
+    csv_text = attack_events_to_csv(events)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    log_audit(
+        action="export",
+        resource_type="attack_events",
+        resource_name=f"wardnode_waf_events_{ts}.csv",
+        severity="info",
+        status="success",
+        detail={"rows": len(events), "scope": scope or "filtered", "filters": dict(request.args)},
+    )
+
+    return Response(
+        csv_text,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=wardnode_waf_events_{ts}.csv"},
     )
 
 
@@ -190,12 +306,11 @@ def create_site():
         return redirect(url_for("proxy.sites_list"))
 
     upstream_url = request.form["upstream_url"].strip()
-    _RESERVED_PORTS = {22, 80, 443, 5000}
 
-    if is_host_docker_internal(upstream_url):
+    if is_local_upstream(upstream_url):
         if AppConfig.get("module_wf_enabled") != "1":
             flash(
-                "Para proteger un upstream en host.docker.internal es necesario activar "
+                "Para proteger un upstream local (127.0.0.1) es necesario activar "
                 "el módulo WardNode WF primero.",
                 "danger",
             )
@@ -204,7 +319,7 @@ def create_site():
         if _port in _RESERVED_PORTS:
             flash(
                 f"El puerto {_port} está reservado (22, 80, 443, 5000) y no puede usarse "
-                "como upstream en host.docker.internal.",
+                "como upstream local.",
                 "danger",
             )
             return redirect(url_for("proxy.sites_list"))
@@ -228,21 +343,28 @@ def create_site():
     log_audit("site.create", resource_type="site", resource_name=site.domain,
               detail={"upstream": site.upstream_url, "waf": site.waf_enabled})
 
-    if is_host_docker_internal(upstream_url) and os.path.exists(_WF_SOCKET):
+    if is_local_upstream(upstream_url) and os.path.exists(_WF_SOCKET):
         _, _port = parse_upstream_host_port(upstream_url)
         _wf_result = _wf_send("protect_host_port", port=_port, timeout=15)
-        if _wf_result.get("ok"):
+        _verified = _wf_result.get("blocked", _wf_result.get("ok"))
+        if _wf_result.get("ok") and _verified:
             site.host_port_blocked = True
             db.session.commit()
             flash(
-                f"Sitio agregado al proxy. Puerto {_port} bloqueado automáticamente "
-                "(acceso externo denegado, proxy WAF permitido).",
+                f"Sitio agregado. Puerto {_port} verificado como bloqueado en iptables "
+                "(acceso externo denegado, solo el proxy WAF entra).",
                 "success",
+            )
+        elif _wf_result.get("ok"):
+            flash(
+                f"Sitio agregado. El bloqueo del puerto {_port} se ejecutó pero no pudo "
+                "verificarse. Revisá el estado en Módulos → WardNode WF.",
+                "warning",
             )
         else:
             flash(
-                f"Sitio agregado. No se pudo bloquear el puerto {_port} automáticamente "
-                f"({_wf_result.get('error', '')}). Puedes hacerlo desde el detalle del sitio.",
+                f"Sitio agregado. No se pudo bloquear el puerto {_port} "
+                f"({_wf_result.get('error', '')}). Podés gestionarlo desde Módulos → WardNode WF.",
                 "warning",
             )
     else:
@@ -260,14 +382,12 @@ def site_detail(site_id):
     ensure_site_security_headers(site)
     ensure_site_nginx_extra_config(site)
     ensure_site_bot_protection(site)
-    _is_hdi = is_host_docker_internal(site.upstream_url)
-    _hdi_port = parse_upstream_host_port(site.upstream_url)[1] if _is_hdi else None
+    _is_local = is_local_upstream(site.upstream_url)
     return render_template(
         "proxy/site_detail.html",
         site=site,
         country_names=COUNTRY_NAMES,
-        upstream_is_host_docker=_is_hdi,
-        upstream_host_port=_hdi_port,
+        upstream_is_local=_is_local,
     )
 
 
@@ -615,7 +735,7 @@ def render_configs():
 
 
 @bp.post("/sites/<int:site_id>/delete")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@roles_required(ROLE_ADMIN)
 @limiter.limit("10 per minute")
 def delete_site(site_id):
     from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
@@ -639,56 +759,105 @@ def delete_site(site_id):
     return redirect(url_for("proxy.dashboard"))
 
 
-@bp.post("/sites/<int:site_id>/host-port/protect")
+@bp.post("/sites/<int:site_id>/upstream")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("20 per minute")
-def host_port_protect(site_id):
+def update_site_upstream(site_id):
     from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
 
     site = Site.query.get_or_404(site_id)
-    if not is_host_docker_internal(site.upstream_url):
-        flash("Este sitio no usa un upstream host.docker.internal.", "danger")
-        return redirect(url_for("proxy.site_detail", site_id=site_id))
-    if AppConfig.get("module_wf_enabled") != "1" or not os.path.exists(_WF_SOCKET):
-        flash("El módulo WardNode WF no está activo.", "danger")
-        return redirect(url_for("proxy.site_detail", site_id=site_id))
-    _, port = parse_upstream_host_port(site.upstream_url)
-    result = _wf_send("protect_host_port", port=port, timeout=15)
-    if result.get("ok"):
-        site.host_port_blocked = True
-        db.session.commit()
-        log_audit("site.host_port.protect", resource_type="site", resource_name=site.domain,
-                  detail={"port": port})
-        flash(f"Puerto {port} bloqueado: acceso externo denegado, proxy WAF permitido.", "success")
-    else:
-        flash(f"Error al bloquear el puerto {port}: {result.get('error', '')}", "danger")
-    return redirect(url_for("proxy.site_detail", site_id=site_id))
 
+    if site.is_console:
+        flash(
+            "El upstream del sitio de la consola se gestiona desde "
+            "Ajustes → Acceso al panel.",
+            "danger",
+        )
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
 
-@bp.post("/sites/<int:site_id>/host-port/unprotect")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
-@limiter.limit("20 per minute")
-def host_port_unprotect(site_id):
-    from app.modules.socket_client import send_command as _wf_send, SOCKET_PATH as _WF_SOCKET
+    new_upstream = request.form.get("upstream_url", "").strip()
+    if not new_upstream:
+        flash("La URL del upstream no puede estar vacía.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
 
-    site = Site.query.get_or_404(site_id)
-    if not is_host_docker_internal(site.upstream_url):
-        flash("Este sitio no usa un upstream host.docker.internal.", "danger")
-        return redirect(url_for("proxy.site_detail", site_id=site_id))
-    if AppConfig.get("module_wf_enabled") != "1" or not os.path.exists(_WF_SOCKET):
-        flash("El módulo WardNode WF no está activo.", "danger")
-        return redirect(url_for("proxy.site_detail", site_id=site_id))
-    _, port = parse_upstream_host_port(site.upstream_url)
-    result = _wf_send("unprotect_host_port", port=port, timeout=15)
-    if result.get("ok"):
-        site.host_port_blocked = False
-        db.session.commit()
-        log_audit("site.host_port.unprotect", resource_type="site", resource_name=site.domain,
-                  detail={"port": port}, severity="warning")
-        flash(f"Puerto {port} desprotegido: acceso externo habilitado.", "warning")
-    else:
-        flash(f"Error al desproteger el puerto {port}: {result.get('error', '')}", "danger")
-    return redirect(url_for("proxy.site_detail", site_id=site_id))
+    if is_local_upstream(new_upstream):
+        if AppConfig.get("module_wf_enabled") != "1":
+            flash(
+                "Para usar un upstream local (127.0.0.1) es necesario activar "
+                "el módulo WardNode WF primero.",
+                "danger",
+            )
+            return redirect(url_for("proxy.site_detail", site_id=site.id))
+        _, _new_port = parse_upstream_host_port(new_upstream)
+        if _new_port in _RESERVED_PORTS:
+            flash(
+                f"El puerto {_new_port} está reservado (22, 80, 443, 5000) y no puede usarse "
+                "como upstream local.",
+                "danger",
+            )
+            return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+    if new_upstream == site.upstream_url:
+        flash("El upstream no cambió.", "info")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+    # Capturar estado previo antes de mutar
+    old_upstream = site.upstream_url
+    old_blocked = site.host_port_blocked
+    _, old_port = parse_upstream_host_port(old_upstream)
+
+    site.upstream_url = new_upstream
+    site.host_port_blocked = False
+    db.session.commit()
+
+    _apply_nginx()
+    log_audit(
+        "site.upstream_update",
+        resource_type="site",
+        resource_name=site.domain,
+        detail={"old": old_upstream, "new": new_upstream},
+        severity="warning",
+    )
+
+    # Gestionar transición de protección de puerto WF
+    _wf_flash_done = False
+    if os.path.exists(_WF_SOCKET):
+        # Desbloquear puerto viejo si estaba bloqueado
+        if old_blocked and is_local_upstream(old_upstream):
+            _wf_send("unprotect_host_port", port=old_port, timeout=15)
+
+        # Bloquear puerto nuevo si aplica
+        if is_local_upstream(new_upstream):
+            _, _new_port = parse_upstream_host_port(new_upstream)
+            _wf_result = _wf_send("protect_host_port", port=_new_port, timeout=15)
+            _verified = _wf_result.get("blocked", _wf_result.get("ok"))
+            if _wf_result.get("ok") and _verified:
+                site.host_port_blocked = True
+                db.session.commit()
+                flash(
+                    f"Upstream actualizado. Puerto {_new_port} verificado como bloqueado en iptables "
+                    "(acceso externo denegado, solo el proxy WAF entra).",
+                    "success",
+                )
+            elif _wf_result.get("ok"):
+                flash(
+                    f"Upstream actualizado. El bloqueo del puerto {_new_port} se ejecutó "
+                    "pero no pudo verificarse. Revisá el estado en Módulos → WardNode WF.",
+                    "warning",
+                )
+            else:
+                flash(
+                    f"Upstream actualizado. No se pudo bloquear el puerto {_new_port} "
+                    f"({_wf_result.get('error', '')}). "
+                    "Podés hacerlo desde esta misma página.",
+                    "warning",
+                )
+            _wf_flash_done = True
+
+    if not _wf_flash_done:
+        flash("Upstream actualizado correctamente.", "success")
+
+    return redirect(url_for("proxy.site_detail", site_id=site.id))
 
 
 @bp.post("/sites/<int:site_id>/geo-blocklist/add")
@@ -755,6 +924,14 @@ def settings():
 
     encryption_ready = bool(current_app.config.get("WARDNODE_SECRET_KEY"))
 
+    secrets_broken = False
+    if encryption_ready:
+        try:
+            from app.encryption import has_undecryptable_secrets
+            secrets_broken = has_undecryptable_secrets()
+        except Exception:
+            pass
+
     console_site = None
     console_site_id = AppConfig.get("console_site_id")
     if console_site_id and console_site_id.isdigit():
@@ -799,12 +976,34 @@ def settings():
         syslog_facility=syslog_facility,
         syslog_sources=syslog_sources,
         syslog_running=syslog_running,
+        secrets_broken=secrets_broken,
     )
+
+
+@bp.post("/settings/reset-secrets")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("3 per minute")
+def settings_reset_secrets():
+    import json
+    from app.encryption import reset_encrypted_secrets
+    from app.audit.helpers import log_audit
+    result = reset_encrypted_secrets()
+    log_audit(
+        "settings.reset_secrets",
+        resource_type="config",
+        severity="warning",
+        detail=json.dumps({"cleared_keys": result["keys"], "totp_reset": result["totp"]}),
+    )
+    flash(
+        f"Se borraron {result['secrets']} secreto(s) cifrado(s) y se restableció el 2FA de "
+        f"{result['totp']} usuario(s). Vuelve a ingresar las credenciales y re-inscribir 2FA.",
+        "warning",
+    )
+    return redirect(url_for("proxy.settings"))
 
 
 @bp.post("/dismiss-setup-prompt")
 @roles_required(ROLE_ADMIN)
-@csrf.exempt
 def dismiss_setup_prompt():
     AppConfig.set("setup_prompt_shown", "1")
     return jsonify({"ok": True})

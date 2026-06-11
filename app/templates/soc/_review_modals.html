@@ -1,0 +1,91 @@
+{# Modales compartidos de revisión humana (detalle.html y bitacora.html).
+   El botón disparador lleva data-action (URL de set_estado del incidente) y
+   el script del final la asigna al form en el evento show.bs.modal. #}
+
+{# ── Modal: marcar revisado con comentario obligatorio ─────────────── #}
+<div class="modal fade" id="reviewModal" tabindex="-1" aria-labelledby="reviewModalTitle" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" class="modal-content" id="reviewModalForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="estado" value="revisado">
+      <div class="modal-header">
+        <h5 class="modal-title h6" id="reviewModalTitle">
+          <i class="bi bi-check2-circle me-2" style="color:var(--accent)"></i>
+          Marcar incidente <span id="reviewModalIncident" class="t-mono"></span> como revisado
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label fw-medium" for="reviewComment" style="font-size:13px">
+          Comentario de la revisión <span class="text-danger">*</span>
+        </label>
+        <textarea class="form-control" id="reviewComment" name="comment" rows="4"
+                  maxlength="1000" required
+                  placeholder="Qué se evaluó y por qué se marca como revisado…"></textarea>
+        <div class="form-text">
+          Obligatorio — queda como evidencia de la revisión humana y se envía por
+          correo a los destinatarios de alertas del SOC.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-sm btn-success">
+          <i class="bi bi-check2 me-1"></i>Guardar revisión
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Modal: ver revisión guardada (solo lectura) ───────────────────── #}
+<div class="modal fade" id="viewReviewModal" tabindex="-1" aria-labelledby="viewReviewModalTitle" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title h6" id="viewReviewModalTitle">
+          <i class="bi bi-journal-check me-2" style="color:var(--accent)"></i>Revisión humana
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" style="font-size:13px">
+        <div class="mb-2">
+          <span style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Revisado por</span>
+          <div class="t-mono" id="viewReviewReviewer"></div>
+        </div>
+        <div class="mb-2">
+          <span style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Fecha</span>
+          <div class="t-mono" id="viewReviewDate"></div>
+        </div>
+        <div>
+          <span style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase">Comentario</span>
+          <div id="viewReviewComment" style="white-space:pre-wrap"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Guarda anti doble-init: si el partial se incluyera dos veces, los IDs
+  // duplicados y el doble registro de listeners romperían los modales.
+  if (!window.__wnReviewModalsInit) {
+    window.__wnReviewModalsInit = true;
+    document.getElementById("reviewModal").addEventListener("show.bs.modal", function (event) {
+      var btn = event.relatedTarget;
+      if (!btn) return;
+      document.getElementById("reviewModalForm").action = btn.dataset.action || "";
+      document.getElementById("reviewModalIncident").textContent = btn.dataset.incident ? "#" + btn.dataset.incident : "";
+      document.getElementById("reviewComment").value = "";
+    });
+    document.getElementById("viewReviewModal").addEventListener("show.bs.modal", function (event) {
+      var btn = event.relatedTarget;
+      if (!btn) return;
+      document.getElementById("viewReviewReviewer").textContent = btn.dataset.reviewer || "—";
+      document.getElementById("viewReviewDate").textContent = btn.dataset.reviewedAt || "—";
+      document.getElementById("viewReviewComment").textContent = btn.dataset.comment || "—";
+    });
+  }
+</script>

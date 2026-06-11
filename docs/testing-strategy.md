@@ -179,3 +179,11 @@ def test_wf_requires_admin_role(client, login_as, monkeypatch):
 | Módulos OBS + SYS | `test_modules.py` |
 | Validadores (rules, headers, nginx extra) | `test_security.py` |
 | Pipeline de ingesta ModSecurity | `test_proxy.py` (sección ingest) |
+| SOC (detección, enriquecimiento, LLM, schema, config, MITRE CTI, alertas, ML) | `test_soc.py` |
+
+### Notas del módulo SOC
+
+- Los proveedores LLM y la sync MITRE se mockean parcheando `httpx.stream` (helper `_make_stream_mock` en `test_soc.py`).
+- Las alertas se mockean parcheando `app.email.send_soc_alert_email` y `httpx.post` (Telegram) — los tests verifican que el bot token jamás aparece en el audit log.
+- Los tests de ML usan scikit-learn real con un dataset sintético variado (`_seed_ml_history`); un training set homogéneo degenera la calibración del score y satura a 100.
+- En Python ≥ 3.11, `203.0.113.x` (TEST-NET-3) es `is_private=True` — usar `1.2.3.4` cuando el test deba pasar el guard `_is_public_ip`.

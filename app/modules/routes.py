@@ -4,7 +4,7 @@ import re
 import threading
 import time
 
-from flask import jsonify, redirect, render_template, request, url_for
+from flask import jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from app.audit.helpers import log_audit
@@ -41,6 +41,15 @@ MODULES = [
         "icon": "bi-bar-chart-line-fill",
         "config_key": "module_obs_enabled",
         "endpoint": "modules.obs_index",
+    },
+    {
+        "id": "soc",
+        "name": "WardNode SOC",
+        "description": "Centro de operaciones de seguridad: correlaciona eventos WAF en "
+                       "incidentes, los enriquece con threat intel y los analiza con IA.",
+        "icon": "bi-robot",
+        "config_key": "module_soc_enabled",
+        "endpoint": "soc.index",
     },
 ]
 
@@ -142,7 +151,7 @@ def _wf_required():
 
 
 @bp.get("/wf/")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_index():
     if (r := _wf_required()):
         return r
@@ -426,7 +435,7 @@ def wf_generate_key():
 
 
 @bp.post("/wf/status")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_status():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -441,7 +450,7 @@ def wf_status():
 
 
 @bp.post("/wf/init")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_init():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -452,7 +461,7 @@ def wf_init():
 
 
 @bp.post("/wf/allow")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_allow():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -475,7 +484,7 @@ def wf_allow():
 
 
 @bp.post("/wf/deny")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_deny():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -498,7 +507,7 @@ def wf_deny():
 
 
 @bp.post("/wf/delete")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_delete():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -509,7 +518,7 @@ def wf_delete():
 
 
 @bp.post("/wf/ipv6-status")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_ipv6_status():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -517,7 +526,7 @@ def wf_ipv6_status():
 
 
 @bp.post("/wf/set-ipv6")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def wf_set_ipv6():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
@@ -528,7 +537,7 @@ def wf_set_ipv6():
 
 
 @bp.post("/wf/docker-ports")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("30 per minute")
 def wf_docker_ports():
     r = _wf_required()
@@ -572,7 +581,7 @@ def wf_unprotect_port():
 
 
 @bp.post("/wf/limit-ssh")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("10 per minute")
 def wf_limit_ssh():
     r = _wf_required()
@@ -588,7 +597,7 @@ def wf_limit_ssh():
 
 
 @bp.post("/wf/unlimit-ssh")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("10 per minute")
 def wf_unlimit_ssh():
     r = _wf_required()
@@ -620,12 +629,15 @@ _OBS_NGINX_CONF = (
     "    location /obs/ {\n"
     "        modsecurity off;\n"
     "        auth_request /_wardnode_obs_auth;\n"
+    "        auth_request_set $wn_user $upstream_http_x_webauth_user;\n"
+    "        auth_request_set $wn_role $upstream_http_x_webauth_role;\n"
     "        proxy_pass         http://127.0.0.1:3000$request_uri;\n"
     "        proxy_set_header   Host              $host;\n"
     "        proxy_set_header   X-Real-IP         $remote_addr;\n"
     "        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;\n"
     "        proxy_set_header   X-Forwarded-Proto $scheme;\n"
-    "        proxy_set_header   X-WEBAUTH-USER    admin;\n"
+    "        proxy_set_header   X-WEBAUTH-USER    $wn_user;\n"
+    "        proxy_set_header   X-WEBAUTH-ROLE    $wn_role;\n"
     "        proxy_http_version 1.1;\n"
     "        proxy_set_header   Upgrade           $http_upgrade;\n"
     "        proxy_set_header   Connection        \"upgrade\";\n"
@@ -830,7 +842,7 @@ def obs_activate():
 
 
 @bp.get("/obs/")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def obs_index():
     if (r := _obs_required()):
         return r
@@ -838,7 +850,7 @@ def obs_index():
 
 
 @bp.get("/obs/fullscreen")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def obs_fullscreen():
     if (r := _obs_required()):
         return r
@@ -852,13 +864,17 @@ def obs_auth():
         return "", 403
     if not current_user.is_authenticated:
         return "", 401
-    if not current_user.has_role(ROLE_ADMIN):
+    if not current_user.has_role(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER):
         return "", 403
-    return "", 204
+    grafana_role = "Editor" if current_user.has_role(ROLE_ADMIN) else "Viewer"
+    resp = make_response("", 204)
+    resp.headers["X-WEBAUTH-USER"] = f"wn-{current_user.id}"
+    resp.headers["X-WEBAUTH-ROLE"] = grafana_role
+    return resp
 
 
 @bp.post("/obs/status")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def obs_status():
     if AppConfig.get("module_obs_enabled") != "1":
         return jsonify({"ok": False, "loki": False, "grafana": False, "alloy": False,
@@ -916,7 +932,7 @@ def _grafana_http_ready(timeout: float = 2.0) -> bool:
 
 
 @bp.post("/obs/grafana-ready")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def obs_grafana_ready():
     """Probe ligero de readiness HTTP de Grafana — sin Docker ni reloads de Nginx.
     Diseñado para polling frecuente desde el frontend (cada ~3 s)."""

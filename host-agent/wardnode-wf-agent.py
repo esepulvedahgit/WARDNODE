@@ -141,7 +141,16 @@ def _protect_host_port(port: str) -> dict:
     ports = _load_protected_ports()
     ports[port] = True
     _save_protected_ports(ports)
-    return {"ok": True, "output": f"Puerto {port} asegurado: acceso externo bloqueado vía raw/PREROUTING"}
+    verified = _is_host_port_blocked(port)
+    return {
+        "ok": True,
+        "blocked": verified,
+        "output": (
+            f"Puerto {port} asegurado y verificado en iptables raw/PREROUTING"
+            if verified else
+            f"Puerto {port}: reglas insertadas pero la verificación iptables no confirma el bloqueo"
+        ),
+    }
 
 
 def _unprotect_host_port(port: str) -> dict:
