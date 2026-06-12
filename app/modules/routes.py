@@ -1088,8 +1088,10 @@ def ddos_status():
             if exit_code == 0:
                 raw = output.decode("utf-8", errors="replace").strip()
                 bouncers = json.loads(raw) if raw else []
+                # El registro lo crea BOUNCER_KEY_wardnode (env) → nombre 'wardnode'
                 bouncer_authed = any(
-                    b.get("name") == "wardnode-bouncer" for b in (bouncers or [])
+                    b.get("name") == "wardnode" and not b.get("revoked")
+                    for b in (bouncers or [])
                 )
             else:
                 bouncer_authed = False
@@ -1280,14 +1282,38 @@ def ddos_activate():
                      "Revisa logs con: docker logs <nombre>",
         }), 500
 
-    # ── Fase 4: registrar bouncer key en el daemon CrowdSec ───────────────
+    # ── Fase 4: asegurar el registro de la bouncer key en el daemon ───────
+    # El registro normal lo hace la imagen oficial al crear el contenedor, vía
+    # BOUNCER_KEY_wardnode (env del compose) → bouncer 'wardnode'. Esta fase
+    # solo repara el caso fail-open: contenedor creado sin la key (p.ej.
+    # recreación manual de compose) → sin registro, el bouncer no autentica.
+    # Nota: cscli bouncers add no soporta --overwrite en esta versión; por eso
+    # se consulta primero y solo se registra si falta o está revocado.
     try:
         crowdsec_c = client.containers.get("wardnode-crowdsec")
-        crowdsec_c.exec_run(
-            ["cscli", "bouncers", "add", "wardnode-bouncer",
-             "--key", bouncer_key, "--overwrite"],
-            user="root",
+        exit_code, output = crowdsec_c.exec_run(
+            ["cscli", "bouncers", "list", "-o", "json"], user="root"
         )
+        raw = output.decode("utf-8", errors="replace").strip() if exit_code == 0 else ""
+        entries = (json.loads(raw) if raw else []) or []
+        wn = next((b for b in entries if b.get("name") == "wardnode"), None)
+        if wn is None or wn.get("revoked"):
+            if wn is not None:
+                crowdsec_c.exec_run(
+                    ["cscli", "bouncers", "delete", "wardnode"], user="root"
+                )
+            # La key viaja por env del exec (no por argv): /proc/<pid>/environ
+            # es solo-root, mientras que cmdline es world-readable dentro del
+            # contenedor. El comando es una cadena literal fija — la key nunca
+            # se interpola.
+            exit_code, _ = crowdsec_c.exec_run(
+                ["/bin/sh", "-c",
+                 'exec cscli bouncers add wardnode --key "$WN_BOUNCER_KEY"'],
+                environment={"WN_BOUNCER_KEY": bouncer_key},
+                user="root",
+            )
+            if exit_code != 0:
+                raise RuntimeError(f"cscli bouncers add terminó con código {exit_code}")
     except Exception as e:
         log_audit("ddos.activate", resource_type="module", resource_name="ddos",
                   status="failure", severity="error",

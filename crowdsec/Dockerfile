@@ -26,7 +26,10 @@ https://packagecloud.io/crowdsec/crowdsec/debian bookworm main" \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       "crowdsec-firewall-bouncer-nftables=${BOUNCER_VERSION}" \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ # Eliminar la config por defecto del paquete (placeholder <API_KEY>, sin secreto):
+ # la config real se renderiza en /dev/shm (tmpfs) por entrypoint.sh.
+ && rm -f /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
 
 COPY firewall-bouncer.yaml.tpl /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml.tpl
 COPY entrypoint.sh /entrypoint.sh

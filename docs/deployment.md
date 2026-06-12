@@ -185,6 +185,8 @@ docker compose restart proxy
 ## Notas de seguridad
 
 - Cambiar `SECRET_KEY` y `WARDNODE_SECRET_KEY` antes del primer arranque en producción. Si `WARDNODE_SECRET_KEY` cambia después de almacenar secretos, éstos quedarán ilegibles.
+- **Puerto 5000 (riesgo aceptado):** la consola escucha en `0.0.0.0:5000` por diseño, para permitir el primer inicio y la creación del admin (`/auth/setup`) antes de que exista un dominio. Al generar el dominio, el puerto se bloquea automáticamente en el firewall. Verificar tras el setup inicial: `sudo ufw status | grep 5000` debe mostrar el puerto denegado para origen público.
+- **Bouncer key del módulo DDoS:** la config renderizada del bouncer (que contiene la key en claro) se escribe en `/dev/shm` (tmpfs, solo RAM) — nunca persiste en disco. Límite conocido y aceptado: la key sigue visible en el env del contenedor (`docker inspect`), legible solo por root del host; es inherente al diseño de inyección por entorno.
 - Usar `SESSION_COOKIE_SECURE=true` siempre que haya HTTPS.
 - El socket Unix del host-agent (`/run/wardnode/wardnode-wf.sock`) debe pertenecer al grupo `wardnode` (GID 1500). El script `install.sh` lo configura automáticamente.
 - El contenedor console monta `/var/run/docker.sock` para gestionar otros contenedores. Asegurarse de que solo el usuario del host con privilegios tenga acceso a este socket.
