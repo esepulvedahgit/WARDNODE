@@ -184,7 +184,9 @@ services:
 
   # ── WardNode DDoS — CrowdSec SSH brute-force protection ─────────────
   crowdsec:
-    image: crowdsecurity/crowdsec:latest
+    # Pin por digest para builds reproducibles (supply chain hardening).
+    # Para actualizar: docker pull crowdsecurity/crowdsec:latest && docker inspect --format '{{index .RepoDigests 0}}'
+    image: crowdsecurity/crowdsec@sha256:2f527c9bb8b367120eb08b82890aa912ce96bfa1ada93dda0721700e4b4e0dde
     container_name: wardnode-crowdsec
     restart: unless-stopped
     profiles:

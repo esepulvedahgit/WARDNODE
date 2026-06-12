@@ -1104,8 +1104,14 @@ def ddos_activate():
         try:
             AppConfig.set("ddos_bouncer_key", encrypt_secret(bouncer_key), encrypted=True)
         except EncryptionNotConfigured:
-            # Sin clave de cifrado: usa la clave en memoria (se perderá al reiniciar)
-            pass
+            return jsonify({
+                "ok": False, "step": "secret",
+                "error": (
+                    "WARDNODE_SECRET_KEY no está configurada; no se puede persistir la "
+                    "bouncer key de forma segura. Configúrala en el entorno del contenedor "
+                    "consola y reinícialo antes de activar el módulo DDoS."
+                ),
+            }), 400
 
     # ── Fase 1: intentar iniciar contenedores existentes via SDK ──────────
     not_found = []
@@ -1374,10 +1380,14 @@ def ddos_safe_ips_update():
     raw = request.form.get("safe_ips", "").strip()
     # Validar cada IP antes de guardar
     import ipaddress
-    ips = [s.strip() for s in raw.split(",") if s.strip()]
-    for candidate in ips:
+    ips = []
+    for candidate in raw.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
         try:
-            ipaddress.ip_address(candidate)
+            # Normalizar a forma canónica antes de guardar (evita bypass por forma equivalente)
+            ips.append(str(ipaddress.ip_address(candidate)))
         except ValueError:
             return jsonify({"ok": False, "error": f"IP inválida en la lista: {candidate}"}), 400
     AppConfig.set("ddos_safe_ips", ",".join(ips))
