@@ -1,0 +1,6 @@
+api:
+  server:
+    # Sobrescribe el listen_uri por defecto (8080) — se carga encima de config.yaml
+    # via el mecanismo .local de CrowdSec (v1.4+). Evita conflicto de puerto en el VPS.
+    # En dev (docker-compose.yml) este archivo NO se monta.
+    listen_uri: 127.0.0.1:9080
