@@ -231,6 +231,15 @@ services:
       - ddos
     # network_mode host: cscli puede conectar a bouncers en localhost del host.
     network_mode: host
+    # Fuerza listen_uri=127.0.0.1:9080 escribiendo config.yaml.local antes de arrancar.
+    # Evita el footgun de Docker (crea directorio si el fichero fuente no existe en el host).
+    # ENTRYPOINT oficial de la imagen: ["/bin/bash", "/docker_start.sh"].
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf 'api:\n  server:\n    listen_uri: 127.0.0.1:9080\n' > /etc/crowdsec/config.yaml.local
+        exec /bin/bash /docker_start.sh
     environment:
       # Clave pre-registrada para el bouncer. WARDNODE_DDOS_BOUNCER_KEY
       # se inyecta por Flask en runtime — nunca se escribe a disco.
@@ -244,9 +253,6 @@ services:
       - crowdsec-data:/var/lib/crowdsec/data
       # acquis.yaml define fuentes SSH (auth.log + journald)
       - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/ssh.yaml:ro
-      # Override del listen_uri del LAPI (0.0.0.0:8080 → 127.0.0.1:9080).
-      # El mecanismo .local de CrowdSec (v1.4+) se mergea en cada arranque.
-      - ./crowdsec/config.yaml.local:/etc/crowdsec/config.yaml.local:ro
       # Logs SSH del host montados solo-lectura
       - /var/log/auth.log:/var/log/auth.log:ro
       - /var/log/journal:/var/log/journal:ro

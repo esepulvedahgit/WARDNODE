@@ -125,17 +125,15 @@ Equivalente manual (si no se usa el panel):
 docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
 ```
 
-> **Conflicto con el puerto 8080:** si el host ya usa el 8080, el LAPI de CrowdSec está
-> configurado en el **9080** a través de tres ajustes coordinados:
-> - `crowdsec/config.yaml.local` (bind-mount `:ro`) → sobrescribe `api.server.listen_uri`
->   usando el mecanismo oficial `.local` de CrowdSec (v1.4+, se mergea en cada arranque).
-> - `LOCAL_API_URL: http://127.0.0.1:9080` en el daemon → fija a dónde se conecta el agente interno.
+> **Conflicto con el puerto 8080:** el LAPI está configurado en el **9080** mediante tres
+> ajustes coordinados en `docker-compose.vps.yml`:
+> - `entrypoint` del daemon → escribe `config.yaml.local` dentro del contenedor en cada
+>   arranque, forzando `api.server.listen_uri: 127.0.0.1:9080` (sin depender de archivos en el host).
+> - `LOCAL_API_URL: http://127.0.0.1:9080` → fija a dónde se conecta el agente interno.
 > - `API_URL: http://127.0.0.1:9080` en el bouncer → fija a dónde se conecta el bouncer.
 >
 > **Nota:** `LOCAL_API_URL` solo controla dónde se *conecta* el agente, no dónde el servidor
-> *escucha*. Para cambiar el listen hay que usar `config.yaml.local`.
-> Para usar otro puerto, cambia `listen_uri` en `config.yaml.local` y ambas variables al
-> mismo valor, reconstruye el bouncer y recarga la imagen en el VPS.
+> *escucha*. Para cambiar a otro puerto, edita los tres valores en `docker-compose.vps.yml`.
 
 ---
 
