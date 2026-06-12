@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import threading
@@ -1050,7 +1051,7 @@ def _ddos_client():
 
 
 @bp.get("/ddos/")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@roles_required(ROLE_ADMIN)
 def ddos_index():
     if (r := _ddos_required()):
         return r
@@ -1059,21 +1060,47 @@ def ddos_index():
 
 
 @bp.get("/ddos/status")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@roles_required(ROLE_ADMIN)
 def ddos_status():
     if AppConfig.get("module_ddos_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo DDoS no habilitado"}), 403
     running = set()
+    client = None
     try:
         import docker as docker_sdk
         client = docker_sdk.from_env()
         running = {c.name for c in client.containers.list()}
     except Exception:
         pass
+
+    crowdsec_up = "wardnode-crowdsec" in running
+    bouncer_up  = "wardnode-crowdsec-bouncer" in running
+
+    # Detecta fail-open: bouncer corre pero no autenticó contra el LAPI
+    # (ocurre si el contenedor arrancó sin la bouncer key inyectada por Flask).
+    bouncer_authed = None  # None = no se pudo verificar
+    if crowdsec_up and client is not None:
+        try:
+            cs = client.containers.get("wardnode-crowdsec")
+            exit_code, output = cs.exec_run(
+                ["cscli", "bouncers", "list", "-o", "json"], user="root"
+            )
+            if exit_code == 0:
+                raw = output.decode("utf-8", errors="replace").strip()
+                bouncers = json.loads(raw) if raw else []
+                bouncer_authed = any(
+                    b.get("name") == "wardnode-bouncer" for b in (bouncers or [])
+                )
+            else:
+                bouncer_authed = False
+        except Exception:
+            pass
+
     return jsonify({
-        "ok":      all(n in running for n in _DDOS_CONTAINERS),
-        "crowdsec": "wardnode-crowdsec"         in running,
-        "bouncer":  "wardnode-crowdsec-bouncer" in running,
+        "ok":             crowdsec_up and bouncer_up,
+        "crowdsec":       crowdsec_up,
+        "bouncer":        bouncer_up,
+        "bouncer_authed": bouncer_authed,
     })
 
 
@@ -1086,12 +1113,16 @@ def ddos_activate():
     try:
         import docker as docker_sdk
     except ImportError:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="warning", detail=json.dumps({"step": "docker"}))
         return jsonify({"ok": False, "step": "docker",
                         "error": "SDK de Docker no instalado en el contenedor"}), 500
 
     try:
         client = docker_sdk.from_env()
     except Exception as e:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="warning", detail=json.dumps({"step": "docker"}))
         return jsonify({"ok": False, "step": "docker",
                         "error": f"Docker no disponible: {e}"}), 500
 
@@ -1107,6 +1138,8 @@ def ddos_activate():
         try:
             AppConfig.set("ddos_bouncer_key", encrypt_secret(bouncer_key), encrypted=True)
         except EncryptionNotConfigured:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error", detail=json.dumps({"step": "secret"}))
             return jsonify({
                 "ok": False, "step": "secret",
                 "error": (
@@ -1126,6 +1159,9 @@ def ddos_activate():
         except docker_sdk.errors.NotFound:
             not_found.append(name)
         except Exception as e:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "containers", "container": name}))
             return jsonify({"ok": False, "step": "containers",
                             "error": f"Error al iniciar {name}: {e}"}), 500
 
@@ -1133,6 +1169,9 @@ def ddos_activate():
     if not_found:
         project_dir = os.environ.get("WARDNODE_PROJECT_DIR", "").strip()
         if not project_dir:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail=json.dumps({"step": "compose", "reason": "WARDNODE_PROJECT_DIR no configurada"}))
             return jsonify({
                 "ok": False, "step": "compose",
                 "error": (
@@ -1144,6 +1183,9 @@ def ddos_activate():
 
         compose_file = os.path.join(project_dir, "docker-compose.vps.yml")
         if not os.path.isfile(compose_file):
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail=json.dumps({"step": "compose", "reason": "docker-compose.vps.yml no encontrado"}))
             return jsonify({
                 "ok": False, "step": "compose",
                 "error": (
@@ -1162,6 +1204,9 @@ def ddos_activate():
             )
             known = preflight.stdout.strip().splitlines()
             if "crowdsec" not in known or "crowdsec-bouncer" not in known:
+                log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                          status="failure", severity="warning",
+                          detail=json.dumps({"step": "compose", "reason": "perfil ddos no definido en compose"}))
                 return jsonify({
                     "ok": False, "step": "compose",
                     "error": (
@@ -1184,14 +1229,23 @@ def ddos_activate():
                 env={**os.environ, "WARDNODE_DDOS_BOUNCER_KEY": bouncer_key},
             )
         except FileNotFoundError:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "reason": "docker compose no encontrado"}))
             return jsonify({"ok": False, "step": "compose",
                             "error": "Comando 'docker compose' no encontrado."}), 500
         except subprocess.TimeoutExpired:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "reason": "timeout >120s"}))
             return jsonify({"ok": False, "step": "compose",
                             "error": "Timeout al ejecutar docker compose (>120 s)."}), 500
 
         if result.returncode != 0:
             err_output = (result.stderr or result.stdout or "").strip()
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "rc": result.returncode}))
             return jsonify({"ok": False, "step": "compose",
                             "error": f"docker compose falló (código {result.returncode}): {err_output[:500]}"}), 500
 
@@ -1217,6 +1271,9 @@ def ddos_activate():
                     not_running.append(f"{n} ({c.status})")
             except Exception:
                 not_running.append(f"{n} (no encontrado)")
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="error",
+                  detail=json.dumps({"step": "health", "not_running": not_running}))
         return jsonify({
             "ok": False, "step": "health",
             "error": f"Contenedores no arrancaron: {', '.join(not_running)}. "
@@ -1232,6 +1289,9 @@ def ddos_activate():
             user="root",
         )
     except Exception as e:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="error",
+                  detail=json.dumps({"step": "bouncer_key"}))
         return jsonify({"ok": False, "step": "bouncer_key",
                         "error": f"No se pudo registrar la bouncer key: {e}"}), 500
 
@@ -1279,7 +1339,7 @@ def ddos_deactivate():
 
 
 @bp.post("/ddos/decisions")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@roles_required(ROLE_ADMIN)
 @limiter.limit("30 per minute")
 def ddos_decisions():
     if AppConfig.get("module_ddos_enabled") != "1":
