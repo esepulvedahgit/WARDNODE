@@ -89,6 +89,42 @@ docker compose -f docker-compose.vps.yml --profile obs up -d
 
 Configurar `WARDNODE_PROJECT_DIR` en `.env` apuntando al directorio raíz del proyecto en el host (necesario para que el panel pueda levantar los contenedores OBS desde la UI).
 
+### WardNode DDoS (CrowdSec brute-force SSH)
+
+Protege el SSH del host detectando y bloqueando ataques de fuerza bruta.
+Usa dos contenedores: `wardnode-crowdsec` (daemon, imagen pública pinada por digest)
+y `wardnode-crowdsec-bouncer` (firewall nftables, **imagen propia**).
+
+**Preparación antes de activar en producción:**
+
+1. Construir la imagen del bouncer en desarrollo:
+   ```bash
+   bash scripts/build-prod.sh   # genera dist/wardnode-crowdsec-bouncer.tar.gz entre otros
+   ```
+
+2. Transferir al VPS (además de console y proxy):
+   ```bash
+   scp dist/wardnode-crowdsec-bouncer.tar.gz usuario@VPS:~/wardnode/
+   # El daemon monta crowdsec/acquis.yaml por ruta relativa — el dir debe existir en el VPS:
+   scp -r crowdsec usuario@VPS:~/wardnode/
+   ```
+
+3. Cargar la imagen en el VPS:
+   ```bash
+   docker load -i wardnode-crowdsec-bouncer.tar.gz
+   ```
+
+4. Activar desde el panel: **Módulos → WardNode DDoS → Activar**.
+
+> **Nota:** el daemon (`crowdsecurity/crowdsec`) usa imagen pública; se descarga
+> automáticamente. Solo el bouncer requiere transferencia previa. Si la imagen del
+> bouncer no está cargada, la activación fallará con `pull access denied`.
+
+Equivalente manual (si no se usa el panel):
+```bash
+docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
+```
+
 ---
 
 ## MaxMind GeoIP
