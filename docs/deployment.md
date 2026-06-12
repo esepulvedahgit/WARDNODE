@@ -105,8 +105,6 @@ y `wardnode-crowdsec-bouncer` (firewall nftables, **imagen propia**).
 2. Transferir al VPS (además de console y proxy):
    ```bash
    scp dist/wardnode-crowdsec-bouncer.tar.gz usuario@VPS:~/wardnode/
-   # El daemon monta crowdsec/acquis.yaml por ruta relativa — el dir debe existir en el VPS:
-   scp -r crowdsec usuario@VPS:~/wardnode/
    ```
 
 3. Cargar la imagen en el VPS:
@@ -125,15 +123,18 @@ Equivalente manual (si no se usa el panel):
 docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
 ```
 
-> **Conflicto con el puerto 8080:** el LAPI está configurado en el **9080** mediante tres
-> ajustes coordinados en `docker-compose.vps.yml`:
-> - `entrypoint` del daemon → escribe `config.yaml.local` dentro del contenedor en cada
->   arranque, forzando `api.server.listen_uri: 127.0.0.1:9080` (sin depender de archivos en el host).
-> - `LOCAL_API_URL: http://127.0.0.1:9080` → fija a dónde se conecta el agente interno.
-> - `API_URL: http://127.0.0.1:9080` en el bouncer → fija a dónde se conecta el bouncer.
+> **Sin archivos de config en el host:** el `entrypoint` del daemon genera **dos** archivos
+> dentro del contenedor en cada arranque, sin depender de nada del host:
+> - `config.yaml.local` → fuerza `api.server.listen_uri: 127.0.0.1:9080`.
+> - `acquis.d/ssh.yaml` → define las fuentes de adquisición SSH (`/var/log/auth.log` +
+>   journald `sshd`). Un `rm -rf` previo repara automáticamente cualquier estado corrupto
+>   que pudieran haber dejado arranques fallidos anteriores.
+>
+> Además, `LOCAL_API_URL: http://127.0.0.1:9080` fija dónde se conecta el agente interno y
+> `API_URL: http://127.0.0.1:9080` en el bouncer fija a dónde se conecta el bouncer.
 >
 > **Nota:** `LOCAL_API_URL` solo controla dónde se *conecta* el agente, no dónde el servidor
-> *escucha*. Para cambiar a otro puerto, edita los tres valores en `docker-compose.vps.yml`.
+> *escucha*. Para cambiar de puerto, edita los tres valores en `docker-compose.vps.yml`.
 
 ---
 

@@ -231,14 +231,18 @@ services:
       - ddos
     # network_mode host: cscli puede conectar a bouncers en localhost del host.
     network_mode: host
-    # Fuerza listen_uri=127.0.0.1:9080 escribiendo config.yaml.local antes de arrancar.
-    # Evita el footgun de Docker (crea directorio si el fichero fuente no existe en el host).
+    # Genera archivos de config dentro del contenedor en cada arranque — sin depender de
+    # archivos del host. Evita el footgun de Docker (crea directorio si el fuente no existe).
     # ENTRYPOINT oficial de la imagen: ["/bin/bash", "/docker_start.sh"].
+    # Contenido de acquis.d/ssh.yaml equivale a crowdsec/acquis.yaml (referencia para dev).
     entrypoint:
       - /bin/sh
       - -c
       - |
         printf 'api:\n  server:\n    listen_uri: 127.0.0.1:9080\n' > /etc/crowdsec/config.yaml.local
+        mkdir -p /etc/crowdsec/acquis.d
+        rm -rf /etc/crowdsec/acquis.d/ssh.yaml
+        printf '%s\n' '---' 'filenames:' '  - /var/log/auth.log' 'labels:' '  type: syslog' '---' 'source: journalctl' 'journalctl_filter:' '  - "_SYSTEMD_UNIT=ssh.service"' 'labels:' '  type: syslog' > /etc/crowdsec/acquis.d/ssh.yaml
         exec /bin/bash /docker_start.sh
     environment:
       # Clave pre-registrada para el bouncer. WARDNODE_DDOS_BOUNCER_KEY
@@ -251,8 +255,6 @@ services:
     volumes:
       - crowdsec-config:/etc/crowdsec
       - crowdsec-data:/var/lib/crowdsec/data
-      # acquis.yaml define fuentes SSH (auth.log + journald)
-      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/ssh.yaml:ro
       # Logs SSH del host montados solo-lectura
       - /var/log/auth.log:/var/log/auth.log:ro
       - /var/log/journal:/var/log/journal:ro
