@@ -125,6 +125,13 @@ Equivalente manual (si no se usa el panel):
 docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
 ```
 
+> **Conflicto con el puerto 8080:** si el host ya usa el 8080, el LAPI de CrowdSec ya
+> está configurado en `docker-compose.vps.yml` para escuchar en el **9080** (`LOCAL_API_URL`
+> en el daemon + `API_URL` en el bouncer). Si necesitas otro puerto, cambia ambas
+> variables en `docker-compose.vps.yml` al mismo valor, reconstruye el bouncer con
+> `docker compose -f docker-compose.prod.yml build crowdsec-bouncer` y recarga la imagen
+> en el VPS.
+
 ---
 
 ## MaxMind GeoIP

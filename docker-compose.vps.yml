@@ -236,6 +236,9 @@ services:
       # se inyecta por Flask en runtime — nunca se escribe a disco.
       BOUNCER_KEY_wardnode: "${WARDNODE_DDOS_BOUNCER_KEY}"
       COLLECTIONS: "crowdsecurity/sshd"
+      # Mover LAPI a 9080 para evitar conflicto con el puerto 8080 del host.
+      # El bouncer también debe apuntar a este puerto vía API_URL.
+      LOCAL_API_URL: "http://127.0.0.1:9080"
     volumes:
       - crowdsec-config:/etc/crowdsec
       - crowdsec-data:/var/lib/crowdsec/data
@@ -258,6 +261,8 @@ services:
       - NET_ADMIN
     environment:
       API_KEY: "${WARDNODE_DDOS_BOUNCER_KEY}"
+      # Debe coincidir con LOCAL_API_URL del daemon (9080 en producción).
+      API_URL: "http://127.0.0.1:9080"
     depends_on:
       - crowdsec
 

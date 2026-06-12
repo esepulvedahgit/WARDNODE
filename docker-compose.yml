@@ -213,6 +213,9 @@ services:
       - NET_ADMIN
     environment:
       API_KEY: "${WARDNODE_DDOS_BOUNCER_KEY:-dev-key-placeholder}"
+      # En dev usamos red bridge — el daemon es accesible por nombre de servicio,
+      # no por 127.0.0.1 (que apuntaría al bouncer mismo). Puerto 8080 por defecto.
+      API_URL: "http://crowdsec:8080"
     depends_on:
       - crowdsec
     networks:

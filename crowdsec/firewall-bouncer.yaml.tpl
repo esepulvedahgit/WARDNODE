@@ -1,6 +1,6 @@
 # Plantilla de configuración del firewall-bouncer.
 # ${API_KEY} es sustituido por entrypoint.sh en tiempo de ejecución.
-api_url: http://127.0.0.1:8080
+api_url: ${API_URL}
 api_key: ${API_KEY}
 
 mode: nftables
