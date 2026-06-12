@@ -972,7 +972,10 @@ def _sys_container_states() -> dict:
         "alloy":          "wardnode-alloy"          in running,
         "prometheus":     "wardnode-prometheus"     in running,
         "nginx-exporter": "wardnode-nginx-exporter" in running,
-        "fluent-bit":     "wardnode-fluent-bit"     in running,
+        "fluent-bit":       "wardnode-fluent-bit"       in running,
+        # Módulo DDoS — solo se incluyen en el estado; la UI los condiciona con module_ddos_enabled
+        "crowdsec":         "wardnode-crowdsec"         in running,
+        "crowdsec-bouncer": "wardnode-crowdsec-bouncer" in running,
     }
 
 
