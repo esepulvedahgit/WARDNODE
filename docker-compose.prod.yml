@@ -10,3 +10,11 @@ services:
     build:
       context: ./proxy
     image: wardnode-proxy:prod
+
+  # Bouncer CrowdSec — imagen pre-construida para el perfil ddos en producción.
+  # Sin 'build' no puede crearse en el VPS con --no-build; por eso se genera
+  # aquí en desarrollo y se exporta con docker save/load.
+  crowdsec-bouncer:
+    build:
+      context: ./crowdsec
+    image: wardnode-crowdsec-bouncer:prod

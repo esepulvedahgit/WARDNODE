@@ -220,6 +220,45 @@ services:
     networks:
       - wardnode_internal
 
+  # ── WardNode DDoS — CrowdSec SSH brute-force protection ─────────────
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: wardnode-crowdsec
+    restart: unless-stopped
+    profiles:
+      - ddos
+    # network_mode host: cscli puede conectar a bouncers en localhost del host.
+    network_mode: host
+    environment:
+      # Clave pre-registrada para el bouncer. WARDNODE_DDOS_BOUNCER_KEY
+      # se inyecta por Flask en runtime — nunca se escribe a disco.
+      BOUNCER_KEY_wardnode: "${WARDNODE_DDOS_BOUNCER_KEY}"
+      COLLECTIONS: "crowdsecurity/sshd"
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      # acquis.yaml define fuentes SSH (auth.log + journald)
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/ssh.yaml:ro
+      # Logs SSH del host montados solo-lectura
+      - /var/log/auth.log:/var/log/auth.log:ro
+      - /var/log/journal:/var/log/journal:ro
+
+  crowdsec-bouncer:
+    image: wardnode-crowdsec-bouncer:prod
+    container_name: wardnode-crowdsec-bouncer
+    restart: unless-stopped
+    profiles:
+      - ddos
+    # network_mode host + NET_ADMIN: mínimo para gestionar reglas nftables
+    # en el namespace de red del host. Nunca privileged.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      API_KEY: "${WARDNODE_DDOS_BOUNCER_KEY}"
+    depends_on:
+      - crowdsec
+
   # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:latest
@@ -252,6 +291,8 @@ volumes:
   obs_loki_config:
   obs_prometheus_config:
   obs_grafana_provisioning:
+  crowdsec-config:
+  crowdsec-data:
 
 networks:
   wardnode_internal:

@@ -1,0 +1,15 @@
+---
+# Adquisición de logs SSH desde archivo (Debian/Ubuntu: /var/log/auth.log)
+# Montado :ro desde el host en el contenedor crowdsec.
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+---
+# Adquisición de logs SSH desde journald (hosts sin auth.log clásico).
+# Cubiertos ambos casos para compatibilidad máxima.
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog
