@@ -73,14 +73,16 @@ def _get_service_states() -> dict:
         pass
 
     return {
-        "proxy":          "wardnode-proxy"      in running,
-        "loki":           "wardnode-loki"       in running,
-        "grafana":        "wardnode-grafana"    in running,
-        "alloy":          "wardnode-alloy"      in running,
-        "prometheus":     "wardnode-prometheus" in running,
-        "fluent-bit":     "wardnode-fluent-bit"     in running,
-        "nginx-exporter": "wardnode-nginx-exporter" in running,
-        "syslog_enabled": AppConfig.get("syslog_enabled") == "1",
+        "proxy":            "wardnode-proxy"               in running,
+        "loki":             "wardnode-loki"                in running,
+        "grafana":          "wardnode-grafana"             in running,
+        "alloy":            "wardnode-alloy"               in running,
+        "prometheus":       "wardnode-prometheus"          in running,
+        "fluent-bit":       "wardnode-fluent-bit"          in running,
+        "nginx-exporter":   "wardnode-nginx-exporter"      in running,
+        "crowdsec":         "wardnode-crowdsec"            in running,
+        "crowdsec-bouncer": "wardnode-crowdsec-bouncer"    in running,
+        "syslog_enabled":   AppConfig.get("syslog_enabled") == "1",
     }
 
 
@@ -123,6 +125,44 @@ def dashboard():
     geo_data     = {code: cnt for code, cnt in all_countries}
     top_countries = all_countries[:8]
 
+    # ── Dashboards CrowdSec (solo si el módulo DDoS está activo) ─────────
+    ddos_tl_labels: list = []
+    ddos_tl_counts: list = []
+    ddos_cat_labels: list = []
+    ddos_cat_values: list = []
+
+    if AppConfig.get("module_ddos_enabled") == "1":
+        try:
+            from app.models import DdosBanEvent
+
+            # Timeline: baneos por hora en las últimas 24h
+            for i in range(23, -1, -1):
+                h_start = now - timedelta(hours=i + 1)
+                h_end   = now - timedelta(hours=i)
+                ddos_tl_labels.append((now - timedelta(hours=i)).strftime("%H:00"))
+                cnt = (
+                    db.session.query(func.count())
+                    .filter(
+                        DdosBanEvent.created_at >= h_start,
+                        DdosBanEvent.created_at < h_end,
+                    )
+                    .scalar() or 0
+                )
+                ddos_tl_counts.append(cnt)
+
+            # Donut: top 6 escenarios (tipo de ataque)
+            cat_rows = (
+                db.session.query(DdosBanEvent.scenario, func.count())
+                .group_by(DdosBanEvent.scenario)
+                .order_by(func.count().desc())
+                .limit(6)
+                .all()
+            )
+            ddos_cat_labels = [row[0] or "unknown" for row in cat_rows]
+            ddos_cat_values = [row[1] for row in cat_rows]
+        except Exception:
+            pass  # tabla puede no existir en dev sin migración aplicada
+
     return render_template(
         "proxy/dashboard.html",
         sites=sites,
@@ -141,6 +181,10 @@ def dashboard():
         geo_data=geo_data,
         country_names=COUNTRY_NAMES,
         service_states=_get_service_states(),
+        ddos_tl_labels=ddos_tl_labels,
+        ddos_tl_counts=ddos_tl_counts,
+        ddos_cat_labels=ddos_cat_labels,
+        ddos_cat_values=ddos_cat_values,
     )
 
 

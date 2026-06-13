@@ -182,6 +182,45 @@ services:
     networks:
       - wardnode_internal
 
+  # ── WardNode DDoS — CrowdSec SSH brute-force protection ─────────────
+  crowdsec:
+    # Pin por digest para builds reproducibles (supply chain hardening).
+    # Para actualizar: docker pull crowdsecurity/crowdsec:latest && docker inspect --format '{{index .RepoDigests 0}}'
+    image: crowdsecurity/crowdsec@sha256:2f527c9bb8b367120eb08b82890aa912ce96bfa1ada93dda0721700e4b4e0dde
+    container_name: wardnode-crowdsec
+    restart: unless-stopped
+    profiles:
+      - ddos
+    # En dev usamos network interna — en producción se usa network_mode: host
+    environment:
+      BOUNCER_KEY_wardnode: "${WARDNODE_DDOS_BOUNCER_KEY:-dev-key-placeholder}"
+      COLLECTIONS: "crowdsecurity/sshd"
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      - ./crowdsec/acquis.yaml:/etc/crowdsec/acquis.d/ssh.yaml:ro
+    networks:
+      - wardnode_internal
+
+  crowdsec-bouncer:
+    build:
+      context: ./crowdsec
+    container_name: wardnode-crowdsec-bouncer
+    restart: unless-stopped
+    profiles:
+      - ddos
+    cap_add:
+      - NET_ADMIN
+    environment:
+      API_KEY: "${WARDNODE_DDOS_BOUNCER_KEY:-dev-key-placeholder}"
+      # En dev usamos red bridge — el daemon es accesible por nombre de servicio,
+      # no por 127.0.0.1 (que apuntaría al bouncer mismo). Puerto 8080 por defecto.
+      API_URL: "http://crowdsec:8080"
+    depends_on:
+      - crowdsec
+    networks:
+      - wardnode_internal
+
   # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:latest
@@ -213,6 +252,8 @@ volumes:
   grafana_data:
   alloy_data:
   prometheus_data:
+  crowdsec-config:
+  crowdsec-data:
 
 networks:
   wardnode_internal:

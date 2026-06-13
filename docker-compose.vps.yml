@@ -220,6 +220,63 @@ services:
     networks:
       - wardnode_internal
 
+  # ── WardNode DDoS — CrowdSec SSH brute-force protection ─────────────
+  crowdsec:
+    # Pin por digest para builds reproducibles (supply chain hardening).
+    # Para actualizar: docker pull crowdsecurity/crowdsec:latest && docker inspect --format '{{index .RepoDigests 0}}'
+    image: crowdsecurity/crowdsec@sha256:2f527c9bb8b367120eb08b82890aa912ce96bfa1ada93dda0721700e4b4e0dde
+    container_name: wardnode-crowdsec
+    restart: unless-stopped
+    profiles:
+      - ddos
+    # network_mode host: cscli puede conectar a bouncers en localhost del host.
+    network_mode: host
+    # Genera archivos de config dentro del contenedor en cada arranque — sin depender de
+    # archivos del host. Evita el footgun de Docker (crea directorio si el fuente no existe).
+    # ENTRYPOINT oficial de la imagen: ["/bin/bash", "/docker_start.sh"].
+    # Contenido de acquis.d/ssh.yaml equivale a crowdsec/acquis.yaml (referencia para dev).
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf 'api:\n  server:\n    listen_uri: 127.0.0.1:9080\n' > /etc/crowdsec/config.yaml.local
+        mkdir -p /etc/crowdsec/acquis.d
+        rm -rf /etc/crowdsec/acquis.d/ssh.yaml
+        printf '%s\n' '---' 'filenames:' '  - /var/log/auth.log' 'labels:' '  type: syslog' '---' 'source: journalctl' 'journalctl_filter:' '  - "_SYSTEMD_UNIT=ssh.service"' 'labels:' '  type: syslog' > /etc/crowdsec/acquis.d/ssh.yaml
+        exec /bin/bash /docker_start.sh
+    environment:
+      # Clave pre-registrada para el bouncer. WARDNODE_DDOS_BOUNCER_KEY
+      # se inyecta por Flask en runtime — nunca se escribe a disco.
+      BOUNCER_KEY_wardnode: "${WARDNODE_DDOS_BOUNCER_KEY}"
+      COLLECTIONS: "crowdsecurity/sshd"
+      # Mover LAPI a 9080 para evitar conflicto con el puerto 8080 del host.
+      # El bouncer también debe apuntar a este puerto vía API_URL.
+      LOCAL_API_URL: "http://127.0.0.1:9080"
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      # Logs SSH del host montados solo-lectura
+      - /var/log/auth.log:/var/log/auth.log:ro
+      - /var/log/journal:/var/log/journal:ro
+
+  crowdsec-bouncer:
+    image: wardnode-crowdsec-bouncer:prod
+    container_name: wardnode-crowdsec-bouncer
+    restart: unless-stopped
+    profiles:
+      - ddos
+    # network_mode host + NET_ADMIN: mínimo para gestionar reglas nftables
+    # en el namespace de red del host. Nunca privileged.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      API_KEY: "${WARDNODE_DDOS_BOUNCER_KEY}"
+      # Debe coincidir con LOCAL_API_URL del daemon (9080 en producción).
+      API_URL: "http://127.0.0.1:9080"
+    depends_on:
+      - crowdsec
+
   # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:latest
@@ -252,6 +309,8 @@ volumes:
   obs_loki_config:
   obs_prometheus_config:
   obs_grafana_provisioning:
+  crowdsec-config:
+  crowdsec-data:
 
 networks:
   wardnode_internal:

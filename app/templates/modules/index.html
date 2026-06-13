@@ -33,8 +33,50 @@
     <div class="col-md-6 col-lg-4">
       <div class="card-panel h-100" style="position:relative">
 
+        {# ── Overlay de carga para activación DDoS/CrowdSec ── #}
+        {% if module.id == 'ddos' and not enabled %}
+        <div x-data="ddosActivate()" style="display:contents">
+          <div x-show="running" x-cloak
+               style="position:absolute;inset:0;background:rgba(255,255,255,0.95);border-radius:inherit;z-index:10;
+                      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px">
+            <div class="spinner-border" style="color:#15803d;width:28px;height:28px"></div>
+            <p style="font-size:12px;font-weight:600;margin:0;color:var(--text-primary);text-align:center" x-text="stepText"></p>
+            <p style="font-size:11px;color:var(--text-muted);margin:0;text-align:center;max-width:220px">
+              El primer arranque descarga la imagen CrowdSec y puede tardar hasta 90 s.
+            </p>
+          </div>
+
+          <div class="card-panel-body" style="padding:24px">
+            <div style="display:flex;align-items:flex-start;gap:16px">
+              <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                          background:var(--bg-subtle);color:var(--text-muted);border:1px solid var(--border-color)">
+                <i class="bi {{ module.icon }}" style="font-size:20px"></i>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <h2 style="font-size:15px;font-weight:600;margin:0">{{ module.name }}</h2>
+                  <span class="badge-mode badge-off" style="font-size:10px">inactivo</span>
+                </div>
+                <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.5">{{ module.description }}</p>
+                <div x-show="errorMsg" x-cloak
+                     style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:var(--c-danger);line-height:1.5">
+                  <p style="margin:0 0 3px 0;font-weight:600" x-text="errorStep ? 'Error en: ' + errorStep : 'Error al activar'"></p>
+                  <p style="margin:0;word-break:break-word" x-text="errorMsg"></p>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button @click="activate()" :disabled="running"
+                          class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+                    <i x-show="!running" class="bi bi-toggle-off me-1"></i>
+                    <span x-text="running ? 'Activando…' : 'Activar'"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {# ── Overlay de carga para activación OBS ── #}
-        {% if module.id == 'obs' and not enabled %}
+        {% elif module.id == 'obs' and not enabled %}
         <div x-data="obsActivate()" style="display:contents">
           <div x-show="running" x-cloak
                style="position:absolute;inset:0;background:rgba(255,255,255,0.95);border-radius:inherit;z-index:10;
@@ -172,6 +214,61 @@ sudo rm -rf /run/wardnode</pre>
 
 {% block scripts %}
 <script>
+function ddosActivate() {
+  return {
+    running: false,
+    stepText: '',
+    errorMsg: '',
+    errorStep: '',
+    _phases: [
+      { delay: 0,     text: 'Verificando contenedores existentes…' },
+      { delay: 4000,  text: 'Iniciando CrowdSec…' },
+      { delay: 15000, text: 'Esperando que CrowdSec arranque…' },
+      { delay: 30000, text: 'Registrando bouncer key…' },
+      { delay: 50000, text: 'Iniciando firewall bouncer…' },
+      { delay: 75000, text: 'El primer arranque puede tardar — descargando imágenes…' },
+    ],
+    _timers: [],
+
+    _startPhases() {
+      this.stepText = this._phases[0].text;
+      this._phases.slice(1).forEach(p => {
+        const t = setTimeout(() => { this.stepText = p.text; }, p.delay);
+        this._timers.push(t);
+      });
+    },
+
+    _clearPhases() {
+      this._timers.forEach(t => clearTimeout(t));
+      this._timers = [];
+    },
+
+    async activate() {
+      this.running   = true;
+      this.errorMsg  = '';
+      this.errorStep = '';
+      this._startPhases();
+      try {
+        const r = await fetch('{{ url_for("modules.ddos_activate") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': document.querySelector("meta[name='csrf-token']").content },
+        });
+        const d = await r.json();
+        if (d.ok) {
+          window.location.reload();
+        } else {
+          this.errorMsg  = d.error || 'Error desconocido al activar el módulo.';
+          this.errorStep = d.step  || '';
+        }
+      } catch(e) {
+        this.errorMsg = 'Error de red al contactar el servidor.';
+      }
+      this._clearPhases();
+      this.running = false;
+    },
+  };
+}
+
 function obsActivate() {
   return {
     running: false,
