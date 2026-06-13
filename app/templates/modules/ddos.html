@@ -15,7 +15,7 @@
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
     <div>
       <h1 class="h3 mb-1">
-        <i class="bi bi-shield-shaded me-2" style="color:#15803d"></i>WardNode CrowdSec
+        <i class="bi bi-shield-shaded me-2" style="color:var(--accent)"></i>WardNode CrowdSec
       </h1>
       <p class="text-secondary mb-0 small">
         Protección SSH brute-force. CrowdSec detecta atacantes automáticamente y el bouncer
@@ -42,7 +42,7 @@
         </div>
         <div class="card-panel-body">
           <div class="module-item">
-            <div class="module-icon" style="background:#f0fdf4;color:#15803d">
+            <div class="module-icon" style="background:#eff6ff;color:var(--accent)">
               <i class="bi bi-cpu"></i>
             </div>
             <div class="module-info">
@@ -64,7 +64,7 @@
         </div>
         <div class="card-panel-body">
           <div class="module-item">
-            <div class="module-icon" style="background:#fefce8;color:#b45309">
+            <div class="module-icon" style="background:#eff6ff;color:var(--accent)">
               <i class="bi bi-fire"></i>
             </div>
             <div class="module-info">
@@ -81,7 +81,8 @@
   </div>
 
   {# ── Alerta de servicio caído ──────────────────────────────────────── #}
-  <div x-show="!crowdsecOk || !bouncerOk" x-cloak class="alert alert-warning d-flex align-items-start gap-2 mb-4">
+  <div :class="servicesDown ? 'd-flex' : 'd-none'"
+       class="alert alert-warning align-items-start gap-2 mb-4">
     <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
     <div>
       <strong>Uno o más servicios están caídos.</strong>
@@ -248,6 +249,7 @@ function ddosPanel() {
     loading:          false,
     crowdsecOk:       null,
     bouncerOk:        null,
+    servicesDown:     false,
 
     decisionsLoading: false,
     decisionsLoaded:  false,
@@ -286,9 +288,11 @@ function ddosPanel() {
         const d = await r.json();
         this.crowdsecOk = d.crowdsec === true;
         this.bouncerOk  = d.bouncer  === true;
+        this.servicesDown = !(this.crowdsecOk && this.bouncerOk);
       } catch(e) {
         this.crowdsecOk = false;
         this.bouncerOk  = false;
+        this.servicesDown = true;
       }
       this.loading = false;
     },

@@ -1064,17 +1064,26 @@ def ddos_index():
 def ddos_status():
     if AppConfig.get("module_ddos_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo DDoS no habilitado"}), 403
-    running = set()
+
     client = None
     try:
         import docker as docker_sdk
         client = docker_sdk.from_env()
-        running = {c.name for c in client.containers.list()}
     except Exception:
         pass
 
-    crowdsec_up = "wardnode-crowdsec" in running
-    bouncer_up  = "wardnode-crowdsec-bouncer" in running
+    def _running(name):
+        # Detección directa por contenedor: no enumera todos los contenedores del host
+        # (containers.list() falla si algún otro contenedor produce un error de parseo).
+        if client is None:
+            return False
+        try:
+            return client.containers.get(name).status == "running"
+        except Exception:
+            return False
+
+    crowdsec_up = _running("wardnode-crowdsec")
+    bouncer_up  = _running("wardnode-crowdsec-bouncer")
 
     # Detecta fail-open: bouncer corre pero no autenticó contra el LAPI
     # (ocurre si el contenedor arrancó sin la bouncer key inyectada por Flask).
@@ -1099,10 +1108,13 @@ def ddos_status():
             pass
 
     return jsonify({
-        "ok":             crowdsec_up and bouncer_up,
-        "crowdsec":       crowdsec_up,
-        "bouncer":        bouncer_up,
-        "bouncer_authed": bouncer_authed,
+        "ok":               crowdsec_up and bouncer_up,
+        "crowdsec":         crowdsec_up,
+        "bouncer":          bouncer_up,
+        # Alias de compatibilidad con la plantilla antigua (rama ddos-archive)
+        # que leía d['crowdsec-bouncer'] en vez de d.bouncer.
+        "crowdsec-bouncer": bouncer_up,
+        "bouncer_authed":   bouncer_authed,
     })
 
 
@@ -1364,6 +1376,20 @@ def ddos_deactivate():
     return jsonify({"ok": True})
 
 
+def _parse_go_duration(s):
+    """Convierte una duración estilo Go ('3h59m58s', '168h0m0s', '45s') en timedelta.
+
+    Devuelve None si la cadena no es parseable (p.ej. baneos permanentes), en cuyo
+    caso la columna 'Expira' del frontend queda como '—'.
+    """
+    from datetime import timedelta
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", (s or "").strip())
+    if not m or not any(m.groups()):
+        return None
+    h, mn, sec = m.groups()
+    return timedelta(hours=int(h or 0), minutes=int(mn or 0), seconds=float(sec or 0))
+
+
 @bp.post("/ddos/decisions")
 @roles_required(ROLE_ADMIN)
 @limiter.limit("30 per minute")
@@ -1381,8 +1407,23 @@ def ddos_decisions():
         if exit_code != 0:
             return jsonify({"ok": False, "error": f"cscli terminó con código {exit_code}: {raw[:300]}"}), 500
         import json as _json
-        decisions = _json.loads(raw) if raw else []
-        return jsonify({"ok": True, "decisions": decisions or []})
+        from datetime import datetime, timezone
+        # cscli decisions list -o json devuelve una lista de *alertas*, no de decisiones.
+        # Cada alerta contiene alert.decisions[] con los campos que el frontend espera
+        # (id, value, type, origin, duration, scope, scenario). En esta versión de CrowdSec
+        # las decisiones anidadas NO traen `until`; se calcula desde `duration` (ahora + delta).
+        alerts = _json.loads(raw) if raw else []
+        decisions = []
+        for alert in (alerts or []):
+            for dec in (alert.get("decisions") or []):
+                if not dec.get("until"):
+                    delta = _parse_go_duration(dec.get("duration"))
+                    if delta is not None:
+                        dec["until"] = (
+                            datetime.now(timezone.utc) + delta
+                        ).isoformat().replace("+00:00", "Z")
+                decisions.append(dec)
+        return jsonify({"ok": True, "decisions": decisions})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
