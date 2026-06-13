@@ -299,8 +299,7 @@
           {% endif %}
         </div>
 
-        {% if module_ddos_enabled %}
-        {# CrowdSec #}
+        {# CrowdSec — siempre visible; el badge indica running/offline #}
         <div class="module-item">
           <div class="module-icon" style="background:#f0fdf4;color:#15803d">
             <i class="bi bi-shield-shaded"></i>
@@ -331,7 +330,6 @@
             <span class="badge-offline">offline</span>
           {% endif %}
         </div>
-        {% endif %}
 
       </div>
     </div>
