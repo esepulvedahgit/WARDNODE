@@ -12,6 +12,7 @@
       }
     ]
   },
+  "description": "Analítica histórica de eventos WAF (PostgreSQL / attack_event). Para logs WAF en vivo ver «WardNode – ModSecurity WAF».",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
