@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+
+{% block title %}CrowdSec | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('modules.index') }}" class="bc-link">Módulos</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">CrowdSec</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page" x-data="ddosPanel()" x-init="init()">
+
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h1 class="h3 mb-1">
+        <i class="bi bi-shield-shaded me-2" style="color:var(--accent)"></i>WardNode CrowdSec
+      </h1>
+      <p class="text-secondary mb-0 small">
+        Protección SSH brute-force. CrowdSec detecta atacantes automáticamente y el bouncer
+        los banea vía nftables — sin interferir con UFW.
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <button @click="loadStatus()" class="btn btn-sm btn-outline-secondary" :disabled="loading">
+        <i class="bi bi-arrow-clockwise me-1" :class="{ 'spin': loading }"></i>Actualizar estado
+      </button>
+      <button @click="showDecisions()" class="btn btn-sm btn-outline-primary" :disabled="loading">
+        <i class="bi bi-list-ul me-1"></i>Ver decisiones
+      </button>
+    </div>
+  </div>
+
+  {# ── Estado de servicios ───────────────────────────────────────────── #}
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card-panel h-100">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">CrowdSec</h2>
+          <span class="module-version ms-2">wardnode-crowdsec</span>
+        </div>
+        <div class="card-panel-body">
+          <div class="module-item">
+            <div class="module-icon" style="background:#eff6ff;color:var(--accent)">
+              <i class="bi bi-cpu"></i>
+            </div>
+            <div class="module-info">
+              <span class="module-name">Motor de detección</span>
+              <span class="module-version">colección crowdsecurity/sshd</span>
+            </div>
+            <template x-if="crowdsecOk === null"><span class="badge-offline">—</span></template>
+            <template x-if="crowdsecOk === true"><span class="badge-running">running</span></template>
+            <template x-if="crowdsecOk === false"><span class="badge-offline">offline</span></template>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card-panel h-100">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">Firewall Bouncer</h2>
+          <span class="module-version ms-2">wardnode-crowdsec-bouncer</span>
+        </div>
+        <div class="card-panel-body">
+          <div class="module-item">
+            <div class="module-icon" style="background:#eff6ff;color:var(--accent)">
+              <i class="bi bi-fire"></i>
+            </div>
+            <div class="module-info">
+              <span class="module-name">Bloqueo nftables</span>
+              <span class="module-version">tabla crowdsec (aislada de UFW)</span>
+            </div>
+            <template x-if="bouncerOk === null"><span class="badge-offline">—</span></template>
+            <template x-if="bouncerOk === true"><span class="badge-running">running</span></template>
+            <template x-if="bouncerOk === false"><span class="badge-offline">offline</span></template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Alerta de servicio caído ──────────────────────────────────────── #}
+  <div :class="servicesDown ? 'd-flex' : 'd-none'"
+       class="alert alert-warning align-items-start gap-2 mb-4">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+    <div>
+      <strong>Uno o más servicios están caídos.</strong>
+      Puedes intentar reiniciarlos desde
+      <a href="{{ url_for('modules.sys_index') }}" class="alert-link">Gestión de Contenedores →</a>
+    </div>
+  </div>
+
+  {# ── Tabla de decisiones activas ──────────────────────────────────── #}
+  <div class="card-panel mb-4">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">Decisiones activas</h2>
+      <span style="font-size:11px;color:var(--text-muted)" x-text="decisions.length ? decisions.length + ' decisión(es)' : ''"></span>
+    </div>
+    <div class="card-panel-body">
+      <div x-show="decisionsLoading" class="text-center py-3">
+        <div class="spinner-border spinner-border-sm" style="color:var(--accent)"></div>
+      </div>
+      <div x-show="!decisionsLoading && decisions.length === 0 && decisionsLoaded" class="text-center py-4" style="color:var(--text-muted);font-size:13px">
+        <i class="bi bi-shield-check" style="font-size:24px;display:block;margin-bottom:6px"></i>
+        No hay decisiones activas
+      </div>
+      <div x-show="!decisionsLoading && decisions.length > 0" style="overflow-x:auto">
+        <table class="table table-sm" style="font-size:12px;margin:0">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Tipo</th>
+              <th>Origen</th>
+              <th>Duración</th>
+              <th>Expira</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="d in decisions" :key="d.id">
+              <tr>
+                <td class="t-mono" x-text="d.value || d.ip || '—'"></td>
+                <td><span class="badge-mode badge-block" style="font-size:10px" x-text="d.type || 'ban'"></span></td>
+                <td x-text="d.origin || '—'" style="color:var(--text-muted)"></td>
+                <td x-text="d.duration || '—'" style="color:var(--text-muted)"></td>
+                <td x-text="d.until ? new Date(d.until).toLocaleString('es-CL') : '—'" style="color:var(--text-muted)"></td>
+                <td>
+                  <button @click="unban(d.value || d.ip)"
+                          class="btn btn-xs btn-outline-danger"
+                          style="font-size:11px;padding:1px 6px"
+                          title="Desbanear esta IP">
+                    <i class="bi bi-x"></i>
+                  </button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Ban manual ────────────────────────────────────────────────────── #}
+  <div class="row g-4 mb-4">
+    <div class="col-md-6">
+      <div class="card-panel h-100">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">Ban manual</h2>
+        </div>
+        <div class="card-panel-body">
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+            Banea una IP manualmente. El sistema verificará que no sea una IP crítica antes de aplicar el bloqueo.
+          </p>
+          <div x-show="banError" x-cloak
+               class="alert alert-danger py-2 px-3 mb-3" style="font-size:12px" x-text="banError"></div>
+          <div x-show="banSuccess" x-cloak
+               class="alert alert-success py-2 px-3 mb-3" style="font-size:12px">IP baneada correctamente.</div>
+          <div class="d-flex flex-column gap-3">
+            <div>
+              <label class="form-label" style="font-size:12px">Dirección IP</label>
+              <input x-model="banIp" type="text" class="form-control form-control-sm t-mono"
+                     placeholder="1.2.3.4" maxlength="45">
+            </div>
+            <div class="row g-2">
+              <div class="col">
+                <label class="form-label" style="font-size:12px">Duración</label>
+                <select x-model="banDuration" class="form-select form-select-sm">
+                  <option value="1h">1 hora</option>
+                  <option value="24h" selected>24 horas</option>
+                  <option value="7d">7 días</option>
+                  <option value="30d">30 días</option>
+                  <option value="0s">Permanente</option>
+                </select>
+              </div>
+              <div class="col">
+                <label class="form-label" style="font-size:12px">Razón</label>
+                <input x-model="banReason" type="text" class="form-control form-control-sm"
+                       placeholder="manual-ban" maxlength="64">
+              </div>
+            </div>
+            <button @click="ban()" :disabled="banLoading || !banIp"
+                    class="btn btn-sm btn-danger" style="font-size:12px">
+              <i class="bi bi-ban me-1"></i>
+              <span x-text="banLoading ? 'Baneando…' : 'Aplicar ban'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Allowlist de IPs protegidas ──────────────────────────────────── #}
+    <div class="col-md-6">
+      <div class="card-panel h-100">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">IPs protegidas</h2>
+          <i class="bi bi-info-circle ms-1" style="font-size:12px;color:var(--text-muted)"
+             title="Estas IPs nunca serán baneadas manualmente. Se comprueba en cada ban manual."></i>
+        </div>
+        <div class="card-panel-body">
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+            IPs que el sistema rechazará banear (consola, proxy, acceso SSH propio, etc.).
+            Separadas por coma.
+          </p>
+          <div x-show="safeIpsError" x-cloak
+               class="alert alert-danger py-2 px-3 mb-3" style="font-size:12px" x-text="safeIpsError"></div>
+          <div x-show="safeIpsSuccess" x-cloak
+               class="alert alert-success py-2 px-3 mb-3" style="font-size:12px">Lista actualizada.</div>
+          <textarea x-model="safeIps" class="form-control form-control-sm t-mono mb-3"
+                    rows="4" placeholder="10.0.0.1, 192.168.1.10"
+                    style="font-size:12px;resize:vertical"></textarea>
+          <button @click="updateSafeIps()" :disabled="safeIpsLoading"
+                  class="btn btn-sm btn-outline-secondary" style="font-size:12px">
+            <i class="bi bi-floppy me-1"></i>
+            <span x-text="safeIpsLoading ? 'Guardando…' : 'Guardar lista'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Desactivar módulo ─────────────────────────────────────────────── #}
+  <div class="card-panel">
+    <div class="card-panel-header">
+      <h2 class="card-panel-title">Desactivar módulo</h2>
+    </div>
+    <div class="card-panel-body">
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+        Detiene los contenedores CrowdSec y el bouncer. Los baneos activos en nftables quedarán
+        en vigor hasta que el kernel los elimine. Puedes reactivar desde el listado de módulos.
+      </p>
+      <button @click="deactivate()" :disabled="deactivateLoading"
+              class="btn btn-sm btn-outline-danger" style="font-size:12px">
+        <i class="bi bi-stop-circle me-1"></i>
+        <span x-text="deactivateLoading ? 'Desactivando…' : 'Desactivar CrowdSec'"></span>
+      </button>
+      <span x-show="deactivateError" x-cloak
+            class="ms-3 text-danger" style="font-size:12px" x-text="deactivateError"></span>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function ddosPanel() {
+  return {
+    loading:          false,
+    crowdsecOk:       null,
+    bouncerOk:        null,
+    servicesDown:     false,
+
+    decisionsLoading: false,
+    decisionsLoaded:  false,
+    decisions:        [],
+
+    banIp:       '',
+    banDuration: '24h',
+    banReason:   'manual-ban',
+    banLoading:  false,
+    banError:    '',
+    banSuccess:  false,
+
+    safeIps:        '',
+    safeIpsLoading: false,
+    safeIpsError:   '',
+    safeIpsSuccess: false,
+
+    deactivateLoading: false,
+    deactivateError:   '',
+
+    _csrf() {
+      return document.querySelector("meta[name='csrf-token']")?.content || '';
+    },
+
+    async init() {
+      await this.loadStatus();
+      await this.showDecisions();
+      // Cargar allowlist actual (pasada desde la ruta ddos_index)
+      this.safeIps = {{ ddos_safe_ips | tojson }};
+    },
+
+    async loadStatus() {
+      this.loading = true;
+      try {
+        const r = await fetch('{{ url_for("modules.ddos_status") }}');
+        const d = await r.json();
+        this.crowdsecOk = d.crowdsec === true;
+        this.bouncerOk  = d.bouncer  === true;
+        this.servicesDown = !(this.crowdsecOk && this.bouncerOk);
+      } catch(e) {
+        this.crowdsecOk = false;
+        this.bouncerOk  = false;
+        this.servicesDown = true;
+      }
+      this.loading = false;
+    },
+
+    async showDecisions() {
+      this.decisionsLoading = true;
+      try {
+        const r = await fetch('{{ url_for("modules.ddos_decisions") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this._csrf() },
+        });
+        const d = await r.json();
+        this.decisions = d.decisions || [];
+        this.decisionsLoaded = true;
+      } catch(e) {
+        this.decisions = [];
+        this.decisionsLoaded = true;
+      }
+      this.decisionsLoading = false;
+    },
+
+    async ban() {
+      this.banError   = '';
+      this.banSuccess = false;
+      this.banLoading = true;
+      try {
+        const fd = new FormData();
+        fd.append('ip',       this.banIp.trim());
+        fd.append('duration', this.banDuration);
+        fd.append('reason',   this.banReason || 'manual-ban');
+        const r = await fetch('{{ url_for("modules.ddos_ban") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this._csrf() },
+          body: fd,
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.banSuccess = true;
+          this.banIp      = '';
+          await this.showDecisions();
+        } else {
+          this.banError = d.error || 'Error al aplicar ban.';
+        }
+      } catch(e) {
+        this.banError = 'Error de red.';
+      }
+      this.banLoading = false;
+    },
+
+    async unban(ip) {
+      if (!ip) return;
+      const fd = new FormData();
+      fd.append('ip', ip);
+      try {
+        const r = await fetch('{{ url_for("modules.ddos_unban") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this._csrf() },
+          body: fd,
+        });
+        const d = await r.json();
+        if (d.ok) {
+          await this.showDecisions();
+        }
+      } catch(e) {}
+    },
+
+    async updateSafeIps() {
+      this.safeIpsError   = '';
+      this.safeIpsSuccess = false;
+      this.safeIpsLoading = true;
+      try {
+        const fd = new FormData();
+        fd.append('safe_ips', this.safeIps);
+        const r = await fetch('{{ url_for("modules.ddos_safe_ips_update") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this._csrf() },
+          body: fd,
+        });
+        const d = await r.json();
+        if (d.ok) {
+          this.safeIpsSuccess = true;
+        } else {
+          this.safeIpsError = d.error || 'Error al guardar.';
+        }
+      } catch(e) {
+        this.safeIpsError = 'Error de red.';
+      }
+      this.safeIpsLoading = false;
+    },
+
+    async deactivate() {
+      this.deactivateError   = '';
+      this.deactivateLoading = true;
+      try {
+        const r = await fetch('{{ url_for("modules.ddos_deactivate") }}', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': this._csrf() },
+        });
+        const d = await r.json();
+        if (d.ok) {
+          window.location.href = '{{ url_for("modules.index") }}';
+        } else {
+          this.deactivateError = d.error || 'Error al desactivar.';
+        }
+      } catch(e) {
+        this.deactivateError = 'Error de red.';
+      }
+      this.deactivateLoading = false;
+    },
+  };
+}
+</script>
+<style>
+[x-cloak] { display: none !important; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-xs { padding: 1px 6px; font-size: 11px; }
+</style>
+{% endblock %}

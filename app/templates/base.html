@@ -44,7 +44,7 @@
       <div class="nav-group">
         <span class="nav-group-label">Plataforma</span>
         {% if current_user.has_role('admin') %}
-        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint and 'obs' not in request.endpoint %}active{% endif %}"
+        <a class="nav-link-item {% if request.endpoint and request.endpoint.startswith('modules.') and 'wf' not in request.endpoint and 'obs' not in request.endpoint and 'ddos' not in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.index') }}">
           <i class="bi bi-box-seam-fill"></i><span>Módulos</span>
         </a>
@@ -68,6 +68,13 @@
            href="{{ url_for('soc.index') }}"
            style="padding-left:2rem">
           <i class="bi bi-robot"></i><span>SOC · Incidentes</span>
+        </a>
+        {% endif %}
+        {% if module_ddos_enabled and current_user.has_role('admin') %}
+        <a class="nav-link-item {% if request.endpoint and 'ddos' in request.endpoint %}active{% endif %}"
+           href="{{ url_for('modules.ddos_index') }}"
+           style="padding-left:2rem">
+          <i class="bi bi-shield-shaded"></i><span>DDoS · CrowdSec</span>
         </a>
         {% endif %}
         {% if current_user.is_authenticated and current_user.has_role('admin') %}

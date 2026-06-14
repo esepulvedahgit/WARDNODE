@@ -51,19 +51,23 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
             from app.models import AppConfig
             console_site_id = AppConfig.get("console_site_id")
             return {
-                "module_wf_enabled": AppConfig.get("module_wf_enabled") == "1",
-                "module_obs_enabled": AppConfig.get("module_obs_enabled") == "1",
-                "module_soc_enabled": AppConfig.get("module_soc_enabled") == "1",
+                "module_wf_enabled":     AppConfig.get("module_wf_enabled")   == "1",
+                "module_obs_enabled":    AppConfig.get("module_obs_enabled")  == "1",
+                "module_soc_enabled":    AppConfig.get("module_soc_enabled")  == "1",
+                "module_ddos_enabled":   AppConfig.get("module_ddos_enabled") == "1",
                 "module_backup_enabled": (AppConfig.get("module_backup_enabled") or "1") == "1",
+                "syslog_enabled":        AppConfig.get("syslog_enabled")      == "1",
                 "console_site_configured": bool(console_site_id and console_site_id.isdigit()),
                 "setup_prompt_shown": AppConfig.get("setup_prompt_shown") == "1",
             }
         except Exception:
             return {
-                "module_wf_enabled": False,
-                "module_obs_enabled": False,
-                "module_soc_enabled": False,
+                "module_wf_enabled":     False,
+                "module_obs_enabled":    False,
+                "module_soc_enabled":    False,
+                "module_ddos_enabled":   False,
                 "module_backup_enabled": False,
+                "syslog_enabled":        False,
                 "console_site_configured": False,
                 "setup_prompt_shown": False,
             }
@@ -314,6 +318,9 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
 
     from app.soc.worker import start_soc_thread
     start_soc_thread(app)
+
+    from app.ddos.ingest import start_ddos_ingest_thread
+    start_ddos_ingest_thread(app)
 
     from app.backup.worker import start_backup_thread
     start_backup_thread(app)

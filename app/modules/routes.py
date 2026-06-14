@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import threading
@@ -51,6 +52,15 @@ MODULES = [
         "config_key": "module_soc_enabled",
         "endpoint": "soc.index",
     },
+    {
+        "id": "ddos",
+        "name": "WardNode CrowdSec",
+        "description": "Protección SSH brute-force con CrowdSec. Detecta y banea "
+                       "atacantes automáticamente vía nftables, sin interferir con UFW.",
+        "icon": "bi-shield-shaded",
+        "config_key": "module_ddos_enabled",
+        "endpoint": "modules.ddos_index",
+    },
 ]
 
 
@@ -100,6 +110,10 @@ def toggle(name: str):
 
     if name == "obs" and not current:
         flash("Usa el botón 'Activar' para iniciar el proceso de verificación de OBS.", "info")
+        return redirect(url_for("modules.index"))
+
+    if name == "ddos" and not current:
+        flash("Usa el botón 'Activar' para iniciar el proceso de verificación de CrowdSec.", "info")
         return redirect(url_for("modules.index"))
 
     new_state = not current
@@ -959,7 +973,10 @@ def _sys_container_states() -> dict:
         "alloy":          "wardnode-alloy"          in running,
         "prometheus":     "wardnode-prometheus"     in running,
         "nginx-exporter": "wardnode-nginx-exporter" in running,
-        "fluent-bit":     "wardnode-fluent-bit"     in running,
+        "fluent-bit":       "wardnode-fluent-bit"       in running,
+        # Módulo DDoS — solo se incluyen en el estado; la UI los condiciona con module_ddos_enabled
+        "crowdsec":         "wardnode-crowdsec"         in running,
+        "crowdsec-bouncer": "wardnode-crowdsec-bouncer" in running,
     }
 
 
@@ -979,7 +996,10 @@ def sys_status():
 @bp.post("/sys/restart/<target>")
 @roles_required(ROLE_ADMIN)
 def sys_restart(target: str):
-    _DOCKER_TARGETS = {"proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit", "nginx-exporter"}
+    _DOCKER_TARGETS = {
+        "proxy", "loki", "grafana", "alloy", "prometheus", "fluent-bit",
+        "nginx-exporter", "crowdsec", "crowdsec-bouncer",
+    }
 
     if target in _DOCKER_TARGETS:
         container_name = f"wardnode-{target}"
@@ -998,3 +1018,509 @@ def sys_restart(target: str):
             return jsonify({"ok": False, "error": str(e)}), 500
 
     return jsonify({"ok": False, "error": "Target desconocido"}), 400
+
+
+# ── WardNode DDoS / CrowdSec ──────────────────────────────────────────
+
+import re as _re
+import secrets as _secrets
+
+_DDOS_CONTAINERS  = ["wardnode-crowdsec", "wardnode-crowdsec-bouncer"]
+_DDOS_DURATION_RE = _re.compile(r"^\d+[smhd]$")
+_DDOS_REASON_RE   = _re.compile(r"^[\w\-]{1,64}$")
+_DDOS_IP_RE       = _re.compile(
+    r"^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]{2,39}$"
+)
+
+
+def _ddos_required():
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return redirect(url_for("modules.index"))
+    return None
+
+
+def _ddos_client():
+    """Devuelve (client, None) o (None, error_json) del SDK de Docker."""
+    try:
+        import docker as docker_sdk
+        return docker_sdk.from_env(), None
+    except ImportError:
+        return None, jsonify({"ok": False, "error": "SDK de Docker no instalado"}), 500
+    except Exception as e:
+        return None, jsonify({"ok": False, "step": "docker", "error": f"Docker no disponible: {e}"}), 500
+
+
+@bp.get("/ddos/")
+@roles_required(ROLE_ADMIN)
+def ddos_index():
+    if (r := _ddos_required()):
+        return r
+    safe_ips = AppConfig.get("ddos_safe_ips") or ""
+    return render_template("modules/ddos.html", ddos_safe_ips=safe_ips)
+
+
+@bp.get("/ddos/status")
+@roles_required(ROLE_ADMIN)
+def ddos_status():
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo DDoS no habilitado"}), 403
+
+    client = None
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+    except Exception:
+        pass
+
+    def _running(name):
+        # Detección directa por contenedor: no enumera todos los contenedores del host
+        # (containers.list() falla si algún otro contenedor produce un error de parseo).
+        if client is None:
+            return False
+        try:
+            return client.containers.get(name).status == "running"
+        except Exception:
+            return False
+
+    crowdsec_up = _running("wardnode-crowdsec")
+    bouncer_up  = _running("wardnode-crowdsec-bouncer")
+
+    # Detecta fail-open: bouncer corre pero no autenticó contra el LAPI
+    # (ocurre si el contenedor arrancó sin la bouncer key inyectada por Flask).
+    bouncer_authed = None  # None = no se pudo verificar
+    if crowdsec_up and client is not None:
+        try:
+            cs = client.containers.get("wardnode-crowdsec")
+            exit_code, output = cs.exec_run(
+                ["cscli", "bouncers", "list", "-o", "json"], user="root"
+            )
+            if exit_code == 0:
+                raw = output.decode("utf-8", errors="replace").strip()
+                bouncers = json.loads(raw) if raw else []
+                # El registro lo crea BOUNCER_KEY_wardnode (env) → nombre 'wardnode'
+                bouncer_authed = any(
+                    b.get("name") == "wardnode" and not b.get("revoked")
+                    for b in (bouncers or [])
+                )
+            else:
+                bouncer_authed = False
+        except Exception:
+            pass
+
+    return jsonify({
+        "ok":               crowdsec_up and bouncer_up,
+        "crowdsec":         crowdsec_up,
+        "bouncer":          bouncer_up,
+        # Alias de compatibilidad con la plantilla antigua (rama ddos-archive)
+        # que leía d['crowdsec-bouncer'] en vez de d.bouncer.
+        "crowdsec-bouncer": bouncer_up,
+        "bouncer_authed":   bouncer_authed,
+    })
+
+
+@bp.post("/ddos/activate")
+@roles_required(ROLE_ADMIN)
+def ddos_activate():
+    """Activa el módulo DDoS: arranca CrowdSec + bouncer y registra la bouncer key."""
+    import subprocess
+
+    try:
+        import docker as docker_sdk
+    except ImportError:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="warning", detail=json.dumps({"step": "docker"}))
+        return jsonify({"ok": False, "step": "docker",
+                        "error": "SDK de Docker no instalado en el contenedor"}), 500
+
+    try:
+        client = docker_sdk.from_env()
+    except Exception as e:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="warning", detail=json.dumps({"step": "docker"}))
+        return jsonify({"ok": False, "step": "docker",
+                        "error": f"Docker no disponible: {e}"}), 500
+
+    # ── Obtener / generar la bouncer key (cifrada en AppConfig) ───────────
+    from app.encryption import encrypt_secret, EncryptionNotConfigured
+    bouncer_key = None
+    try:
+        bouncer_key = AppConfig.get_secret("ddos_bouncer_key")
+    except Exception:
+        pass
+    if not bouncer_key:
+        bouncer_key = _secrets.token_hex(32)
+        try:
+            AppConfig.set("ddos_bouncer_key", encrypt_secret(bouncer_key), encrypted=True)
+        except EncryptionNotConfigured:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error", detail=json.dumps({"step": "secret"}))
+            return jsonify({
+                "ok": False, "step": "secret",
+                "error": (
+                    "WARDNODE_SECRET_KEY no está configurada; no se puede persistir la "
+                    "bouncer key de forma segura. Configúrala en el entorno del contenedor "
+                    "consola y reinícialo antes de activar el módulo DDoS."
+                ),
+            }), 400
+
+    # ── Fase 1: intentar iniciar contenedores existentes via SDK ──────────
+    not_found = []
+    for name in _DDOS_CONTAINERS:
+        try:
+            c = client.containers.get(name)
+            if c.status != "running":
+                c.start()
+        except docker_sdk.errors.NotFound:
+            not_found.append(name)
+        except Exception as e:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "containers", "container": name}))
+            return jsonify({"ok": False, "step": "containers",
+                            "error": f"Error al iniciar {name}: {e}"}), 500
+
+    # ── Fase 2: si faltan contenedores, crearlos con docker compose ───────
+    if not_found:
+        project_dir = os.environ.get("WARDNODE_PROJECT_DIR", "").strip()
+        if not project_dir:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail=json.dumps({"step": "compose", "reason": "WARDNODE_PROJECT_DIR no configurada"}))
+            return jsonify({
+                "ok": False, "step": "compose",
+                "error": (
+                    "Los contenedores CrowdSec no existen y WARDNODE_PROJECT_DIR no está "
+                    "configurada. Añádela al .env apuntando al directorio del proyecto "
+                    "(ej: WARDNODE_PROJECT_DIR=/opt/wardnode) y reinicia el contenedor consola."
+                ),
+            }), 500
+
+        compose_file = os.path.join(project_dir, "docker-compose.vps.yml")
+        if not os.path.isfile(compose_file):
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail=json.dumps({"step": "compose", "reason": "docker-compose.vps.yml no encontrado"}))
+            return jsonify({
+                "ok": False, "step": "compose",
+                "error": (
+                    f"No se encontró docker-compose.vps.yml en '{project_dir}'. "
+                    "Verifica que WARDNODE_PROJECT_DIR apunta al directorio correcto."
+                ),
+            }), 500
+
+        # Preflight: verificar que el compose conoce los servicios ddos
+        try:
+            preflight = subprocess.run(
+                ["docker", "compose", "-f", compose_file, "--profile", "ddos",
+                 "config", "--services"],
+                capture_output=True, text=True, timeout=30, cwd=project_dir,
+                env={**os.environ, "WARDNODE_DDOS_BOUNCER_KEY": bouncer_key},
+            )
+            known = preflight.stdout.strip().splitlines()
+            if "crowdsec" not in known or "crowdsec-bouncer" not in known:
+                log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                          status="failure", severity="warning",
+                          detail=json.dumps({"step": "compose", "reason": "perfil ddos no definido en compose"}))
+                return jsonify({
+                    "ok": False, "step": "compose",
+                    "error": (
+                        "El docker-compose.vps.yml en el host no define los servicios "
+                        "'crowdsec'/'crowdsec-bouncer'. Actualiza el archivo a la versión "
+                        f"que incluye el perfil 'ddos' en '{project_dir}' y reintenta."
+                    ),
+                }), 500
+        except Exception:
+            pass  # No fatal — el compose up fallará con mensaje claro si hay problema
+
+        try:
+            result = subprocess.run(
+                [
+                    "docker", "compose", "-f", compose_file, "--profile", "ddos",
+                    "up", "-d", "--no-build", "--no-deps", "--no-recreate",
+                    "crowdsec", "crowdsec-bouncer",
+                ],
+                capture_output=True, text=True, timeout=120, cwd=project_dir,
+                env={**os.environ, "WARDNODE_DDOS_BOUNCER_KEY": bouncer_key},
+            )
+        except FileNotFoundError:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "reason": "docker compose no encontrado"}))
+            return jsonify({"ok": False, "step": "compose",
+                            "error": "Comando 'docker compose' no encontrado."}), 500
+        except subprocess.TimeoutExpired:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "reason": "timeout >120s"}))
+            return jsonify({"ok": False, "step": "compose",
+                            "error": "Timeout al ejecutar docker compose (>120 s)."}), 500
+
+        if result.returncode != 0:
+            err_output = (result.stderr or result.stdout or "").strip()
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="error",
+                      detail=json.dumps({"step": "compose", "rc": result.returncode}))
+            return jsonify({"ok": False, "step": "compose",
+                            "error": f"docker compose falló (código {result.returncode}): {err_output[:500]}"}), 500
+
+    # ── Fase 3: health check contenedores (máx 30 s) ──────────────────────
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            all_running = all(
+                client.containers.get(n).status == "running"
+                for n in _DDOS_CONTAINERS
+            )
+            if all_running:
+                break
+        except Exception:
+            pass
+        time.sleep(3)
+    else:
+        not_running = []
+        for n in _DDOS_CONTAINERS:
+            try:
+                c = client.containers.get(n)
+                if c.status != "running":
+                    not_running.append(f"{n} ({c.status})")
+            except Exception:
+                not_running.append(f"{n} (no encontrado)")
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="error",
+                  detail=json.dumps({"step": "health", "not_running": not_running}))
+        return jsonify({
+            "ok": False, "step": "health",
+            "error": f"Contenedores no arrancaron: {', '.join(not_running)}. "
+                     "Revisa logs con: docker logs <nombre>",
+        }), 500
+
+    # ── Fase 4: asegurar el registro de la bouncer key en el daemon ───────
+    # El registro normal lo hace la imagen oficial al crear el contenedor, vía
+    # BOUNCER_KEY_wardnode (env del compose) → bouncer 'wardnode'. Esta fase
+    # solo repara el caso fail-open: contenedor creado sin la key (p.ej.
+    # recreación manual de compose) → sin registro, el bouncer no autentica.
+    # Nota: cscli bouncers add no soporta --overwrite en esta versión; por eso
+    # se consulta primero y solo se registra si falta o está revocado.
+    try:
+        crowdsec_c = client.containers.get("wardnode-crowdsec")
+        exit_code, output = crowdsec_c.exec_run(
+            ["cscli", "bouncers", "list", "-o", "json"], user="root"
+        )
+        raw = output.decode("utf-8", errors="replace").strip() if exit_code == 0 else ""
+        entries = (json.loads(raw) if raw else []) or []
+        wn = next((b for b in entries if b.get("name") == "wardnode"), None)
+        if wn is None or wn.get("revoked"):
+            if wn is not None:
+                crowdsec_c.exec_run(
+                    ["cscli", "bouncers", "delete", "wardnode"], user="root"
+                )
+            # La key viaja por env del exec (no por argv): /proc/<pid>/environ
+            # es solo-root, mientras que cmdline es world-readable dentro del
+            # contenedor. El comando es una cadena literal fija — la key nunca
+            # se interpola.
+            exit_code, _ = crowdsec_c.exec_run(
+                ["/bin/sh", "-c",
+                 'exec cscli bouncers add wardnode --key "$WN_BOUNCER_KEY"'],
+                environment={"WN_BOUNCER_KEY": bouncer_key},
+                user="root",
+            )
+            if exit_code != 0:
+                raise RuntimeError(f"cscli bouncers add terminó con código {exit_code}")
+    except Exception as e:
+        log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                  status="failure", severity="error",
+                  detail=json.dumps({"step": "bouncer_key"}))
+        return jsonify({"ok": False, "step": "bouncer_key",
+                        "error": f"No se pudo registrar la bouncer key: {e}"}), 500
+
+    # ── Fase 5: esperar a que el bouncer también corra ────────────────────
+    deadline2 = time.time() + 20
+    while time.time() < deadline2:
+        try:
+            if client.containers.get("wardnode-crowdsec-bouncer").status == "running":
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+
+    AppConfig.set("module_ddos_enabled", "1")
+    log_audit("ddos.activate", resource_type="module", resource_name="ddos")
+
+    # Arrancar thread de ingesta si no estaba corriendo
+    try:
+        from flask import current_app
+        from app.ddos.ingest import start_ddos_ingest_thread
+        start_ddos_ingest_thread(current_app._get_current_object())
+    except Exception:
+        pass
+
+    return jsonify({"ok": True})
+
+
+@bp.post("/ddos/deactivate")
+@roles_required(ROLE_ADMIN)
+def ddos_deactivate():
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        for name in reversed(_DDOS_CONTAINERS):
+            try:
+                client.containers.get(name).stop(timeout=15)
+            except Exception as e:
+                log_audit("ddos.deactivate", resource_type="module", resource_name="ddos",
+                          severity="warning", detail={"error": str(e)})
+    except Exception:
+        pass
+    AppConfig.set("module_ddos_enabled", "0")
+    log_audit("ddos.deactivate", resource_type="module", resource_name="ddos")
+    return jsonify({"ok": True})
+
+
+def _parse_go_duration(s):
+    """Convierte una duración estilo Go ('3h59m58s', '168h0m0s', '45s') en timedelta.
+
+    Devuelve None si la cadena no es parseable (p.ej. baneos permanentes), en cuyo
+    caso la columna 'Expira' del frontend queda como '—'.
+    """
+    from datetime import timedelta
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", (s or "").strip())
+    if not m or not any(m.groups()):
+        return None
+    h, mn, sec = m.groups()
+    return timedelta(hours=int(h or 0), minutes=int(mn or 0), seconds=float(sec or 0))
+
+
+@bp.post("/ddos/decisions")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("30 per minute")
+def ddos_decisions():
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        crowdsec_c = client.containers.get("wardnode-crowdsec")
+        exit_code, output = crowdsec_c.exec_run(
+            ["cscli", "decisions", "list", "-o", "json"], user="root"
+        )
+        raw = output.decode("utf-8", errors="replace").strip()
+        if exit_code != 0:
+            return jsonify({"ok": False, "error": f"cscli terminó con código {exit_code}: {raw[:300]}"}), 500
+        import json as _json
+        from datetime import datetime, timezone
+        # cscli decisions list -o json devuelve una lista de *alertas*, no de decisiones.
+        # Cada alerta contiene alert.decisions[] con los campos que el frontend espera
+        # (id, value, type, origin, duration, scope, scenario). En esta versión de CrowdSec
+        # las decisiones anidadas NO traen `until`; se calcula desde `duration` (ahora + delta).
+        alerts = _json.loads(raw) if raw else []
+        decisions = []
+        for alert in (alerts or []):
+            for dec in (alert.get("decisions") or []):
+                if not dec.get("until"):
+                    delta = _parse_go_duration(dec.get("duration"))
+                    if delta is not None:
+                        dec["until"] = (
+                            datetime.now(timezone.utc) + delta
+                        ).isoformat().replace("+00:00", "Z")
+                decisions.append(dec)
+        return jsonify({"ok": True, "decisions": decisions})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.post("/ddos/ban")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("10 per minute")
+def ddos_ban():
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+
+    ip       = request.form.get("ip", "").strip()
+    duration = request.form.get("duration", "24h").strip()
+    reason   = request.form.get("reason", "manual-ban").strip()
+
+    if not ip:
+        return jsonify({"ok": False, "error": "IP requerida"}), 400
+    if not _DDOS_DURATION_RE.match(duration):
+        return jsonify({"ok": False, "error": "Duración inválida (ej: 1h, 24h, 7d)"}), 400
+    if not _DDOS_REASON_RE.match(reason):
+        return jsonify({"ok": False, "error": "Razón inválida (solo letras, números y guiones, máx 64 caracteres)"}), 400
+
+    # Obtener IP del cliente (respeta X-Forwarded-For si hay proxy)
+    request_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+
+    from app.ddos.safety import is_ban_safe
+    safe, motivo = is_ban_safe(ip, request_ip)
+    if not safe:
+        return jsonify({"ok": False, "error": motivo}), 400
+
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        crowdsec_c = client.containers.get("wardnode-crowdsec")
+        exit_code, output = crowdsec_c.exec_run(
+            ["cscli", "decisions", "add", "--ip", ip,
+             "--duration", duration, "--reason", reason, "--type", "ban"],
+            user="root",
+        )
+        raw = output.decode("utf-8", errors="replace").strip()
+        if exit_code != 0:
+            return jsonify({"ok": False, "error": f"cscli error: {raw[:300]}"}), 500
+        log_audit("ddos.ban", resource_type="ip", resource_name=ip,
+                  detail={"duration": duration, "reason": reason})
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.post("/ddos/unban")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("10 per minute")
+def ddos_unban():
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+
+    ip = request.form.get("ip", "").strip()
+    if not ip or not _DDOS_IP_RE.match(ip):
+        return jsonify({"ok": False, "error": "IP inválida"}), 400
+
+    try:
+        import docker as docker_sdk
+        client = docker_sdk.from_env()
+        crowdsec_c = client.containers.get("wardnode-crowdsec")
+        exit_code, output = crowdsec_c.exec_run(
+            ["cscli", "decisions", "delete", "--ip", ip],
+            user="root",
+        )
+        raw = output.decode("utf-8", errors="replace").strip()
+        if exit_code != 0:
+            return jsonify({"ok": False, "error": f"cscli error: {raw[:300]}"}), 500
+        log_audit("ddos.unban", resource_type="ip", resource_name=ip)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.post("/ddos/safe-ips")
+@roles_required(ROLE_ADMIN)
+def ddos_safe_ips_update():
+    """Actualiza la allowlist de IPs protegidas (ddos_safe_ips en AppConfig)."""
+    if AppConfig.get("module_ddos_enabled") != "1":
+        return jsonify({"ok": False, "error": "Módulo no habilitado"}), 403
+    raw = request.form.get("safe_ips", "").strip()
+    # Validar cada IP antes de guardar
+    import ipaddress
+    ips = []
+    for candidate in raw.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        try:
+            # Normalizar a forma canónica antes de guardar (evita bypass por forma equivalente)
+            ips.append(str(ipaddress.ip_address(candidate)))
+        except ValueError:
+            return jsonify({"ok": False, "error": f"IP inválida en la lista: {candidate}"}), 400
+    AppConfig.set("ddos_safe_ips", ",".join(ips))
+    log_audit("ddos.safe_ips_update", resource_type="config", resource_name="ddos_safe_ips",
+              detail={"count": len(ips)})
+    return jsonify({"ok": True, "count": len(ips)})

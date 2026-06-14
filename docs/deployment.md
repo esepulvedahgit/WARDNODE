@@ -89,6 +89,53 @@ docker compose -f docker-compose.vps.yml --profile obs up -d
 
 Configurar `WARDNODE_PROJECT_DIR` en `.env` apuntando al directorio raíz del proyecto en el host (necesario para que el panel pueda levantar los contenedores OBS desde la UI).
 
+### WardNode DDoS (CrowdSec brute-force SSH)
+
+Protege el SSH del host detectando y bloqueando ataques de fuerza bruta.
+Usa dos contenedores: `wardnode-crowdsec` (daemon, imagen pública pinada por digest)
+y `wardnode-crowdsec-bouncer` (firewall nftables, **imagen propia**).
+
+**Preparación antes de activar en producción:**
+
+1. Construir la imagen del bouncer en desarrollo:
+   ```bash
+   bash scripts/build-prod.sh   # genera dist/wardnode-crowdsec-bouncer.tar.gz entre otros
+   ```
+
+2. Transferir al VPS (además de console y proxy):
+   ```bash
+   scp dist/wardnode-crowdsec-bouncer.tar.gz usuario@VPS:~/wardnode/
+   ```
+
+3. Cargar la imagen en el VPS:
+   ```bash
+   docker load -i wardnode-crowdsec-bouncer.tar.gz
+   ```
+
+4. Activar desde el panel: **Módulos → WardNode DDoS → Activar**.
+
+> **Nota:** el daemon (`crowdsecurity/crowdsec`) usa imagen pública; se descarga
+> automáticamente. Solo el bouncer requiere transferencia previa. Si la imagen del
+> bouncer no está cargada, la activación fallará con `pull access denied`.
+
+Equivalente manual (si no se usa el panel):
+```bash
+docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
+```
+
+> **Sin archivos de config en el host:** el `entrypoint` del daemon genera **dos** archivos
+> dentro del contenedor en cada arranque, sin depender de nada del host:
+> - `config.yaml.local` → fuerza `api.server.listen_uri: 127.0.0.1:9080`.
+> - `acquis.d/ssh.yaml` → define las fuentes de adquisición SSH (`/var/log/auth.log` +
+>   journald `sshd`). Un `rm -rf` previo repara automáticamente cualquier estado corrupto
+>   que pudieran haber dejado arranques fallidos anteriores.
+>
+> Además, `LOCAL_API_URL: http://127.0.0.1:9080` fija dónde se conecta el agente interno y
+> `API_URL: http://127.0.0.1:9080` en el bouncer fija a dónde se conecta el bouncer.
+>
+> **Nota:** `LOCAL_API_URL` solo controla dónde se *conecta* el agente, no dónde el servidor
+> *escucha*. Para cambiar de puerto, edita los tres valores en `docker-compose.vps.yml`.
+
 ---
 
 ## MaxMind GeoIP
@@ -138,6 +185,8 @@ docker compose restart proxy
 ## Notas de seguridad
 
 - Cambiar `SECRET_KEY` y `WARDNODE_SECRET_KEY` antes del primer arranque en producción. Si `WARDNODE_SECRET_KEY` cambia después de almacenar secretos, éstos quedarán ilegibles.
+- **Puerto 5000 (riesgo aceptado):** la consola escucha en `0.0.0.0:5000` por diseño, para permitir el primer inicio y la creación del admin (`/auth/setup`) antes de que exista un dominio. Al generar el dominio, el puerto se bloquea automáticamente en el firewall. Verificar tras el setup inicial: `sudo ufw status | grep 5000` debe mostrar el puerto denegado para origen público.
+- **Bouncer key del módulo DDoS:** la config renderizada del bouncer (que contiene la key en claro) se escribe en `/dev/shm` (tmpfs, solo RAM) — nunca persiste en disco. Límite conocido y aceptado: la key sigue visible en el env del contenedor (`docker inspect`), legible solo por root del host; es inherente al diseño de inyección por entorno.
 - Usar `SESSION_COOKIE_SECURE=true` siempre que haya HTTPS.
 - El socket Unix del host-agent (`/run/wardnode/wardnode-wf.sock`) debe pertenecer al grupo `wardnode` (GID 1500). El script `install.sh` lo configura automáticamente.
 - El contenedor console monta `/var/run/docker.sock` para gestionar otros contenedores. Asegurarse de que solo el usuario del host con privilegios tenga acceso a este socket.

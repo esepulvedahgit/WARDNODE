@@ -430,6 +430,32 @@ class MitreAttackTechnique(db.Model, TimestampMixin):
     synced_at = db.Column(db.DateTime, nullable=False)
 
 
+class DdosBanEvent(db.Model):
+    """Evento de ban registrado por CrowdSec (SSH brute-force).
+
+    Poblado por app/ddos/ingest.py desde 'cscli alerts list -o json'.
+    cs_alert_id garantiza deduplicación: si el poller vuelve a ver el mismo
+    alert_id, el IntegrityError provoca un rollback silencioso — mismo patrón
+    que AttackEvent.transaction_id.
+    """
+
+    __tablename__ = "ddos_ban_event"
+
+    id           = db.Column(db.Integer, primary_key=True)
+    cs_alert_id  = db.Column(db.Integer, unique=True, nullable=False, index=True)
+    source_ip    = db.Column(db.String(80), nullable=False)
+    scenario     = db.Column(db.String(120), nullable=False, default="unknown")
+    country_code = db.Column(db.String(2), nullable=True)
+    events_count = db.Column(db.Integer, nullable=False, default=1)
+    created_at   = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    expires_at   = db.Column(db.DateTime, nullable=True)
+
+
 class SocMlModel(db.Model, TimestampMixin):
     """Modelo ML serializado (IsolationForest) para scoring de anomalías SOC.
 
