@@ -1,5 +1,6 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Logs WAF en tiempo real (Loki). Para analítica histórica agregada ver «WardNode – WAF Analytics».",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -8,18 +9,8 @@
   "panels": [
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 100}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
-      "id": 1,
-      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__range]))", "instant": true, "legendFormat": "Total", "queryType": "instant", "refId": "A"}],
-      "title": "Total eventos WAF",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
       "id": 2,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} |= \"CRITICAL\" [$__range]))", "instant": true, "legendFormat": "CRITICAL", "queryType": "instant", "refId": "A"}],
@@ -29,7 +20,7 @@
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
       "id": 3,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} |= \"ERROR\" [$__range]))", "instant": true, "legendFormat": "ERROR", "queryType": "instant", "refId": "A"}],
@@ -39,7 +30,7 @@
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
       "id": 4,
       "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} |= \"WARNING\" [$__range]))", "instant": true, "legendFormat": "WARNING", "queryType": "instant", "refId": "A"}],
@@ -62,28 +53,7 @@
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
-      "id": 6,
-      "options": {"dedupStrategy": "none", "displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "Count"}]},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (detected_field_ruleId) (count_over_time({job=\"modsecurity\"} | json | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{detected_field_ruleId}}", "queryType": "instant", "refId": "A"}],
-      "title": "Top rule IDs (requiere SecAuditLogFormat JSON + YAJL)",
-      "type": "table",
-      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
-      "id": 7,
-      "options": {"dedupStrategy": "none", "displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (detected_field_host) (count_over_time({job=\"modsecurity\"} | json | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{detected_field_host}}", "queryType": "instant", "refId": "A"}],
-      "title": "Eventos por host/vhost",
-      "type": "table"
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 20},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 12},
       "id": 8,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"modsecurity\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
