@@ -81,6 +81,10 @@ tokens LLM/Telegram, secretos TOTP) SON IRRECUPERABLES. Consérvala aparte
    desde la UI del módulo WF; copia `host/protected_ports.json` a
    `/opt/wardnode/` antes de arrancar el agente para restaurar los puertos
    protegidos.
+7. DDoS / CrowdSec: no requiere pasos manuales. La tabla `ddos_ban_event` y la
+   configuración del módulo (incluida la bouncer key cifrada) viajan en el dump
+   de la BD. CrowdSec se autorregenera al arrancar (acquis inline, colecciones
+   re-descargadas) y el bouncer se reautentica con la key restaurada desde la BD.
 """
 
 
