@@ -544,6 +544,81 @@ def test_ingest_v3_numeric_all_severity_levels():
     assert _SEVERITY_MAP["7"] == "low"       # DEBUG
 
 
+# ── Categorización robusta (multi-mensaje + fallback por ID de regla) ──────────
+
+# messages[0] es el bloqueo por anomaly score (949110, solo tags meta); el tag de
+# ataque real (attack-sqli) viene en un mensaje posterior. La categoría debe salir
+# del mensaje real, no "unknown".
+_SAMPLE_LOG_ANOMALY_FIRST = """{
+  "transaction": {
+    "id": "anomalyfirst1",
+    "request": {"method": "GET", "uri": "/x", "headers": {"Host": "example.com"}, "remote_address": "1.1.1.1"},
+    "response": {"http_code": 403, "headers": {}},
+    "messages": [
+      {"message": "Inbound Anomaly Score Exceeded", "details": {"ruleId": "949110", "severity": "2", "tags": ["OWASP_CRS", "anomaly-evaluation"]}},
+      {"message": "SQL Injection Attack Detected", "details": {"ruleId": "942100", "severity": "2", "tags": ["attack-sqli", "paranoia-level/1"]}}
+    ]
+  }
+}"""
+
+
+def test_ingest_categorizes_from_later_message():
+    from app.proxy.ingest import _parse_line
+
+    result = _parse_line(_SAMPLE_LOG_ANOMALY_FIRST)
+    assert result is not None
+    assert result["category"] == "sql-injection"
+    # rule_id/message siguen siendo los del primer mensaje (representativo)
+    assert result["rule_id"] == "949110"
+
+
+def test_ingest_crs4_real_tag_names():
+    """Tags reales de CRS 4.x que antes caían en 'unknown'."""
+    from app.proxy.ingest import _parse_line
+
+    def _line(tag, rid):
+        return (
+            '{"transaction": {"id": "t-%s", "request": {"method": "GET", "uri": "/x",'
+            ' "headers": {"Host": "example.com"}, "remote_address": "2.2.2.2"},'
+            ' "response": {"http_code": 403, "headers": {}},'
+            ' "messages": [{"message": "x", "details": {"ruleId": "%s", "severity": "2",'
+            ' "tags": ["%s", "OWASP_CRS"]}}]}}' % (rid, rid, tag)
+        )
+
+    assert _parse_line(_line("attack-injection-php", "933100"))["category"] == "php-injection"
+    assert _parse_line(_line("attack-injection-java", "944100"))["category"] == "java-injection"
+    assert _parse_line(_line("attack-reputation-scanner", "913100"))["category"] == "scanner"
+    assert _parse_line(_line("attack-fixation", "943100"))["category"] == "session-fixation"
+
+
+def test_ingest_category_fallback_by_rule_id():
+    """Sin tag reconocido, la categoría se deriva del prefijo del ID de regla CRS."""
+    from app.proxy.ingest import _parse_line
+
+    line = (
+        '{"transaction": {"id": "ridfallback1", "request": {"method": "GET", "uri": "/x",'
+        ' "headers": {"Host": "example.com"}, "remote_address": "3.3.3.3"},'
+        ' "response": {"http_code": 403, "headers": {}},'
+        ' "messages": [{"message": "x", "details": {"ruleId": "941100", "severity": "2",'
+        ' "tags": ["OWASP_CRS", "paranoia-level/1"]}}]}}'
+    )
+    assert _parse_line(line)["category"] == "xss"
+
+
+def test_ingest_category_residual_unknown():
+    """Anomaly score puro (949) sin regla específica ni tag → 'unknown' residual."""
+    from app.proxy.ingest import _parse_line
+
+    line = (
+        '{"transaction": {"id": "residual1", "request": {"method": "GET", "uri": "/x",'
+        ' "headers": {"Host": "example.com"}, "remote_address": "4.4.4.4"},'
+        ' "response": {"http_code": 403, "headers": {}},'
+        ' "messages": [{"message": "x", "details": {"ruleId": "949110", "severity": "2",'
+        ' "tags": ["OWASP_CRS", "anomaly-evaluation"]}}]}}'
+    )
+    assert _parse_line(line)["category"] == "unknown"
+
+
 def test_ingest_resolves_site_by_domain(app, monkeypatch):
     from app.proxy.ingest import _process_line
     from app.extensions import db

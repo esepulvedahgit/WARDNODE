@@ -44,22 +44,86 @@ _TAG_TO_CATEGORY = {
     "ATTACK-RCE":               "rce",
     "ATTACK-LFI":               "lfi",
     "ATTACK-RFI":               "rfi",
+    "ATTACK-PROTOCOL":          "protocol-violation",
+    "ATTACK-PROTOCOL-ANOMALY":  "protocol-anomaly",
+    # CRS 4.x: nombres reales de OWASP CRS 4.x (los antiguos ATTACK-PHP-INJECTION,
+    # ATTACK-JAVA-INJECTION, ATTACK-SCANNER, ATTACK-SESSION-FIXATION NO existen en
+    # CRS 4.x — los tags reales son los siguientes).
+    "ATTACK-INJECTION-PHP":     "php-injection",
+    "ATTACK-INJECTION-JAVA":    "java-injection",
+    "ATTACK-INJECTION-GENERIC": "injection-generic",
+    "ATTACK-REPUTATION-SCANNER":   "scanner",
+    "ATTACK-REPUTATION-CRAWLER":   "scanner",
+    "ATTACK-REPUTATION-SCRIPTING": "scanner",
+    "ATTACK-FIXATION":          "session-fixation",
+    "ATTACK-DISCLOSURE":        "data-leakage",
+    "ATTACK-DOS":               "dos",
+    # Compatibilidad con nombres antiguos (por si alguna versión los emite)
     "ATTACK-SCANNER":           "scanner",
     "ATTACK-COMMAND-INJECTION": "command-injection",
     "ATTACK-PHP-INJECTION":     "php-injection",
     "ATTACK-JAVA-INJECTION":    "java-injection",
     "ATTACK-SESSION-FIXATION":  "session-fixation",
-    "ATTACK-PROTOCOL":          "protocol-violation",
-    "ATTACK-PROTOCOL-ANOMALY":  "protocol-anomaly",
+}
+
+# Fallback determinista por prefijo de ID de regla CRS (independiente de la versión
+# y del tag). Se usa cuando ningún tag matchea. Nota: 949 (anomaly score blocking)
+# se deja sin mapear a propósito → queda "unknown" si es lo único que hay.
+_RULE_ID_PREFIX_TO_CATEGORY = {
+    "913": "scanner",
+    "920": "protocol-violation",
+    "921": "protocol-violation",
+    "930": "lfi",
+    "931": "rfi",
+    "932": "rce",
+    "933": "php-injection",
+    "941": "xss",
+    "942": "sql-injection",
+    "943": "session-fixation",
+    "944": "java-injection",
 }
 
 
 def _parse_category(tags: list) -> str:
+    """Mapea una lista de tags a una categoría conocida, o 'unknown' si ninguno matchea.
+
+    Se conserva para compatibilidad; la ruta principal es _categorize(), que además
+    inspecciona todos los mensajes y aplica el fallback por ID de regla.
+    """
     for tag in tags:
         segment = tag.split("/")[-1].upper()
         if segment in _TAG_TO_CATEGORY:
             return _TAG_TO_CATEGORY[segment]
     return "unknown"
+
+
+def _category_from_rule_ids(rule_ids: list) -> str | None:
+    """Deriva la categoría desde el prefijo de 3 dígitos de cualquier ID de regla CRS."""
+    for rid in rule_ids:
+        if rid and len(str(rid)) >= 3:
+            cat = _RULE_ID_PREFIX_TO_CATEGORY.get(str(rid)[:3])
+            if cat:
+                return cat
+    return None
+
+
+def _categorize(messages: list) -> str:
+    """Determina la categoría inspeccionando TODOS los mensajes de la transacción.
+
+    Orden: 1) primer tag de ataque reconocido en cualquier mensaje;
+           2) fallback por prefijo de ID de regla CRS; 3) 'unknown'.
+    """
+    rule_ids = []
+    for msg in messages:
+        details = msg.get("details", {}) if isinstance(msg, dict) else {}
+        for tag in details.get("tags", []) or []:
+            segment = tag.split("/")[-1].upper()
+            if segment in _TAG_TO_CATEGORY:
+                return _TAG_TO_CATEGORY[segment]
+        rid = details.get("ruleId")
+        if rid is not None:
+            rule_ids.append(rid)
+    return _category_from_rule_ids(rule_ids) or "unknown"
 
 
 def _parse_line(line: str) -> dict | None:
@@ -80,7 +144,6 @@ def _parse_line(line: str) -> dict | None:
     resp = txn.get("response", {})
     msg0 = messages[0]
     details = msg0.get("details", {})
-    tags = details.get("tags", [])
 
     status_code = resp.get("http_code", 403)
     action = "block" if status_code == 403 else "detect"
@@ -110,7 +173,7 @@ def _parse_line(line: str) -> dict | None:
         "rule_id":        rule_id,
         "severity":       severity,
         "message":        msg0.get("message", ""),
-        "category":       _parse_category(tags),
+        "category":       _categorize(messages),
     }
 
 
