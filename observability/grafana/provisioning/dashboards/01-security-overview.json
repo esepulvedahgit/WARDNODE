@@ -1,39 +1,40 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Vista general de seguridad. Eventos WAF: cifra oficial desde PostgreSQL (coincide con /proxy/). Para detalle de tráfico HTTP (4xx, 5xx, URIs) usa «WardNode – NGINX Logs».",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "title": "NGINX Logs (4xx / 5xx detalle)",
+      "tooltip": "Tráfico HTTP — 4xx, 5xx, top URIs con error",
+      "type": "link",
+      "url": "/obs/d/wardnode-nginx-logs"
+    }
+  ],
   "panels": [
     {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "description": "Total de transacciones WAF registradas en PostgreSQL (attack_event). Cifra oficial — coincide con /proxy/.",
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
       "id": 1,
-      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__range]))", "instant": true, "legendFormat": "Eventos WAF", "queryType": "instant", "refId": "A"}],
-      "title": "Eventos WAF (ModSecurity)",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 500}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
-      "id": 3,
-      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
-      "title": "HTTP 4xx",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
-      "id": 4,
-      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
-      "title": "HTTP 5xx",
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM attack_event WHERE $__timeFilter(created_at)",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Eventos WAF (último día)",
       "type": "stat"
     },
     {
@@ -68,24 +69,26 @@
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "description": "Tendencia de eventos WAF (Loki, vista en vivo) y tráfico HTTP con errores. Para cifras históricas exactas ver «WAF Analytics» (Postgres).",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
       "id": 8,
       "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__interval]))", "legendFormat": "WAF (ModSec)", "queryType": "range", "refId": "A"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__interval]))", "legendFormat": "WAF (ModSec, Loki)", "queryType": "range", "refId": "A"},
         {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 [$__interval]))", "legendFormat": "HTTP 4xx/5xx", "queryType": "range", "refId": "B"}
       ],
-      "title": "Eventos de seguridad en el tiempo",
+      "title": "Eventos de seguridad en el tiempo (Loki — tendencia en vivo)",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
+      "description": "Logs ModSecurity en vivo desde Loki. Puede no incluir eventos anteriores al arranque del colector (Alloy).",
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
       "id": 9,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
       "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"modsecurity\"}", "legendFormat": "", "queryType": "range", "refId": "A"}],
-      "title": "Logs de seguridad recientes",
+      "title": "Logs de seguridad recientes (vivo — Loki)",
       "type": "logs"
     }
   ],
@@ -93,10 +96,10 @@
   "schemaVersion": 39,
   "tags": ["wardnode", "security", "overview"],
   "templating": {"list": []},
-  "time": {"from": "now-1h", "to": "now"},
+  "time": {"from": "now-24h", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
   "title": "WardNode – Security Overview",
   "uid": "wardnode-security-overview",
-  "version": 1
+  "version": 2
 }

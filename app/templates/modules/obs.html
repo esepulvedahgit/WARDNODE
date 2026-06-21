@@ -101,12 +101,22 @@
           </p>
           <div x-show="restartError" x-cloak
                style="font-size:11px;color:var(--c-danger);margin-bottom:8px" x-text="restartError"></div>
-          <button @click="restart()" :disabled="running"
-                  class="btn btn-sm btn-danger">
-            <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
-            <i x-show="!running" class="bi bi-arrow-repeat me-1"></i>
-            <span x-text="running ? 'Reiniciando…' : 'Reiniciar servicios'"></span>
-          </button>
+          <div x-show="wafResetMsg" x-cloak
+               style="font-size:11px;color:var(--text-secondary);margin-bottom:8px" x-text="wafResetMsg"></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <button @click="restart()" :disabled="running"
+                    class="btn btn-sm btn-danger">
+              <span x-show="running" class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px"></span>
+              <i x-show="!running" class="bi bi-arrow-repeat me-1"></i>
+              <span x-text="running ? 'Reiniciando…' : 'Reiniciar servicios'"></span>
+            </button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);cursor:pointer;user-select:none"
+                   title="Borra los logs de ModSecurity almacenados en Loki. No afecta logs de nginx ni métricas de rendimiento.">
+              <input type="checkbox" x-model="resetWaf" style="margin:0;cursor:pointer">
+              Iniciar historial WAF desde cero
+              <i class="bi bi-info-circle" style="font-size:11px;opacity:.6"></i>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -375,6 +385,8 @@ function obsRestart() {
     running: false,
     stepText: '',
     restartError: '',
+    wafResetMsg: '',
+    resetWaf: false,
     _steps: [
       'Verificando contenedores…',
       'Iniciando servicios…',
@@ -401,15 +413,26 @@ function obsRestart() {
     async restart() {
       this.running = true;
       this.restartError = '';
+      this.wafResetMsg = '';
       this._startSteps();
       try {
+        const body = new FormData();
+        body.append('csrf_token', document.querySelector("meta[name='csrf-token']").content);
+        if (this.resetWaf) body.append('reset_waf_data', '1');
         const r = await fetch('{{ url_for("modules.obs_activate") }}', {
           method: 'POST',
           headers: { 'X-CSRFToken': document.querySelector("meta[name='csrf-token']").content },
+          body,
         });
         const d = await r.json();
         if (d.ok) {
-          window.location.reload();
+          if (d.waf_reset_msg) {
+            // Mostrar mensaje WAF brevemente antes de recargar
+            this.wafResetMsg = d.waf_reset_msg;
+            setTimeout(() => window.location.reload(), 2500);
+          } else {
+            window.location.reload();
+          }
         } else {
           this.restartError = d.error || 'Error desconocido al reiniciar.';
         }

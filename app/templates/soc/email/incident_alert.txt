@@ -1,0 +1,43 @@
+══════════════════════════════════════════
+WardNode SOC — Alerta de Incidente
+══════════════════════════════════════════
+
+{{ {'critical': '🚨 CRÍTICO', 'high': '🔴 ALTO', 'medium': '🟡 MEDIO', 'low': '🟢 BAJO'}.get(incident.severity | lower, incident.severity | upper) }} — Incidente #{{ incident.id }}
+
+IP ORIGEN:   {{ incident.source_ip }}
+{% if incident.domain %}DOMINIO:     {{ incident.domain }}
+{% endif %}VENTANA:     {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} → {{ incident.window_end.strftime('%H:%M') }} UTC
+EVENTOS WAF: {{ incident.event_count }}
+ESTADO:      {{ incident.status }}
+
+── SCORES DE RIESGO ──────────────────────
+  Heurístico:  {{ incident.score | int }}/100
+{% if incident.ml_score is not none %}  ML (anomalía): {{ incident.ml_score | int }}/100
+{% endif %}{% if incident.abuse_score is not none %}  AbuseIPDB:   {{ incident.abuse_score }}/100{% if incident.abuse_score >= 75 %} ⚠ Alta reputación negativa{% endif %}
+
+{% endif %}
+{% if payload and payload.summary %}── ANÁLISIS IA ────────────────────────────
+{{ payload.summary }}
+{% if payload.explanation %}
+{{ payload.explanation }}
+{% endif %}
+  Severidad sugerida: {{ payload.severity_suggested }}
+  Confianza: {{ payload.confidence }}%
+
+{% endif %}
+{% if payload and payload.hypotheses %}── HIPÓTESIS ──────────────────────────────
+{% for h in payload.hypotheses %}  • {{ h.text }} (confianza {{ h.confidence }}%)
+{% endfor %}
+{% endif %}
+{% if payload and payload.recommendations %}── RECOMENDACIONES ────────────────────────
+{% for rec in payload.recommendations %}  [{{ rec.priority | upper }}] {{ rec.text }}
+{% endfor %}
+{% endif %}
+{% if mitre_combined %}── MITRE ATT&CK ───────────────────────────
+{% for t in mitre_combined %}  • {{ t.id }} · {{ t.name }}{% if t.tactic %} ({{ t.tactic }}){% endif %}
+
+{% endfor %}
+{% endif %}
+══════════════════════════════════════════
+{% if base_url %}Ver detalle: {{ base_url }}/soc/incidente/{{ incident.id }}
+{% endif %}WardNode SOC — alerta automática

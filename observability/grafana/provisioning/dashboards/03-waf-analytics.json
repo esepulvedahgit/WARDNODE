@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Analítica histórica de eventos WAF (PostgreSQL / attack_event). Para logs WAF en vivo ver «WardNode – ModSecurity WAF».",
+  "description": "Cifras oficiales de eventos WAF (PostgreSQL / attack_event). Los números coinciden exactamente con el panel /proxy/ de la consola WardNode, ya que ambos consultan la misma tabla. Para explorar logs crudos en vivo ver «WardNode – ModSecurity WAF» (Loki).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -509,5 +509,5 @@
   "timezone": "browser",
   "title": "WardNode – WAF Analytics",
   "uid": "wardnode-waf-analytics",
-  "version": 1
+  "version": 2
 }

@@ -28,6 +28,11 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
                 "PUBLIC_BASE_URL debe ser una URL https:// en producción. "
                 "Configúrala en .env o en las variables de entorno del contenedor."
             )
+        if app.config.get("SECRET_KEY", "") in ("", "dev-secret-key", "change-me"):
+            raise RuntimeError(
+                "SECRET_KEY debe definirse con un valor aleatorio en producción. "
+                "Genera uno con: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
 
     csrf.init_app(app)
     db.init_app(app)
@@ -100,87 +105,27 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     @app.cli.command("ensure-geoip")
     def ensure_geoip_command():
         """Download GeoLite2-Country DB into the volume if not already present."""
+        from app.proxy.geoip import download_geoip_db, geoip_db_status, read_maxmind_credentials
         from app.proxy.services import render_nginx_configs
 
-        db_path = Path(app.config["GEOIP_DB_PATH"])
-        if db_path.exists():
-            size_mb = db_path.stat().st_size // 1_048_576
-            print(f"GeoIP DB presente ({size_mb} MB), sin acción.")
+        db_path_str = app.config["GEOIP_DB_PATH"]
+        status = geoip_db_status(db_path_str)
+        if status["present"]:
+            print(f"GeoIP DB presente ({status['size_mb']} MB), sin acción.")
             return
 
-        from app.models import AppConfig
-        from app.encryption import decrypt_secret, EncryptionNotConfigured
-
-        try:
-            enc_id = AppConfig.get("maxmind_account_id")
-            enc_key = AppConfig.get("maxmind_license_key")
-            account_id = (decrypt_secret(enc_id) or "") if enc_id else ""
-            license_key = (decrypt_secret(enc_key) or "") if enc_key else ""
-        except EncryptionNotConfigured:
-            account_id = ""
-            license_key = ""
-
+        account_id, license_key = read_maxmind_credentials()
         if not account_id or not license_key:
             print("Advertencia: credenciales MaxMind no configuradas. Configúralas desde /proxy/settings.")
             return
 
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        url = "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz"
-        credentials = base64.b64encode(f"{account_id}:{license_key}".encode()).decode()
         print("Descargando GeoLite2-Country desde MaxMind ...")
-        tar_path = db_path.parent / "GeoLite2-Country.tar.gz"
-        try:
-            # MaxMind returns 302 to a Cloudflare R2 presigned URL.
-            # Step 1: capture that URL without following the redirect.
-            class _CaptureRedirect(urllib.request.HTTPRedirectHandler):
-                def http_error_302(self, req, fp, code, msg, headers):
-                    raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
-                http_error_301 = http_error_302
-                http_error_303 = http_error_302
-                http_error_307 = http_error_302
-                http_error_308 = http_error_302
-
-            no_redirect_opener = urllib.request.build_opener(_CaptureRedirect())
-            req = urllib.request.Request(url, headers={"Authorization": f"Basic {credentials}"})
-            try:
-                no_redirect_opener.open(req, timeout=30)
-                download_url = url
-            except urllib.error.HTTPError as redir_exc:
-                if redir_exc.code in (301, 302, 303, 307, 308):
-                    download_url = redir_exc.headers.get("Location")
-                    if not download_url:
-                        raise RuntimeError("MaxMind redirect sin Location header")
-                else:
-                    raise
-
-            # Step 2: download from presigned URL — no Authorization header needed
-            # R2 presigned URLs may contain literal spaces; encode them
-            download_url = download_url.replace(" ", "%20")
-            with urllib.request.urlopen(download_url, timeout=120) as resp:
-                tar_path.write_bytes(resp.read())
-            with tarfile.open(tar_path) as tf:
-                mmdb_member = next(m for m in tf.getmembers() if m.name.endswith(".mmdb"))
-                with tf.extractfile(mmdb_member) as src:
-                    db_path.write_bytes(src.read())
-            tar_path.unlink()
-            size_mb = db_path.stat().st_size // 1_048_576
-            print(f"GeoLite2-Country descargada ({size_mb} MB).")
-        except urllib.error.HTTPError as exc:
-            body = ""
-            try:
-                body = exc.read().decode(errors="replace")
-            except Exception:
-                pass
-            print(f"Advertencia: MaxMind respondió HTTP {exc.code} {exc.reason}. {body}")
-            if tar_path.exists():
-                tar_path.unlink()
-            return
-        except Exception as exc:
-            print(f"Advertencia: no se pudo descargar GeoLite2-Country: {exc}")
-            if tar_path.exists():
-                tar_path.unlink()
+        ok, msg = download_geoip_db(db_path_str, account_id, license_key)
+        if not ok:
+            print(f"Advertencia: {msg}")
             return
 
+        print(msg)
         try:
             render_nginx_configs()
             print("Configs nginx regenerados con geoip2.")
@@ -324,5 +269,8 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
 
     from app.backup.worker import start_backup_thread
     start_backup_thread(app)
+
+    from app.modules.port_monitor import start_port_monitor_thread
+    start_port_monitor_thread(app)
 
     return app

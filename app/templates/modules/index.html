@@ -30,11 +30,41 @@
   <div class="row g-4">
     {% for module in modules %}
     {% set enabled = states[module.id] %}
+    {% set req_id = module.requires if module.requires is defined else '' %}
+    {% set locked = req_id and not states[req_id] and not enabled %}
     <div class="col-md-6 col-lg-4">
       <div class="card-panel h-100" style="position:relative">
 
+        {# ── Tarjeta bloqueada: dependencia padre no activa ── #}
+        {% if locked %}
+        <div class="card-panel-body" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                        background:var(--bg-subtle);color:var(--text-muted);border:1px solid var(--border-color);opacity:.55">
+              <i class="bi {{ module.icon }}" style="font-size:20px"></i>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <h2 style="font-size:15px;font-weight:600;margin:0;color:var(--text-muted)">{{ module.name }}</h2>
+                <span class="badge-mode badge-off" style="font-size:10px">inactivo</span>
+              </div>
+              <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.5">{{ module.description }}</p>
+              <p style="margin:0 0 12px 0;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px;font-size:11px;color:#92400e;line-height:1.5">
+                <i class="bi bi-lock-fill me-1" style="color:#f97316"></i>
+                <strong>Requiere {{ module_names[req_id] }} activo.</strong>
+                Activa {{ module_names[req_id] }} primero para poder habilitar este módulo.
+              </p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button disabled class="btn btn-sm btn-outline-secondary" style="font-size:12px;opacity:.45;cursor:not-allowed">
+                  <i class="bi bi-toggle-off me-1"></i>Activar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {# ── Overlay de carga para activación DDoS/CrowdSec ── #}
-        {% if module.id == 'ddos' and not enabled %}
+        {% elif module.id == 'ddos' and not enabled %}
         <div x-data="ddosActivate()" style="display:contents">
           <div x-show="running" x-cloak
                style="position:absolute;inset:0;background:rgba(255,255,255,0.95);border-radius:inherit;z-index:10;

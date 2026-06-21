@@ -42,6 +42,7 @@ MODULES = [
         "icon": "bi-bar-chart-line-fill",
         "config_key": "module_obs_enabled",
         "endpoint": "modules.obs_index",
+        "requires": "wf",
     },
     {
         "id": "soc",
@@ -51,6 +52,7 @@ MODULES = [
         "icon": "bi-robot",
         "config_key": "module_soc_enabled",
         "endpoint": "soc.index",
+        "requires": "wf",
     },
     {
         "id": "ddos",
@@ -60,8 +62,41 @@ MODULES = [
         "icon": "bi-shield-shaded",
         "config_key": "module_ddos_enabled",
         "endpoint": "modules.ddos_index",
+        "requires": "wf",
     },
 ]
+
+
+def _module_by_id(mid: str):
+    """Devuelve la entrada del catálogo MODULES para el id dado, o None."""
+    return next((m for m in MODULES if m["id"] == mid), None)
+
+
+def _unmet_dependency(module: dict):
+    """Devuelve el módulo padre si su dependencia NO está activa (None si OK)."""
+    parent = _module_by_id(module.get("requires", ""))
+    if parent and AppConfig.get(parent["config_key"]) != "1":
+        return parent
+    return None
+
+
+def _ufw_gate_reason(module: dict) -> str | None:
+    """Si el módulo depende de WF, verifica que UFW esté realmente operativo (fail-closed).
+
+    Devuelve un mensaje de error si UFW no está activo+inicializado, o None si OK/no aplica.
+    Se invoca DESPUÉS de _unmet_dependency para separar los mensajes de remediación:
+      - 'dependency' → WF no está habilitado en la consola.
+      - 'firewall'   → WF está habilitado pero UFW no está activo en el host.
+    """
+    if module.get("requires") != "wf":
+        return None
+    from .socket_client import ufw_is_operational
+    if not ufw_is_operational():
+        return (
+            "UFW no está activo en el host. Inicializa y activa el firewall "
+            "en WardNode WF (default deny incoming) antes de levantar este módulo."
+        )
+    return None
 
 
 # ── Helpers para bloqueo diferido del puerto 5000 ─────────────────────
@@ -96,7 +131,9 @@ def _secure_port_async(delay: float = 5.0) -> None:
 @roles_required(ROLE_ADMIN)
 def index():
     states = {m["id"]: AppConfig.get(m["config_key"]) == "1" for m in MODULES}
-    return render_template("modules/index.html", modules=MODULES, states=states)
+    module_names = {m["id"]: m["name"] for m in MODULES}
+    return render_template("modules/index.html", modules=MODULES, states=states,
+                           module_names=module_names)
 
 
 @bp.post("/<name>/toggle")
@@ -107,6 +144,22 @@ def toggle(name: str):
     if module is None:
         return jsonify({"ok": False, "error": "Módulo desconocido"}), 404
     current = AppConfig.get(module["config_key"]) == "1"
+
+    # ── Gate de dependencia: bloquear activación si el módulo padre no está activo ──
+    if not current:
+        parent = _unmet_dependency(module)
+        if parent:
+            flash(
+                f"{module['name']} requiere que {parent['name']} esté activo. "
+                f"Activa {parent['name']} primero.",
+                "warning",
+            )
+            return redirect(url_for("modules.index"))
+
+        # ── Gate de firewall: UFW debe estar activo e inicializado en el host ──
+        if reason := _ufw_gate_reason(module):
+            flash(reason, "warning")
+            return redirect(url_for("modules.index"))
 
     if name == "obs" and not current:
         flash("Usa el botón 'Activar' para iniciar el proceso de verificación de OBS.", "info")
@@ -453,13 +506,17 @@ def wf_generate_key():
 def wf_status():
     if AppConfig.get("module_wf_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo WF no habilitado"}), 403
-    result = send_command("status")
-    if result.get("ok"):
-        defaults = send_command("check_defaults")
-        verbose_out = defaults.get("output", "")
-        result["initialized"] = "deny (incoming)" in verbose_out.lower()
-        result["defaults_output"] = verbose_out
-    return jsonify(result)
+    from .socket_client import get_ufw_state
+    st = get_ufw_state()
+    return jsonify({
+        "ok": st["reachable"],
+        # 'output' mantiene compatibilidad con el frontend (lee d.output)
+        "output": st["status_output"],
+        "initialized": st["initialized"],
+        "active": st["active"],
+        "defaults_output": st["defaults_output"],
+        **( {"error": st["error"]} if not st["reachable"] else {} ),
+    })
 
 
 
@@ -701,6 +758,35 @@ def _inject_obs_nginx_conf(docker_client) -> bool:
         return False
 
 
+def _reset_waf_loki_data() -> tuple[bool, str]:
+    """Borra solo el stream {job='modsecurity'} en Loki via Delete API.
+
+    No toca logs de nginx (job=nginx_access), UFW (job=ufw) ni métricas de Prometheus.
+    El borrado es asíncrono en Loki: el compactor lo procesa en ~5 min
+    (delete_request_cancel_period configurado en observability/loki.yaml).
+    Retorna (True, "") en éxito o (False, mensaje) en error.
+    """
+    import time
+    import httpx
+
+    end_ns = int(time.time() * 1e9)
+    try:
+        r = httpx.post(
+            "http://wardnode-loki:3100/loki/api/v1/delete",
+            params={
+                "query": '{job="modsecurity"}',
+                "start": "0",
+                "end": str(end_ns),
+            },
+            timeout=15,
+        )
+        if r.status_code in (204, 200):
+            return True, ""
+        return False, f"Loki respondió {r.status_code}: {r.text[:300]}"
+    except Exception as exc:
+        return False, str(exc)
+
+
 @bp.post("/obs/activate")
 @roles_required(ROLE_ADMIN)
 def obs_activate():
@@ -708,12 +794,35 @@ def obs_activate():
     import subprocess
     import time
 
+    # ── Gate de dependencia ────────────────────────────────────────────────────
+    _obs_mod = _module_by_id("obs")
+    if _obs_mod:
+        parent = _unmet_dependency(_obs_mod)
+        if parent:
+            return jsonify({
+                "ok": False,
+                "step": "dependency",
+                "error": (
+                    f"{_obs_mod['name']} requiere que {parent['name']} esté activo. "
+                    f"Actívalo primero desde la página de Módulos."
+                ),
+            }), 400
+
+        # ── Gate de firewall: UFW debe estar activo e inicializado en el host ──
+        if reason := _ufw_gate_reason(_obs_mod):
+            return jsonify({"ok": False, "step": "firewall", "error": reason}), 400
+
+    reset_waf = request.form.get("reset_waf_data") == "1"
+
     try:
         import docker as docker_sdk
     except ImportError:
         return jsonify({"ok": False, "step": "docker", "error": "SDK de Docker no instalado en el contenedor"}), 500
 
-    _OBS_CONTAINERS = ["wardnode-loki", "wardnode-grafana", "wardnode-alloy", "wardnode-prometheus", "wardnode-nginx-exporter"]
+    # Loki, Alloy, Prometheus y nginx-exporter arrancan siempre con el stack
+    # base (sin --profile obs). obs_activate solo gestiona Grafana (visualización).
+    _OBS_CONTAINERS = ["wardnode-grafana"]
+    _OBS_IMAGES = ["grafana/grafana:11.5"]
 
     try:
         client = docker_sdk.from_env()
@@ -758,12 +867,32 @@ def obs_activate():
                 ),
             }), 500
 
+        # ── Pre-flight: verificar que las imágenes OBS están cargadas localmente ──
+        missing_images = []
+        for ref in _OBS_IMAGES:
+            try:
+                client.images.get(ref)
+            except docker_sdk.errors.ImageNotFound:
+                missing_images.append(ref)
+            except Exception:
+                pass  # ante error inesperado no bloquear; compose lo reportará
+        if missing_images:
+            return jsonify({
+                "ok": False,
+                "step": "images",
+                "error": (
+                    "Faltan imágenes OBS en el host: " + ", ".join(missing_images) + ". "
+                    "Cárgalas con 'docker pull <imagen>' (o 'docker load -i <tar>') "
+                    "y vuelve a activar OBS."
+                ),
+            }), 500
+
         try:
             result = subprocess.run(
                 [
                     "docker", "compose", "-f", compose_file, "--profile", "obs",
                     "up", "-d", "--no-build", "--no-deps", "--no-recreate",
-                    "loki", "grafana", "alloy", "prometheus", "nginx-exporter",
+                    "grafana",
                 ],
                 capture_output=True,
                 text=True,
@@ -785,10 +914,12 @@ def obs_activate():
 
         if result.returncode != 0:
             err_output = (result.stderr or result.stdout or "").strip()
+            # Mostrar el final del log donde docker escribe la causa real del error.
+            tail = err_output[-800:]
             return jsonify({
                 "ok": False,
                 "step": "compose",
-                "error": f"docker compose falló (código {result.returncode}): {err_output[:500]}",
+                "error": f"docker compose falló (código {result.returncode}): …{tail}",
             }), 500
 
     # ── Fase 3: verificar que los contenedores estén corriendo (máx 30 s) ──
@@ -816,8 +947,8 @@ def obs_activate():
         return jsonify({
             "ok": False,
             "step": "health",
-            "error": f"Contenedores no arrancaron: {', '.join(not_running)}. "
-                     "Revisa logs con: docker logs <nombre>",
+            "error": f"Contenedor Grafana no arrancó: {', '.join(not_running)}. "
+                     "Revisa logs con: docker logs wardnode-grafana",
         }), 500
 
     # ── Fase 3b: esperar a que Grafana responda HTTP (no fatal, máx 30 s) ──
@@ -852,7 +983,32 @@ def obs_activate():
 
     # Mantener obs.conf como fallback para instalaciones sin site configurado.
     _inject_obs_nginx_conf(client)
-    return jsonify({"ok": True})
+
+    # ── Fase 5 (opcional): limpiar histórico WAF en Loki ─────────────────
+    waf_reset_msg = None
+    if reset_waf:
+        ok_loki, err_loki = _reset_waf_loki_data()
+        if ok_loki:
+            waf_reset_msg = "Histórico WAF de OBS marcado para borrado (efectivo en ~5 min)."
+            log_audit(
+                "obs.reset_waf_data",
+                resource_type="loki",
+                resource_name="{job=modsecurity}",
+                severity="warning",
+                status="success",
+            )
+        else:
+            waf_reset_msg = f"OBS activo, pero no se pudo limpiar el histórico WAF en Loki: {err_loki}"
+            log_audit(
+                "obs.reset_waf_data",
+                resource_type="loki",
+                resource_name="{job=modsecurity}",
+                severity="warning",
+                status="failure",
+                detail={"error": err_loki},
+            )
+
+    return jsonify({"ok": True, **({"waf_reset_msg": waf_reset_msg} if waf_reset_msg else {})})
 
 
 @bp.get("/obs/")
@@ -1124,6 +1280,30 @@ def ddos_activate():
     """Activa el módulo DDoS: arranca CrowdSec + bouncer y registra la bouncer key."""
     import subprocess
 
+    # ── Gate de dependencia ────────────────────────────────────────────────────
+    _ddos_mod = _module_by_id("ddos")
+    if _ddos_mod:
+        parent = _unmet_dependency(_ddos_mod)
+        if parent:
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail={"step": "dependency", "requires": parent["id"]})
+            return jsonify({
+                "ok": False,
+                "step": "dependency",
+                "error": (
+                    f"{_ddos_mod['name']} requiere que {parent['name']} esté activo. "
+                    f"Actívalo primero desde la página de Módulos."
+                ),
+            }), 400
+
+        # ── Gate de firewall: UFW debe estar activo e inicializado en el host ──
+        if reason := _ufw_gate_reason(_ddos_mod):
+            log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                      status="failure", severity="warning",
+                      detail={"step": "firewall"})
+            return jsonify({"ok": False, "step": "firewall", "error": reason}), 400
+
     try:
         import docker as docker_sdk
     except ImportError:
@@ -1164,10 +1344,24 @@ def ddos_activate():
             }), 400
 
     # ── Fase 1: intentar iniciar contenedores existentes via SDK ──────────
+    # Para el bouncer, si su API_KEY no coincide con la key actual en AppConfig
+    # (p.ej. fue levantado a mano con key vacía o con otra key), se elimina para
+    # que la Fase 2 lo recree con la key correcta vía docker compose.
     not_found = []
     for name in _DDOS_CONTAINERS:
         try:
             c = client.containers.get(name)
+            if name == "wardnode-crowdsec-bouncer":
+                env_vars = c.attrs.get("Config", {}).get("Env", []) or []
+                cur_key = next(
+                    (e.split("=", 1)[1] for e in env_vars if e.startswith("API_KEY=")),
+                    None,
+                )
+                if cur_key != bouncer_key:
+                    # Key no coincide: eliminar para forzar recreación con key correcta
+                    c.remove(force=True)
+                    not_found.append(name)
+                    continue
             if c.status != "running":
                 c.start()
         except docker_sdk.errors.NotFound:
@@ -1208,7 +1402,7 @@ def ddos_activate():
                 ),
             }), 500
 
-        # Preflight: verificar que el compose conoce los servicios ddos
+        # Preflight 1: verificar que el compose conoce los servicios ddos
         try:
             preflight = subprocess.run(
                 ["docker", "compose", "-f", compose_file, "--profile", "ddos",
@@ -1232,11 +1426,52 @@ def ddos_activate():
         except Exception:
             pass  # No fatal — el compose up fallará con mensaje claro si hay problema
 
+        # Preflight 2: verificar que la imagen del daemon CrowdSec está presente localmente.
+        # Con DOCKER_HOST apuntando al docker-socket-proxy (tcp://127.0.0.1:2375), cualquier
+        # intento de pull falla con 403 "Request forbidden by administrative rules" porque el
+        # proxy no expone los endpoints de distribution/pull por diseño (mínimo privilegio).
+        # Se detecta aquí para devolver un mensaje accionable en vez del 403 críptico.
+        _cs_image_ref = None
+        try:
+            img_cfg = subprocess.run(
+                ["docker", "compose", "-f", compose_file, "--profile", "ddos",
+                 "config", "--images"],
+                capture_output=True, text=True, timeout=30, cwd=project_dir,
+                env={**os.environ, "WARDNODE_DDOS_BOUNCER_KEY": bouncer_key},
+            )
+            if img_cfg.returncode == 0:
+                for line in img_cfg.stdout.strip().splitlines():
+                    if "crowdsecurity/crowdsec" in line:
+                        _cs_image_ref = line.strip()
+                        break
+        except Exception:
+            pass  # No fatal — el compose up dará su propio error si la imagen falta
+
+        if _cs_image_ref:
+            try:
+                client.images.get(_cs_image_ref)
+            except docker_sdk.errors.ImageNotFound:
+                log_audit("ddos.activate", resource_type="module", resource_name="ddos",
+                          status="failure", severity="warning",
+                          detail=json.dumps({"step": "image", "ref": _cs_image_ref}))
+                return jsonify({
+                    "ok": False, "step": "image",
+                    "error": (
+                        "La imagen del daemon CrowdSec no está cargada en el host. "
+                        "El panel no puede descargarla: el docker-socket-proxy bloquea "
+                        "el pull por diseño (minimiza la superficie de la API de Docker). "
+                        "Ejecuta esto directamente en el host antes de activar:\n"
+                        f"  docker pull {_cs_image_ref}"
+                    ),
+                }), 500
+            except Exception:
+                pass  # Si no se puede verificar, el compose up dará error descriptivo
+
         try:
             result = subprocess.run(
                 [
                     "docker", "compose", "-f", compose_file, "--profile", "ddos",
-                    "up", "-d", "--no-build", "--no-deps", "--no-recreate",
+                    "up", "-d", "--no-build", "--no-deps", "--no-recreate", "--pull", "never",
                     "crowdsec", "crowdsec-bouncer",
                 ],
                 capture_output=True, text=True, timeout=120, cwd=project_dir,
@@ -1260,8 +1495,21 @@ def ddos_activate():
             log_audit("ddos.activate", resource_type="module", resource_name="ddos",
                       status="failure", severity="error",
                       detail=json.dumps({"step": "compose", "rc": result.returncode}))
+            # Si el error apunta a imagen ausente o a un 403 del proxy, anteponer la guía
+            # de pre-pull para que el operador sepa exactamente qué ejecutar en el host.
+            _pull_keywords = ("403", "forbidden", "pull", "manifest unknown",
+                              "not found locally", "no such image", "unable to find image")
+            _pull_hint = ""
+            if any(kw in err_output.lower() for kw in _pull_keywords):
+                _ref_hint = _cs_image_ref or "crowdsecurity/crowdsec@sha256:<digest>"
+                _pull_hint = (
+                    "La imagen del daemon CrowdSec no está disponible localmente y el panel "
+                    "no puede descargarla (el docker-socket-proxy bloquea el pull). "
+                    f"Ejecuta en el host: docker pull {_ref_hint}\n"
+                )
             return jsonify({"ok": False, "step": "compose",
-                            "error": f"docker compose falló (código {result.returncode}): {err_output[:500]}"}), 500
+                            "error": f"{_pull_hint}docker compose falló "
+                                     f"(código {result.returncode}): {err_output[:500]}"}), 500
 
     # ── Fase 3: health check contenedores (máx 30 s) ──────────────────────
     deadline = time.time() + 30
@@ -1294,38 +1542,27 @@ def ddos_activate():
                      "Revisa logs con: docker logs <nombre>",
         }), 500
 
-    # ── Fase 4: asegurar el registro de la bouncer key en el daemon ───────
-    # El registro normal lo hace la imagen oficial al crear el contenedor, vía
-    # BOUNCER_KEY_wardnode (env del compose) → bouncer 'wardnode'. Esta fase
-    # solo repara el caso fail-open: contenedor creado sin la key (p.ej.
-    # recreación manual de compose) → sin registro, el bouncer no autentica.
-    # Nota: cscli bouncers add no soporta --overwrite en esta versión; por eso
-    # se consulta primero y solo se registra si falta o está revocado.
+    # ── Fase 4: reconciliar la bouncer key en el daemon (idempotente) ────────
+    # Siempre hace delete + add con la key actual de AppConfig, sin consultar
+    # primero si ya existe. Esto garantiza que un arranque manual con key vacía
+    # (o un cambio de key) nunca deje el bouncer en bucle de 403.
+    # cscli bouncers delete es no-op si el bouncer no existe (exit 0).
+    # La key viaja por env del exec (no por argv): /proc/<pid>/environ es solo-root,
+    # mientras que cmdline es world-readable dentro del contenedor.
     try:
         crowdsec_c = client.containers.get("wardnode-crowdsec")
-        exit_code, output = crowdsec_c.exec_run(
-            ["cscli", "bouncers", "list", "-o", "json"], user="root"
+        # delete idempotente — ignorar salida y código de error
+        crowdsec_c.exec_run(
+            ["cscli", "bouncers", "delete", "wardnode"], user="root"
         )
-        raw = output.decode("utf-8", errors="replace").strip() if exit_code == 0 else ""
-        entries = (json.loads(raw) if raw else []) or []
-        wn = next((b for b in entries if b.get("name") == "wardnode"), None)
-        if wn is None or wn.get("revoked"):
-            if wn is not None:
-                crowdsec_c.exec_run(
-                    ["cscli", "bouncers", "delete", "wardnode"], user="root"
-                )
-            # La key viaja por env del exec (no por argv): /proc/<pid>/environ
-            # es solo-root, mientras que cmdline es world-readable dentro del
-            # contenedor. El comando es una cadena literal fija — la key nunca
-            # se interpola.
-            exit_code, _ = crowdsec_c.exec_run(
-                ["/bin/sh", "-c",
-                 'exec cscli bouncers add wardnode --key "$WN_BOUNCER_KEY"'],
-                environment={"WN_BOUNCER_KEY": bouncer_key},
-                user="root",
-            )
-            if exit_code != 0:
-                raise RuntimeError(f"cscli bouncers add terminó con código {exit_code}")
+        exit_code, _ = crowdsec_c.exec_run(
+            ["/bin/sh", "-c",
+             'exec cscli bouncers add wardnode --key "$WN_BOUNCER_KEY"'],
+            environment={"WN_BOUNCER_KEY": bouncer_key},
+            user="root",
+        )
+        if exit_code != 0:
+            raise RuntimeError(f"cscli bouncers add terminó con código {exit_code}")
     except Exception as e:
         log_audit("ddos.activate", resource_type="module", resource_name="ddos",
                   status="failure", severity="error",

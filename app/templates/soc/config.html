@@ -97,6 +97,15 @@
   }
   .soc-config .optin-callout.is-off .optin-flag { background: var(--accent); color: #fff; }
   .soc-config .optin-callout.is-on  .optin-flag { background: #16a34a;       color: #fff; }
+  /* Badge de estado en cabecera de card (Activo / Desactivado) */
+  .soc-config .soc-status-pill {
+    display: inline-flex; align-items: center; gap: .3rem;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; padding: .2rem .6rem; border-radius: 999px;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .soc-config .soc-status-pill.is-on  { background: rgba(22,163,74,.12); color: #15803d; }
+  .soc-config .soc-status-pill.is-off { background: rgba(148,163,184,.15); color: #64748b; }
   @media (max-width: 575px) {
     .soc-config .soc-tabs { gap: .25rem; }
     .soc-config .soc-tabs .nav-link { font-size: 12px; padding: .3rem .65rem; }
@@ -307,7 +316,7 @@
 
       {# — Motor de detección — #}
       <form method="post" action="{{ url_for('soc.config_save') }}"
-            x-data="{s:false}" @submit="s=true">
+            x-data="{s:false, mlOn: {{ ml_enabled | tojson }}}" @submit="s=true">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="section" value="detection">
 
@@ -316,6 +325,10 @@
             <h2 class="card-panel-title">
               <i class="bi bi-sliders me-2" style="color:var(--accent)"></i>Motor de detección
             </h2>
+            <span class="soc-status-pill" :class="mlOn ? 'is-on' : 'is-off'">
+              <span x-show="mlOn">● ML Activo</span>
+              <span x-show="!mlOn">○ ML Desactivado</span>
+            </span>
           </div>
           <div class="card-panel-body">
             <p class="text-secondary small mb-3">Parámetros del worker periódico de correlación.</p>
@@ -342,7 +355,7 @@
 
             <div class="form-check mb-2">
               <input class="form-check-input" type="checkbox" id="ml_enabled" name="ml_enabled"
-                     value="1" {% if ml_enabled %}checked{% endif %}>
+                     value="1" {% if ml_enabled %}checked{% endif %} x-model="mlOn">
               <label class="form-check-label fw-medium" for="ml_enabled" style="font-size:13px">
                 Activar scoring ML (IsolationForest)
               </label>
@@ -384,6 +397,11 @@
             <h2 class="card-panel-title">
               <i class="bi bi-globe2 me-2" style="color:var(--accent)"></i>Threat intel (AbuseIPDB)
             </h2>
+            {% if masked.abuseipdb_key %}
+            <span class="soc-status-pill is-on">● Activo</span>
+            {% else %}
+            <span class="soc-status-pill is-off">○ Desactivado</span>
+            {% endif %}
           </div>
           <div class="card-panel-body">
             <p class="text-secondary small mb-3">

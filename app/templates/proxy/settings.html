@@ -442,6 +442,71 @@
           {% endif %}
         </div>
       </form>
+
+      {# ── Estado de la base GeoIP ────────────────────────────────────── #}
+      <hr class="my-4">
+      <div class="d-flex align-items-start gap-3 flex-wrap">
+        <div class="flex-grow-1">
+          <div class="fw-medium mb-2" style="font-size:.85rem">Estado de la base GeoIP</div>
+          {% if geoip_status.present %}
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1" style="font-size:.83rem">
+            <span class="badge bg-success-subtle text-success-emphasis">
+              <i class="bi bi-check-circle-fill me-1"></i>Presente
+            </span>
+            <span class="text-secondary">{{ geoip_status.size_mb }} MB</span>
+            <span class="text-secondary">·</span>
+            <span class="text-secondary">actualizada {{ geoip_status.mtime.strftime('%d/%m/%Y %H:%M') }} UTC</span>
+          </div>
+          {% else %}
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1" style="font-size:.83rem">
+            <span class="badge bg-warning-subtle text-warning-emphasis">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i>No disponible
+            </span>
+            <span class="text-secondary">El bloqueo geográfico y el enriquecimiento de eventos están desactivados.</span>
+          </div>
+          {% endif %}
+
+          {# Cobertura de enriquecimiento últimas 24h #}
+          <div style="font-size:.82rem;color:var(--text-2,#555)">
+            Cobertura de enriquecimiento · últimas 24h:&nbsp;
+            {% if geoip_coverage is none %}
+              <span class="text-secondary">sin eventos</span>
+            {% elif geoip_coverage == 0 %}
+              <span class="text-danger fw-semibold">
+                0% ({{ geoip_coverage_with }}/{{ geoip_coverage_total }} con país)
+              </span>
+              <span class="text-secondary ms-1">— la base podría no estar cargada o las IPs son privadas</span>
+            {% elif geoip_coverage < 50 %}
+              <span class="text-warning-emphasis fw-semibold">
+                {{ geoip_coverage }}% ({{ geoip_coverage_with }}/{{ geoip_coverage_total }} con país)
+              </span>
+            {% else %}
+              <span class="text-success-emphasis fw-semibold">
+                {{ geoip_coverage }}% ({{ geoip_coverage_with }}/{{ geoip_coverage_total }} con país)
+              </span>
+            {% endif %}
+          </div>
+        </div>
+
+        {# Botón de descarga bajo demanda #}
+        <div class="flex-shrink-0 mt-1">
+          <form method="post" action="{{ url_for('proxy.geoip_download') }}"
+                x-data="{dl:false}" @submit="dl=true">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary"
+                    {% if not encryption_ready or not license_configured %}
+                      disabled title="Configura las credenciales MaxMind primero"
+                    {% else %}
+                      :disabled="dl"
+                    {% endif %}>
+              <span x-show="dl" class="spinner-border spinner-border-sm me-1"
+                    role="status" aria-hidden="true"></span>
+              <i x-show="!dl" class="bi bi-cloud-download-fill me-1"></i>
+              <span x-text="dl ? 'Descargando…' : 'Descargar / actualizar base'"></span>
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -462,12 +527,14 @@
   </div>
 
   {% if current_user.has_role('admin') %}
-  {# ── Zona de peligro — reset de secretos cifrados ─────────────────── #}
+  {# ── Zona de peligro ────────────────────────────────────────────────── #}
   <div class="card-panel mb-4 border border-danger">
     <div class="card-panel-body">
       <h2 class="h5 mb-1 text-danger">
         <i class="bi bi-exclamation-octagon-fill me-1"></i> Zona de peligro
       </h2>
+
+      {# — Reset de secretos cifrados — #}
       <p class="text-secondary mb-3" style="font-size:.85rem">
         Usa esta acción <strong>solo tras rotar <code>WARDNODE_SECRET_KEY</code></strong>.
         Borra de la base de datos todos los secretos cifrados (API keys de LLM, credenciales
@@ -483,6 +550,26 @@
           <span x-show="loading" class="spinner-border spinner-border-sm me-1" role="status"></span>
           <i x-show="!loading" class="bi bi-trash3 me-1"></i>
           Borrar secretos cifrados y resetear 2FA
+        </button>
+      </form>
+
+      <hr class="my-4" style="border-color:var(--bs-danger-border-subtle,#f1aeb5);opacity:.4">
+
+      {# — Reiniciar overview WAF — #}
+      <p class="fw-medium mb-1" style="font-size:.875rem">Reiniciar overview WAF</p>
+      <p class="text-secondary mb-3" style="font-size:.85rem">
+        Borra <strong>todos</strong> los eventos WAF de la base de datos: bloqueos, IPs únicas,
+        categorías de ataque y mapa de países del overview en <em>/proxy/</em>. No afecta sitios,
+        reglas ni configuración. <strong>Esta acción no se puede deshacer.</strong>
+      </p>
+      <form method="POST" action="{{ url_for('proxy.settings_clear_waf_events') }}"
+            x-data="{loading: false}"
+            @submit.prevent="if(confirm('¿Borrar TODOS los eventos WAF del overview?\n\nLos contadores de bloqueos, IPs y países quedarán en cero.\nEsta acción no se puede deshacer.')){loading=true; $el.submit()}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-danger" :disabled="loading">
+          <span x-show="loading" class="spinner-border spinner-border-sm me-1" role="status"></span>
+          <i x-show="!loading" class="bi bi-shield-x me-1"></i>
+          Reiniciar overview WAF
         </button>
       </form>
     </div>

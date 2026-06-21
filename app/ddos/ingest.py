@@ -136,8 +136,8 @@ def _poll_once(app, docker_client) -> None:
                 country_code = None
                 try:
                     country_code = get_country_code(parsed["source_ip"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("ddos-ingest: GeoIP lookup failed for %s: %s", parsed["source_ip"], exc)
 
                 event = DdosBanEvent(
                     cs_alert_id  = parsed["cs_alert_id"],
@@ -191,6 +191,16 @@ def start_ddos_ingest_thread(app) -> threading.Thread | None:
     except Exception as exc:
         log.debug("ddos-ingest: Docker no disponible (%s), thread no iniciado", exc)
         return None
+
+    # Warn early if the GeoIP database is missing — ban events will have country_code=None.
+    import os
+    db_path = os.environ.get("GEOIP_DB_PATH", "")
+    if not db_path or not os.path.exists(db_path):
+        log.warning(
+            "ddos-ingest: GeoIP enrichment disabled — database not found at '%s'. "
+            "Download it via /proxy/settings or run 'flask ensure-geoip'.",
+            db_path or "<GEOIP_DB_PATH not set>",
+        )
 
     # Verificar que el módulo esté activo antes de arrancar
     # (se re-verificará dentro del bucle también)

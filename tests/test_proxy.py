@@ -1,14 +1,18 @@
 from app.models import (
     AppConfig,
+    AttackEvent,
+    AuditLog,
     CustomModSecurityRule,
     NginxExtraConfig,
     ROLE_ADMIN,
     ROLE_OPERATOR,
+    ROLE_READER,
     RuleCategory,
     SecurityHeader,
     Site,
 )
 from app.proxy.services import (
+    clear_waf_events,
     ensure_site_traffic_policy,
     is_host_docker_internal,
     is_local_upstream,
@@ -1583,3 +1587,135 @@ def test_events_export_empty_returns_header_only(client, login_as, app):
     assert len(lines) == 1   # solo cabecera
     assert "event_id" in lines[0]
     assert "label_source" in lines[0]
+
+
+# ── Limpieza de eventos WAF ────────────────────────────────────────────────────
+
+def _seed_waf_events(n=5):
+    """Inserta n AttackEvent sintéticos con transaction_id único (para tests de limpieza)."""
+    from app.extensions import db
+    for i in range(n):
+        db.session.add(AttackEvent(
+            domain="test.example.com",
+            source_ip=f"10.0.0.{i + 1}",
+            method="GET",
+            path="/",
+            status_code=403,
+            action="block",
+            rule_id="942100",
+            severity="high",
+            message="sql injection test",
+            category="sql-injection",
+            transaction_id=f"clear-test-txn-{i}",
+        ))
+    db.session.commit()
+
+
+def test_clear_waf_events_helper_returns_count(app):
+    """clear_waf_events() retorna el número de filas borradas."""
+    with app.app_context():
+        _seed_waf_events(4)
+        n = clear_waf_events()
+        assert n == 4
+        assert AttackEvent.query.count() == 0
+
+
+def test_clear_waf_events_helper_idempotent(app):
+    """clear_waf_events() en tabla vacía retorna 0 sin error."""
+    with app.app_context():
+        assert AttackEvent.query.count() == 0
+        n = clear_waf_events()
+        assert n == 0
+
+
+def test_settings_clear_waf_events_admin(client, login_as, app):
+    """Admin puede limpiar los eventos WAF via POST /proxy/settings/clear-waf-events."""
+    login_as(ROLE_ADMIN)
+    with app.app_context():
+        _seed_waf_events(3)
+        assert AttackEvent.query.count() == 3
+
+    resp = client.post("/proxy/settings/clear-waf-events", follow_redirects=True)
+    assert resp.status_code == 200
+    assert "reiniciado" in resp.get_data(as_text=True).lower()
+
+    with app.app_context():
+        assert AttackEvent.query.count() == 0
+
+
+def test_settings_clear_waf_events_audit_logged(client, login_as, app):
+    """La limpieza queda registrada en el audit log."""
+    login_as(ROLE_ADMIN)
+    with app.app_context():
+        _seed_waf_events(2)
+
+    client.post("/proxy/settings/clear-waf-events", follow_redirects=True)
+
+    with app.app_context():
+        entry = AuditLog.query.filter_by(action="settings.clear_waf_events").first()
+        assert entry is not None
+        assert entry.severity == "warning"
+
+
+def test_settings_clear_waf_events_reader_rejected(client, login_as):
+    """Un lector (ROLE_READER) no puede acceder a la ruta de limpieza."""
+    login_as(ROLE_READER)
+    resp = client.post("/proxy/settings/clear-waf-events", follow_redirects=True)
+    # Redirige a login o devuelve 403 — en cualquier caso no ejecuta el borrado
+    assert resp.status_code in (200, 403)
+    # La respuesta no debe contener el flash de éxito
+    assert "reiniciado" not in resp.get_data(as_text=True).lower()
+
+
+def test_save_console_site_first_setup_clears_events(client, login_as, app):
+    """Al crear el console_site por primera vez se borran los eventos WAF acumulados."""
+    login_as(ROLE_ADMIN)
+    with app.app_context():
+        # Asegurarse de que no existe console_site previo
+        AppConfig.set("console_site_id", "")
+        _seed_waf_events(6)
+        assert AttackEvent.query.count() == 6
+
+    resp = client.post(
+        "/proxy/settings/console-site",
+        data={"console_domain": "console.test.local", "console_port": "5000"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert AttackEvent.query.count() == 0, (
+            "El auto-reset debe borrar los eventos en la primera configuración del console_site"
+        )
+
+
+def test_save_console_site_edit_does_not_clear_events(client, login_as, app):
+    """Editar el dominio de la consola (no primera vez) NO borra los eventos."""
+    login_as(ROLE_ADMIN)
+    with app.app_context():
+        from app.extensions import db
+        # Crear un Site de consola preexistente
+        existing = Site(
+            name="WardNode Console",
+            domain="old.test.local",
+            upstream_url="http://console:5000",
+            is_console=True,
+        )
+        db.session.add(existing)
+        db.session.commit()
+        AppConfig.set("console_site_id", str(existing.id))
+        _seed_waf_events(4)
+        assert AttackEvent.query.count() == 4
+
+    resp = client.post(
+        "/proxy/settings/console-site",
+        data={"console_domain": "new.test.local", "console_port": "5000"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+
+    with app.app_context():
+        # Los eventos deben mantenerse — no fue primera configuración
+        assert AttackEvent.query.count() == 4, (
+            "Editar el dominio de consola no debe borrar eventos existentes"
+        )

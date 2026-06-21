@@ -58,3 +58,48 @@ def send_command(action: str, timeout: int = TIMEOUT_S, **params) -> dict:
         return {"ok": False, "error": "Timeout comunicando con el agente WF"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def get_ufw_state(timeout: int = TIMEOUT_S) -> dict:
+    """Consulta el agente WF y devuelve el estado real de UFW.
+
+    Devuelve un dict con:
+      - reachable   (bool): el agente respondió correctamente.
+      - active      (bool): UFW está en estado 'active' según `ufw status verbose`.
+      - initialized (bool): la política default es 'deny (incoming)'.
+      - status_output   (str): salida de `ufw status numbered` (para la UI).
+      - defaults_output (str): salida de `ufw status verbose`.
+      - error (str, opcional): mensaje si el agente no es alcanzable.
+
+    Fail-closed: cualquier error de comunicación devuelve reachable/active/initialized=False.
+    """
+    status = send_command("status", timeout=timeout)
+    if not status.get("ok"):
+        return {
+            "reachable": False,
+            "active": False,
+            "initialized": False,
+            "status_output": "",
+            "defaults_output": "",
+            "error": status.get("error", "Agente WF no disponible"),
+        }
+
+    defaults = send_command("check_defaults", timeout=timeout)
+    verbose = defaults.get("output", "").lower()
+
+    return {
+        "reachable": True,
+        "active": "status: active" in verbose,
+        "initialized": "deny (incoming)" in verbose,
+        "status_output": status.get("output", ""),
+        "defaults_output": defaults.get("output", ""),
+    }
+
+
+def ufw_is_operational(timeout: int = TIMEOUT_S) -> bool:
+    """Devuelve True solo si UFW está activo E inicializado con default deny incoming.
+
+    Fail-closed: cualquier error de comunicación con el agente → False.
+    """
+    st = get_ufw_state(timeout=timeout)
+    return bool(st["reachable"] and st["active"] and st["initialized"])

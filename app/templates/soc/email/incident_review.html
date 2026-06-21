@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WardNode SOC — Revisión de incidente #{{ incident.id }}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a202c">
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6f8;padding:24px 0">
+  <tr><td align="center">
+  <table width="620" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+
+    {# ── Cabecera ────────────────────────────────────────────────────── #}
+    {% set sev_colors = {'critical': '#b91c1c', 'high': '#c2410c', 'medium': '#b45309', 'low': '#166534'} %}
+    {% set sev_bg    = {'critical': '#fef2f2', 'high': '#fff7ed', 'medium': '#fffbeb', 'low': '#f0fdf4'} %}
+    {% set sev_label = incident.severity | lower %}
+    <tr>
+      <td style="background:#1a202c;padding:18px 28px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td>
+              <span style="font-size:18px;font-weight:700;color:#e2e8f0;letter-spacing:.5px">WardNode</span>
+              <span style="font-size:12px;color:#718096;margin-left:8px">Security Operations Center</span>
+            </td>
+            <td align="right">
+              <span style="font-size:11px;color:#718096">Notificación de revisión</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Título ────────────────────────────────────────────────────── #}
+    <tr>
+      <td style="background:#f0fdf4;padding:18px 28px;border-bottom:3px solid #166534">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td>
+              <span style="font-size:20px;font-weight:700;color:#1a202c">
+                ✅ Incidente #{{ incident.id }} revisado
+              </span>
+            </td>
+            <td align="right">
+              <span style="background:{{ sev_colors.get(sev_label,'#c2410c') }};color:#ffffff;border-radius:4px;padding:4px 12px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">
+                {{ incident.severity }}
+              </span>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:6px 0 0;font-size:13px;color:#4a5568">
+          IP <span style="font-family:monospace;font-weight:600">{{ incident.source_ip }}</span>
+          {% if incident.domain %} · dominio <span style="font-family:monospace">{{ incident.domain }}</span>{% endif %}
+        </p>
+      </td>
+    </tr>
+
+    {# ── Bloque revisión ───────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 12px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">📋 Revisión</h2>
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:16px">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td width="38%" style="padding:4px 0;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;vertical-align:top">Revisado por</td>
+              <td style="padding:4px 0;font-size:13px;color:#1a202c">{{ reviewer }}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;vertical-align:top">Fecha</td>
+              <td style="padding:4px 0;font-family:monospace;font-size:12px;color:#1a202c">{{ reviewed_at }}</td>
+            </tr>
+          </table>
+          {% if incident.review_comment %}
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid #86efac">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;margin-bottom:6px">Comentario</div>
+            <p style="margin:0;font-size:13px;color:#1a202c;line-height:1.6;white-space:pre-wrap">{{ incident.review_comment }}</p>
+          </div>
+          {% endif %}
+        </div>
+      </td>
+    </tr>
+
+    {# ── Resumen del incidente ─────────────────────────────────────── #}
+    <tr>
+      <td style="padding:16px 28px 0">
+        <h2 style="margin:0 0 12px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">📊 Datos del incidente</h2>
+        <table width="100%" cellpadding="6" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:6px">
+          <tr style="background:#f8fafc">
+            <td width="38%" style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Severidad</td>
+            <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">
+              <span style="background:{{ sev_bg.get(sev_label,'#fff7ed') }};color:{{ sev_colors.get(sev_label,'#c2410c') }};border-radius:3px;padding:2px 8px;font-size:11px;font-weight:700;text-transform:uppercase">{{ incident.severity }}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Score heurístico</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:13px;border-bottom:1px solid #e2e8f0">{{ incident.score | int }}/100</td>
+          </tr>
+          {% if incident.ml_score is not none %}
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Score ML</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:13px;border-bottom:1px solid #e2e8f0">{{ incident.ml_score | int }}/100</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Eventos WAF</td>
+            <td style="padding:8px 12px;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0">{{ incident.event_count }}</td>
+          </tr>
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096">Ventana</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:12px">
+              {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} → {{ incident.window_end.strftime('%H:%M') }} UTC
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── CTA ──────────────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:24px 28px">
+        {% if base_url %}
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:0 8px 0 0">
+              <a href="{{ base_url }}/soc/incidente/{{ incident.id }}"
+                 style="display:inline-block;background:#1a202c;color:#e2e8f0;text-decoration:none;font-size:12px;font-weight:600;padding:10px 20px;border-radius:6px">
+                🔍 Ver detalle del incidente
+              </a>
+            </td>
+            <td>
+              <a href="{{ base_url }}/soc/"
+                 style="display:inline-block;border:1px solid #e2e8f0;color:#1a202c;text-decoration:none;font-size:12px;font-weight:600;padding:10px 20px;border-radius:6px">
+                Dashboard SOC
+              </a>
+            </td>
+          </tr>
+        </table>
+        {% endif %}
+      </td>
+    </tr>
+
+    {# ── Footer ───────────────────────────────────────────────────── #}
+    <tr>
+      <td style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0">
+        <p style="margin:0;font-size:11px;color:#9ca3af">
+          Notificación automática de WardNode SOC. Incidente marcado como revisado por {{ reviewer }}.
+        </p>
+      </td>
+    </tr>
+
+  </table>
+  </td></tr>
+</table>
+
+</body>
+</html>

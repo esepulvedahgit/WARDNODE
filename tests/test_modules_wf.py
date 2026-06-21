@@ -17,12 +17,14 @@ def test_wf_status_returns_ok_when_agent_available(client, login_as, monkeypatch
 
     def fake_cmd(action, **kwargs):
         if action == "status":
-            return {"ok": True, "output": "Status: active"}
+            return {"ok": True, "output": "Status: active\n"}
         if action == "check_defaults":
-            return {"ok": True, "output": "Default: deny (incoming)\nDefault: allow (outgoing)"}
+            # La salida verbose incluye "Status: active" e "deny (incoming)"
+            return {"ok": True, "output": "Status: active\nDefault: deny (incoming), allow (outgoing)"}
         return {"ok": True, "output": ""}
 
-    monkeypatch.setattr("app.modules.routes.send_command", fake_cmd)
+    # wf_status ahora delega en get_ufw_state() de socket_client
+    monkeypatch.setattr("app.modules.socket_client.send_command", fake_cmd)
     response = client.post("/modules/wf/status")
 
     assert response.status_code == 200

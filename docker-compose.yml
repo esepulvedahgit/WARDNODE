@@ -15,7 +15,6 @@ services:
       - ./host-agent:/app/host-agent:ro
       - ./wsgi.py:/app/wsgi.py:ro
       - proxy_generated:/app/generated/nginx
-      - fluent_bit_config:/app/generated/fluent-bit
       - geoip_data:/app/data/geoip
       - /var/run/docker.sock:/var/run/docker.sock
       - /run/wardnode:/app/sockets:rw
@@ -80,13 +79,14 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── WardNode OBS — Observabilidad (perfil opcional) ──────────────────
+  # ── WardNode OBS — Recolección/almacenamiento (arrancan siempre) ─────
+  # Loki + Alloy + Prometheus arrancan con el stack base para minimizar
+  # la fuga de logs. Solo Grafana (visualización) está detrás del módulo OBS.
   alloy:
     image: grafana/alloy:latest
     container_name: wardnode-alloy
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 256m
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -112,8 +112,7 @@ services:
     image: grafana/loki:3
     container_name: wardnode-loki
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 256m
     command: -config.file=/etc/loki/config.yaml
     volumes:
       - loki_data:/loki
@@ -121,6 +120,7 @@ services:
     networks:
       - wardnode_internal
 
+  # ── WardNode OBS — Visualización (perfil opcional, módulo OBS) ────────
   grafana:
     image: grafana/grafana:11.5
     container_name: wardnode-grafana
@@ -158,8 +158,7 @@ services:
     image: prom/prometheus:latest
     container_name: wardnode-prometheus
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 256m
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -175,8 +174,7 @@ services:
     image: nginx/nginx-prometheus-exporter:1
     container_name: wardnode-nginx-exporter
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 32m
     command:
       - -nginx.scrape-uri=http://wardnode-proxy:8081/stub_status
     depends_on:
@@ -223,29 +221,10 @@ services:
     networks:
       - wardnode_internal
 
-  # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
-  fluent-bit:
-    image: fluent/fluent-bit:latest
-    container_name: wardnode-fluent-bit
-    restart: unless-stopped
-    # Genera una config noop si todavía no existe ninguna (primer arranque)
-    command: >
-      sh -c "[ -f /fluent-bit/etc/fluent-bit.conf ] ||
-      printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n'
-      > /fluent-bit/etc/fluent-bit.conf;
-      exec /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf"
-    volumes:
-      - fluent_bit_config:/fluent-bit/etc
-      - proxy_logs:/var/log/nginx:ro
-      - modsecurity_logs:/var/log/modsec:ro
-    networks:
-      - wardnode_internal
-
 volumes:
   postgres_data:
   backups:
   proxy_generated:
-  fluent_bit_config:
   geoip_data:
   proxy_logs:
   modsecurity_logs:

@@ -32,8 +32,15 @@ limits_config:
   ingestion_rate_mb: 16
   max_query_series: 5000
   allow_structured_metadata: false
+  # Habilita la Delete API por LogQL selector (POST /loki/api/v1/delete).
+  # filter-and-delete: elimina las líneas del selector del chunk sin tocar
+  # las líneas de otros streams del mismo chunk — seguro para borrado selectivo.
+  deletion_mode: filter-and-delete
 
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
   delete_request_store: filesystem
+  # Reducir periodo de gracia para que el borrado solicitado vía Delete API
+  # se procese en ~5 min en lugar del default de 24h.
+  delete_request_cancel_period: 5m

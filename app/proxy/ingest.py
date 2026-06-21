@@ -194,8 +194,8 @@ def _process_line(app, line: str) -> None:
         if parsed["source_ip"]:
             try:
                 country_code = get_country_code(parsed["source_ip"])
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("ingest: GeoIP lookup failed for %s: %s", parsed["source_ip"], exc)
 
         event = AttackEvent(
             site_id=site.id if site else None,
@@ -264,6 +264,15 @@ def start_ingest_thread(app) -> threading.Thread | None:
     except Exception as exc:
         log.debug("ingest: Docker not available (%s), ingest thread not started", exc)
         return None
+
+    # Warn early if the GeoIP database is missing — events will have country_code=None.
+    db_path = os.environ.get("GEOIP_DB_PATH", "")
+    if not db_path or not os.path.exists(db_path):
+        log.warning(
+            "ingest: GeoIP enrichment disabled — database not found at '%s'. "
+            "Download it via /proxy/settings or run 'flask ensure-geoip'.",
+            db_path or "<GEOIP_DB_PATH not set>",
+        )
 
     t = threading.Thread(
         target=_docker_log_loop,

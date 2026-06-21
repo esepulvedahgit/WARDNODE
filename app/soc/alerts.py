@@ -8,11 +8,13 @@ SEGURIDAD:
 - El bot token de Telegram se lee cifrado (AppConfig.get_secret) y JAMÁS aparece
   en logs, mensajes de error ni registros de auditoría — solo type(exc).__name__.
 - El chat_id se valida con regex antes de usarse.
-- El contenido de la alerta es mínimo (minimización de datos): id, IP, severidad,
-  score, dominio, conteo y summary del LLM. Nunca paths de ataque ni payloads —
-  el email/Telegram puede viajar en claro.
+- El contenido de la alerta sigue el principio de minimización de datos: se incluyen
+  metadatos analíticos (scores, MITRE, hipótesis, recomendaciones, análisis IA) pero
+  NUNCA valores crudos de IoCs (paths, URLs, user-agents) — el email/Telegram puede
+  viajar en claro o a través de servidores de terceros.
 """
 
+import html as _html
 import json
 import logging
 import re
@@ -31,6 +33,13 @@ _CHAT_ID_RE = re.compile(r"^-?\d{1,20}$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_RECIPIENTS = 10
 
+_SEV_EMOJI = {
+    "critical": "🚨",
+    "high": "🔴",
+    "medium": "🟡",
+    "low": "🟢",
+}
+
 
 def _alert_recipients(config_key: str = "soc_alert_email_to") -> list[str]:
     """Emails destino desde config_key (CSV), validados y capados."""
@@ -45,42 +54,175 @@ def _alert_recipients(config_key: str = "soc_alert_email_to") -> list[str]:
     return out
 
 
+def _incident_payload(incident: SocIncident) -> dict:
+    """Payload del análisis LLM más reciente sin el campo iocs (minimización de datos).
+
+    Retorna un dict con todos los campos analíticos útiles:
+    summary, explanation, severity_suggested, confidence, hypotheses,
+    recommendations, mitre_techniques. Nunca iocs.
+    Retorna {} si no hay análisis o el JSON es inválido.
+    """
+    if not incident.analyses:
+        return {}
+    try:
+        raw = json.loads(incident.analyses[0].payload)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    # Excluir iocs — pueden contener paths/URLs de ataque
+    return {k: v for k, v in raw.items() if k != "iocs"}
+
+
 def _incident_summary(incident: SocIncident) -> str:
     """Summary del análisis LLM más reciente, si existe (best-effort)."""
-    if not incident.analyses:
-        return ""
+    return _incident_payload(incident).get("summary", "") or ""
+
+
+def _mitre_combined(incident: SocIncident, payload: dict) -> list[dict]:
+    """Lista MITRE deduplicada: unión de mapeo CRS del incidente + técnicas del LLM.
+
+    Cada elemento: {id, name, tactic}. Los IDs del LLM ya fueron validados contra
+    ^T\\d{4}(\\.\\d{3})?$ por schema._coerce_mitre antes de persistirse.
+    """
+    seen: set[str] = set()
+    result: list[dict] = []
+
+    # 1. Mapeo CRS estático del incidente
     try:
-        return json.loads(incident.analyses[0].payload).get("summary", "") or ""
+        crs_list = json.loads(incident.mitre) if incident.mitre else []
     except (json.JSONDecodeError, TypeError):
-        return ""
+        crs_list = []
+    for t in crs_list:
+        tid = t.get("id", "")
+        if tid and tid not in seen:
+            seen.add(tid)
+            result.append({"id": tid, "name": t.get("name", ""), "tactic": t.get("tactic", "")})
+
+    # 2. Técnicas del análisis LLM (si las hay)
+    for t in payload.get("mitre_techniques", []):
+        tid = t.get("id", "")
+        if tid and tid not in seen:
+            seen.add(tid)
+            result.append({"id": tid, "name": t.get("name", ""), "tactic": t.get("tactic", "")})
+
+    return result
+
+
+def _build_alert_context(incident: SocIncident) -> dict:
+    """Arma el contexto completo para renderizar las plantillas de alerta.
+
+    Excluye iocs del payload para no filtrar paths/URLs en canales no cifrados.
+    """
+    payload = _incident_payload(incident)
+    base_url = (AppConfig.get("soc_alert_base_url") or "").rstrip("/")
+    return {
+        "incident": incident,
+        "payload": payload,
+        "mitre_combined": _mitre_combined(incident, payload),
+        "base_url": base_url,
+    }
 
 
 def _build_message(incident: SocIncident) -> str:
-    """Texto de la alerta — solo metadatos del incidente, sin payloads."""
+    """Texto plano enriquecido de la alerta — parte text/plain del correo y fallback."""
+    from flask import render_template
+
+    ctx = _build_alert_context(incident)
+    try:
+        return render_template("soc/email/incident_alert.txt", **ctx)
+    except Exception:
+        # Fallback minimalista si la plantilla falla
+        lines = [
+            f"Incidente SOC #{incident.id} [{incident.severity.upper()}]",
+            f"IP atacante: {incident.source_ip}",
+        ]
+        if incident.domain:
+            lines.append(f"Dominio: {incident.domain}")
+        lines.append(f"Eventos: {incident.event_count} · score {incident.score:.0f}/100")
+        summary = _incident_summary(incident)
+        if summary:
+            lines += ["", f"Análisis IA: {summary}"]
+        base_url = ctx["base_url"]
+        if base_url:
+            lines += ["", f"Detalle: {base_url}/soc/incidente/{incident.id}"]
+        return "\n".join(lines)
+
+
+def _build_telegram_message(incident: SocIncident, ctx: dict) -> str:
+    """Mensaje HTML para Telegram (parse_mode=HTML).
+
+    Usa solo tags soportados por la Bot API: <b>, <i>, <code>, <a>.
+    Escapa todos los valores de usuario con html.escape() para evitar
+    romper el parseo. No incluye IoCs.
+    """
+    sev = incident.severity.lower()
+    emoji = _SEV_EMOJI.get(sev, "⚠")
+    sev_upper = incident.severity.upper()
+    ip_esc = _html.escape(incident.source_ip)
+    payload = ctx.get("payload", {})
+    base_url = ctx.get("base_url", "")
+    mitre = ctx.get("mitre_combined", [])
+
     lines = [
-        f"Incidente SOC #{incident.id} [{incident.severity.upper()}]",
-        f"IP atacante: {incident.source_ip}",
+        f"{emoji} <b>Incidente SOC #{incident.id} — {sev_upper}</b>",
+        "",
+        f"🌐 <b>IP origen:</b> <code>{ip_esc}</code>",
     ]
     if incident.domain:
-        lines.append(f"Dominio: {incident.domain}")
-    lines.append(f"Eventos: {incident.event_count} · score {incident.score:.0f}/100")
-    if incident.ml_score is not None:
-        lines.append(f"Score ML (anomalía): {incident.ml_score:.0f}/100")
-    if incident.abuse_score is not None:
-        lines.append(f"AbuseIPDB: {incident.abuse_score}/100")
-    summary = _incident_summary(incident)
-    if summary:
-        lines.append("")
-        lines.append(f"Análisis IA: {summary}")
-    base_url = (AppConfig.get("soc_alert_base_url") or "").rstrip("/")
+        lines.append(f"🏠 <b>Dominio:</b> <code>{_html.escape(incident.domain)}</code>")
+    lines.append(
+        f"⏱ <b>Ventana:</b> <code>{incident.window_start.strftime('%Y-%m-%d %H:%M')}"
+        f" → {incident.window_end.strftime('%H:%M')} UTC</code>"
+    )
+    lines.append(f"📋 <b>Eventos WAF:</b> {incident.event_count}  ·  <b>Estado:</b> {incident.status}")
     lines.append("")
-    lines.append(f"Detalle: {base_url}/soc/incidente/{incident.id}")
+
+    # Scores
+    lines.append(f"📊 <b>Score heurístico:</b> {incident.score:.0f}/100")
+    if incident.ml_score is not None:
+        lines.append(f"🧠 <b>Score ML (anomalía):</b> {incident.ml_score:.0f}/100")
+    if incident.abuse_score is not None:
+        abuse_warn = " ⚠" if incident.abuse_score >= 75 else ""
+        lines.append(f"🔎 <b>AbuseIPDB:</b> {incident.abuse_score}/100{abuse_warn}")
+
+    # Análisis IA
+    summary = payload.get("summary", "")
+    if summary:
+        lines += ["", f"🤖 <b>Análisis IA:</b>"]
+        lines.append(_html.escape(summary))
+        confidence = payload.get("confidence")
+        sev_sug = payload.get("severity_suggested", "")
+        if sev_sug or confidence is not None:
+            conf_str = f"confianza {confidence}%" if confidence is not None else ""
+            sev_str = f"sev. sugerida: {sev_sug}" if sev_sug else ""
+            meta = "  ·  ".join(filter(None, [sev_str, conf_str]))
+            if meta:
+                lines.append(f"<i>{meta}</i>")
+
+    # Recomendaciones (sin IoCs)
+    recs = payload.get("recommendations", [])
+    if recs:
+        lines += ["", "✅ <b>Recomendaciones:</b>"]
+        for rec in recs[:3]:  # máximo 3 para no saturar
+            prio = rec.get("priority", "media").upper()
+            text_esc = _html.escape(rec.get("text", ""))
+            lines.append(f"  [{prio}] {text_esc}")
+
+    # MITRE
+    if mitre:
+        lines += ["", "🛡 <b>MITRE ATT&amp;CK:</b>"]
+        for t in mitre[:5]:  # máximo 5
+            name_esc = _html.escape(t.get("name", ""))
+            tactic = t.get("tactic", "")
+            tactic_str = f" ({_html.escape(tactic)})" if tactic else ""
+            lines.append(f"  • <code>{t['id']}</code> {name_esc}{tactic_str}")
+
     return "\n".join(lines)
 
 
 def _send_email_alert(incident: SocIncident, message: str) -> bool:
-    """Envía la alerta por email. Retorna True si se envió."""
+    """Envía la alerta por email con HTML enriquecido. Retorna True si se envió."""
     from app.email import send_soc_alert_email, smtp_configured
+    from flask import render_template
 
     if not smtp_configured():
         return False
@@ -88,11 +230,17 @@ def _send_email_alert(incident: SocIncident, message: str) -> bool:
     if not recipients:
         return False
     try:
+        ctx = _build_alert_context(incident)
+        try:
+            html_body = render_template("soc/email/incident_alert.html", **ctx)
+        except Exception:
+            html_body = None
         send_soc_alert_email(
             recipients,
             f"[WardNode SOC] Incidente #{incident.id} {incident.severity}"
             f" — {incident.source_ip}",
             message,
+            html_body=html_body,
         )
         return True
     except Exception as exc:
@@ -102,7 +250,7 @@ def _send_email_alert(incident: SocIncident, message: str) -> bool:
 
 
 def _send_telegram_alert(incident: SocIncident, message: str) -> bool:
-    """Envía la alerta por Telegram. Retorna True si se envió.
+    """Envía la alerta por Telegram con formato HTML enriquecido. Retorna True si se envió.
 
     El token jamás se loggea — solo el tipo de excepción ante fallo.
     """
@@ -118,10 +266,30 @@ def _send_telegram_alert(incident: SocIncident, message: str) -> bool:
 
     import httpx
 
+    ctx = _build_alert_context(incident)
+    tg_text = _build_telegram_message(incident, ctx)
+    base_url = ctx.get("base_url", "")
+
+    payload: dict = {
+        "chat_id": chat_id,
+        "text": tg_text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if base_url:
+        payload["reply_markup"] = {
+            "inline_keyboard": [[
+                {
+                    "text": "🔍 Ver detalle",
+                    "url": f"{base_url}/soc/incidente/{incident.id}",
+                }
+            ]]
+        }
+
     try:
         resp = httpx.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": message},
+            json=payload,
             timeout=_TELEGRAM_TIMEOUT,
         )
         resp.raise_for_status()
@@ -142,6 +310,7 @@ def send_review_email(incident: SocIncident) -> bool:
     Mismo principio de minimización de datos que _build_message.
     """
     from app.email import send_soc_alert_email, smtp_configured
+    from flask import render_template
 
     if not smtp_configured():
         return False
@@ -155,28 +324,48 @@ def send_review_email(incident: SocIncident) -> bool:
         if incident.reviewed_at
         else "—"
     )
-    lines = [
-        f"Incidente SOC #{incident.id} marcado como REVISADO",
-        "",
-        f"IP atacante: {incident.source_ip}",
-    ]
-    if incident.domain:
-        lines.append(f"Dominio: {incident.domain}")
-    lines.append(f"Severidad: {incident.severity} · score {incident.score:.0f}/100")
-    lines.append(f"Eventos: {incident.event_count}")
-    lines.append("")
-    lines.append(f"Revisado por: {reviewer}")
-    lines.append(f"Fecha de revisión: {reviewed_at}")
-    lines.append(f"Comentario de la revisión: {incident.review_comment or '—'}")
     base_url = (AppConfig.get("soc_alert_base_url") or "").rstrip("/")
-    lines.append("")
-    lines.append(f"Detalle: {base_url}/soc/incidente/{incident.id}")
+    ctx = {
+        "incident": incident,
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+        "base_url": base_url,
+    }
+
+    try:
+        plain_body = render_template("soc/email/incident_review.txt", **ctx)
+    except Exception:
+        # Fallback minimalista si la plantilla falla
+        lines = [
+            f"Incidente SOC #{incident.id} marcado como REVISADO",
+            "",
+            f"IP atacante: {incident.source_ip}",
+        ]
+        if incident.domain:
+            lines.append(f"Dominio: {incident.domain}")
+        lines.append(f"Severidad: {incident.severity} · score {incident.score:.0f}/100")
+        lines.append(f"Eventos: {incident.event_count}")
+        lines += [
+            "",
+            f"Revisado por: {reviewer}",
+            f"Fecha de revisión: {reviewed_at}",
+            f"Comentario de la revisión: {incident.review_comment or '—'}",
+        ]
+        if base_url:
+            lines += ["", f"Detalle: {base_url}/soc/incidente/{incident.id}"]
+        plain_body = "\n".join(lines)
+
+    try:
+        html_body = render_template("soc/email/incident_review.html", **ctx)
+    except Exception:
+        html_body = None
 
     try:
         send_soc_alert_email(
             recipients,
             f"[WardNode SOC] Revisión incidente #{incident.id} — {incident.source_ip}",
-            "\n".join(lines),
+            plain_body,
+            html_body=html_body,
         )
         return True
     except Exception as exc:

@@ -526,7 +526,11 @@ def _ssl_block(site: Site) -> str:
 
 def provision_letsencrypt(site: Site, email: str) -> tuple[bool, str]:
     """Full LE provisioning: nginx HTTP-only → certbot → nginx with TLS (step 1 only)."""
+    from app.proxy.validators import is_valid_email
     from app.proxy.geoip_blocklist import reload_nginx
+
+    if not is_valid_email(email):
+        return False, "El email no es válido para el certificado Let's Encrypt."
 
     render_nginx_configs()
     ok_reload, err_reload = reload_nginx()
@@ -1255,6 +1259,19 @@ def build_attack_event_features(event) -> dict:
         "message_length":         len(msg),
         "label_source":           "crs",
     }
+
+
+def clear_waf_events() -> int:
+    """Borra todos los AttackEvent de la DB (resetea los paneles del overview WAF).
+
+    Devuelve el número de filas eliminadas. Idempotente — si ya está vacía retorna 0.
+    No toca DdosBanEvent, SocIncident ni ningún otro modelo.
+    """
+    from app.models import AttackEvent
+
+    count = db.session.query(AttackEvent).delete(synchronize_session=False)
+    db.session.commit()
+    return count
 
 
 def attack_events_to_csv(events) -> str:

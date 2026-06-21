@@ -3,7 +3,8 @@ import re
 CUSTOM_RULE_ID_MIN = 1_000_000
 CUSTOM_RULE_ID_MAX = 1_999_999
 MAX_RULE_TEXT_LENGTH = 6000
-DISALLOWED_RULE_TOKENS = ("include", "exec:", "lua:", "ctl:ruleEngine=Off")
+DISALLOWED_RULE_TOKENS = ("include", "exec:", "lua:")
+_CTL_RE = re.compile(r"\bctl\s*:", re.IGNORECASE)
 RULE_ID_RE = re.compile(r"\bid\s*:\s*'?(\d+)'?", re.IGNORECASE)
 
 
@@ -25,6 +26,8 @@ def validate_custom_rule(name: str, rule_text: str) -> list[str]:
     for token in DISALLOWED_RULE_TOKENS:
         if token.lower() in lowered:
             errors.append(f"La regla contiene una accion no permitida: {token}.")
+    if _CTL_RE.search(lowered):
+        errors.append("La acción 'ctl:' no está permitida en reglas personalizadas.")
 
     statements = _statements(rule_text)
     if not statements:

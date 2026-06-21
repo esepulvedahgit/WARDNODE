@@ -1,0 +1,28 @@
+══════════════════════════════════════════
+WardNode SOC — Incidente revisado
+══════════════════════════════════════════
+
+✅ Incidente #{{ incident.id }} marcado como REVISADO
+
+IP ORIGEN:   {{ incident.source_ip }}
+{% if incident.domain %}DOMINIO:     {{ incident.domain }}
+{% endif %}SEVERIDAD:   {{ incident.severity | upper }}
+ESTADO:      {{ incident.status }}
+
+── REVISIÓN ──────────────────────────────
+  Revisado por: {{ reviewer }}
+  Fecha:        {{ reviewed_at }}
+{% if incident.review_comment %}
+  Comentario:
+  {{ incident.review_comment }}
+{% endif %}
+
+── DATOS DEL INCIDENTE ───────────────────
+  Score heurístico: {{ incident.score | int }}/100
+{% if incident.ml_score is not none %}  Score ML:         {{ incident.ml_score | int }}/100
+{% endif %}  Eventos WAF:      {{ incident.event_count }}
+  Ventana:          {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} → {{ incident.window_end.strftime('%H:%M') }} UTC
+
+══════════════════════════════════════════
+{% if base_url %}Ver detalle: {{ base_url }}/soc/incidente/{{ incident.id }}
+{% endif %}WardNode SOC — notificación automática

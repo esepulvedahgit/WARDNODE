@@ -260,21 +260,21 @@
       "targets": [
         {
           "datasource": {"type": "loki", "uid": "wardnode-loki"},
-          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 200 | status < 300 [$__interval]))",
+          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 200 and status < 300 [$__interval]))",
           "legendFormat": "2xx",
           "queryType": "range",
           "refId": "A"
         },
         {
           "datasource": {"type": "loki", "uid": "wardnode-loki"},
-          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 300 | status < 400 [$__interval]))",
+          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 300 and status < 400 [$__interval]))",
           "legendFormat": "3xx",
           "queryType": "range",
           "refId": "B"
         },
         {
           "datasource": {"type": "loki", "uid": "wardnode-loki"},
-          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 | status < 500 [$__interval]))",
+          "expr": "sum(count_over_time({job=\"nginx_access\"} | json | status >= 400 and status < 500 [$__interval]))",
           "legendFormat": "4xx",
           "queryType": "range",
           "refId": "C"
@@ -389,5 +389,5 @@
   "timezone": "browser",
   "title": "WardNode – NGINX Metrics",
   "uid": "wardnode-nginx-metrics",
-  "version": 1
+  "version": 2
 }

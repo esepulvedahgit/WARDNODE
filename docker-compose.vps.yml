@@ -14,12 +14,12 @@ services:
       WN_CONSOLE_URL: "http://127.0.0.1:5000"
       # Contenedor del que se ingieren los eventos ModSecurity (WAF Events + módulo SOC)
       WARDNODE_PROXY_CONTAINER: wardnode-proxy
+      # Docker SDK apunta al proxy de socket en vez del socket crudo
+      DOCKER_HOST: "tcp://127.0.0.1:2375"
     network_mode: host
     volumes:
       - proxy_generated:/app/generated/nginx
-      - fluent_bit_config:/app/generated/fluent-bit
       - geoip_data:/app/data/geoip
-      - /var/run/docker.sock:/var/run/docker.sock
       - /run/wardnode:/app/sockets:rw
       - ${WARDNODE_PROJECT_DIR:-/opt/wardnode}:${WARDNODE_PROJECT_DIR:-/opt/wardnode}:ro
       - obs_alloy_config:/tmp/obs/alloy
@@ -34,6 +34,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      docker-proxy:
+        condition: service_started
     command:
       - sh
       - -c
@@ -43,7 +45,6 @@ services:
         cp /app/observability/loki.yaml /tmp/obs/loki/config.yaml &&
         cp /app/observability/prometheus.yml /tmp/obs/prometheus/prometheus.yml &&
         cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
-        if [ ! -f /app/generated/fluent-bit/.wardnode_init ]; then printf '[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n\n[INPUT]\n    Name dummy\n    Dummy {}\n    Tag noop\n\n[OUTPUT]\n    Name null\n    Match *\n' > /app/generated/fluent-bit/fluent-bit.conf && touch /app/generated/fluent-bit/.wardnode_init; fi &&
         flask db-setup && flask ensure-geoip &&
         gunicorn -c gunicorn.conf.py wsgi:app
     healthcheck:
@@ -52,6 +53,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    container_name: wardnode-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1   # inspect/list (ingest logs, backup, status)
+      EXEC: 1         # pg_dump/pg_restore, cscli, certbot exec
+      POST: 1         # exec_start, containers.run (certbot)
+      IMAGES: 1
+      NETWORKS: 1     # docker compose: crear/inspeccionar la red wardnode_internal (perfil obs)
+      VOLUMES: 1      # docker compose: crear volúmenes nombrados (crowdsec-config/-data, loki_data, …)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:2375:2375"
+    networks:
+      - wardnode_internal
 
   proxy:
     image: wardnode-proxy:prod
@@ -98,14 +117,15 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── WardNode OBS — Observabilidad (perfil opcional) ──────────────────
+  # ── WardNode OBS — Recolección/almacenamiento (arrancan siempre) ─────
+  # Loki + Alloy + Prometheus arrancan con el stack base para minimizar
+  # la fuga de logs. Solo Grafana (visualización) está detrás del módulo OBS.
   alloy:
     image: grafana/alloy:latest
     container_name: wardnode-alloy
     restart: unless-stopped
     user: root
-    profiles:
-      - obs
+    mem_limit: 256m
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -135,8 +155,7 @@ services:
     image: grafana/loki:3
     container_name: wardnode-loki
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 256m
     command: -config.file=/etc/loki/config.yaml
     volumes:
       - loki_data:/loki
@@ -147,6 +166,7 @@ services:
     networks:
       - wardnode_internal
 
+  # ── WardNode OBS — Visualización (perfil opcional, módulo OBS) ────────
   grafana:
     image: grafana/grafana:11.5
     container_name: wardnode-grafana
@@ -155,7 +175,7 @@ services:
       - obs
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-wardnode}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Define GRAFANA_ADMIN_PASSWORD en .env.prod}"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/obs/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
@@ -189,8 +209,7 @@ services:
     image: prom/prometheus:latest
     container_name: wardnode-prometheus
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 256m
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -209,8 +228,7 @@ services:
     image: nginx/nginx-prometheus-exporter:1
     container_name: wardnode-nginx-exporter
     restart: unless-stopped
-    profiles:
-      - obs
+    mem_limit: 32m
     # En VPS el proxy usa network_mode: host — stub_status queda en
     # localhost del host, accesible vía host.docker.internal desde el bridge.
     extra_hosts:
@@ -261,6 +279,14 @@ services:
       # Logs SSH del host montados solo-lectura
       - /var/log/auth.log:/var/log/auth.log:ro
       - /var/log/journal:/var/log/journal:ro
+    # Esperar a que el LAPI esté escuchando en 9080 antes de que el bouncer arranque.
+    # Elimina la carrera de arranque que produce "connection refused" en el bouncer.
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   crowdsec-bouncer:
     image: wardnode-crowdsec-bouncer:prod
@@ -278,28 +304,13 @@ services:
       # Debe coincidir con LOCAL_API_URL del daemon (9080 en producción).
       API_URL: "http://127.0.0.1:9080"
     depends_on:
-      - crowdsec
-
-  # ── WardNode Syslog — Reenvío de logs ────────────────────────────────
-  fluent-bit:
-    image: fluent/fluent-bit:latest
-    container_name: wardnode-fluent-bit
-    restart: unless-stopped
-    depends_on:
-      console:
+      crowdsec:
         condition: service_healthy
-    volumes:
-      - fluent_bit_config:/fluent-bit/etc
-      - proxy_logs:/var/log/nginx:ro
-      - modsecurity_logs:/var/log/modsec:ro
-    networks:
-      - wardnode_internal
 
 volumes:
   postgres_data:
   backups:
   proxy_generated:
-  fluent_bit_config:
   geoip_data:
   proxy_logs:
   modsecurity_logs:

@@ -41,13 +41,22 @@ Editar `.env` con valores reales:
 | `GRAFANA_ADMIN_PASSWORD` | Contraseña admin de Grafana | Elegir valor seguro |
 | `WARDNODE_PROJECT_DIR` | Ruta absoluta al proyecto en el host | Ej: `/opt/wardnode` |
 
-### 2. Levantar el stack
+### 2. Desplegar
 
 ```bash
-docker compose -f docker-compose.vps.yml up -d
+cp .env.prod.example .env.prod   # editar con secretos reales
+bash deploy-vps.sh
 ```
 
-El contenedor `console` ejecuta `flask db-setup` y `flask ensure-geoip` automáticamente al arrancar.
+`deploy-vps.sh` realiza tres pasos en orden:
+
+| Paso | Qué hace |
+|------|----------|
+| **[1/3] load** | Carga las imágenes propias desde los tarballs (`wardnode-console`, `wardnode-proxy`, `wardnode-crowdsec-bouncer`). Si no hay tarballs (CD / registry), este paso se omite. |
+| **[2/3] pull** | Precarga las imágenes de terceros de OBS y DDoS **sin arrancar ningún contenedor**. El panel no puede descargarlas directamente (pasa por `docker-socket-proxy`, que bloquea los pulls por diseño — mínima superficie de API). Las imágenes en disco permiten activar los módulos desde el panel sin violar la filosofía on-demand. |
+| **[3/3] up -d** | Levanta el stack base (`console`, `proxy`, `db`, `docker-proxy`, `alloy`, `loki`, `prometheus`, `nginx-exporter`). El contenedor `console` ejecuta `flask db-setup` y `flask ensure-geoip` automáticamente. Alloy+Loki+Prometheus arrancan siempre para capturar logs desde el primer minuto. |
+
+El script es idempotente — re-ejecutarlo no re-descarga capas ya presentes ni reinicia contenedores sin cambios.
 
 ### 3. Crear admin inicial
 
@@ -77,17 +86,32 @@ Requiere WF activo. CrowdSec se instala junto al host-agent. Activar desde el pa
 
 ### WardNode OBS (observabilidad)
 
-Stack: Grafana Alloy → Loki + Prometheus → Grafana. Disponible en `/obs/` a través del proxy.
+Stack: Grafana Alloy → Loki + Prometheus → Grafana. Grafana disponible en `/obs/` a través del proxy.
 
+**Separación recolección / visualización:**
+
+| Componente | Cuándo arranca | Función |
+|---|---|---|
+| Alloy + Loki + Prometheus | **Siempre** (stack base, sin profile) | Recolección y almacenamiento de logs y métricas. Capturan desde el primer arranque para minimizar pérdida de logs. |
+| Grafana | Módulo OBS activado (`--profile obs`) | Visualización. Se activa desde el panel cuando se necesite. |
+
+**Cifras oficiales de eventos WAF:** siempre desde PostgreSQL (`attack_event`), no desde Loki. El dashboard «WAF Analytics» y `/proxy/` son la fuente de verdad — los conteos coinciden exactamente. Loki sirve para explorar logs crudos en vivo.
+
+Configurar `WARDNODE_PROJECT_DIR` en `.env` apuntando al directorio raíz del proyecto en el host (necesario para que el panel pueda levantar Grafana desde la UI).
+
+Requisito: ejecutar `bash deploy-vps.sh` (paso 2) antes de activar el módulo OBS — precarga
+la imagen de Grafana que el panel no puede descargar directamente.
+
+Activar desde el panel: **Módulos → WardNode OBS → Activar** (arranca solo Grafana).
+
+Equivalente manual (sin usar el panel):
 ```bash
-# Dev
-docker compose --profile obs up -d
+# Dev — Alloy/Loki/Prometheus ya arrancaron con el stack base; solo añadir Grafana:
+docker compose --profile obs up -d grafana
 
-# VPS
-docker compose -f docker-compose.vps.yml --profile obs up -d
+# VPS (la imagen de Grafana debe estar en disco primero; deploy-vps.sh ya la precarga)
+docker compose --env-file .env.prod -f docker-compose.vps.yml --profile obs up -d grafana
 ```
-
-Configurar `WARDNODE_PROJECT_DIR` en `.env` apuntando al directorio raíz del proyecto en el host (necesario para que el panel pueda levantar los contenedores OBS desde la UI).
 
 ### WardNode DDoS (CrowdSec brute-force SSH)
 
@@ -107,20 +131,21 @@ y `wardnode-crowdsec-bouncer` (firewall nftables, **imagen propia**).
    scp dist/wardnode-crowdsec-bouncer.tar.gz usuario@VPS:~/wardnode/
    ```
 
-3. Cargar la imagen en el VPS:
+3. Cargar la imagen del bouncer en el VPS:
    ```bash
    docker load -i wardnode-crowdsec-bouncer.tar.gz
    ```
 
-4. Activar desde el panel: **Módulos → WardNode DDoS → Activar**.
+4. Ejecutar `bash deploy-vps.sh` (paso 2) — precarga el daemon CrowdSec de terceros
+   (el bouncer ya quedó cargado del tarball en el paso 1 del script).
 
-> **Nota:** el daemon (`crowdsecurity/crowdsec`) usa imagen pública; se descarga
-> automáticamente. Solo el bouncer requiere transferencia previa. Si la imagen del
-> bouncer no está cargada, la activación fallará con `pull access denied`.
+5. Activar desde el panel: **Módulos → WardNode DDoS → Activar**.
 
 Equivalente manual (si no se usa el panel):
 ```bash
-docker compose -f docker-compose.vps.yml --profile ddos up -d crowdsec crowdsec-bouncer
+# Las imágenes deben estar en disco primero; deploy-vps.sh ya las precarga.
+docker compose --env-file .env.prod -f docker-compose.vps.yml --profile ddos up -d \
+  crowdsec crowdsec-bouncer
 ```
 
 > **Sin archivos de config en el host:** el `entrypoint` del daemon genera **dos** archivos

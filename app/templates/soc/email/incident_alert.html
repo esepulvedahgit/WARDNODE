@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WardNode SOC — Incidente #{{ incident.id }}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a202c">
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6f8;padding:24px 0">
+  <tr><td align="center">
+  <table width="620" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+
+    {# ── Cabecera ────────────────────────────────────────────────────── #}
+    {% set sev_colors = {'critical': '#b91c1c', 'high': '#c2410c', 'medium': '#b45309', 'low': '#166534'} %}
+    {% set sev_bg    = {'critical': '#fef2f2', 'high': '#fff7ed', 'medium': '#fffbeb', 'low': '#f0fdf4'} %}
+    {% set sev_emoji = {'critical': '🚨', 'high': '🔴', 'medium': '🟡', 'low': '🟢'} %}
+    {% set sev_label = incident.severity | lower %}
+    <tr>
+      <td style="background:#1a202c;padding:18px 28px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td>
+              <span style="font-size:18px;font-weight:700;color:#e2e8f0;letter-spacing:.5px">WardNode</span>
+              <span style="font-size:12px;color:#718096;margin-left:8px">Security Operations Center</span>
+            </td>
+            <td align="right">
+              <span style="font-size:11px;color:#718096">Alerta automática</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Título + badge severidad ──────────────────────────────────── #}
+    <tr>
+      <td style="background:{{ sev_bg.get(sev_label,'#fff7ed') }};padding:18px 28px;border-bottom:3px solid {{ sev_colors.get(sev_label,'#c2410c') }}">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td>
+              <span style="font-size:20px;font-weight:700;color:#1a202c">
+                {{ sev_emoji.get(sev_label,'⚠') }} Incidente SOC #{{ incident.id }}
+              </span>
+            </td>
+            <td align="right">
+              <span style="background:{{ sev_colors.get(sev_label,'#c2410c') }};color:#ffffff;border-radius:4px;padding:4px 12px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">
+                {{ incident.severity }}
+              </span>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:6px 0 0;font-size:13px;color:#4a5568">
+          IP <span style="font-family:monospace;font-weight:600">{{ incident.source_ip }}</span>
+          {% if incident.domain %} · dominio <span style="font-family:monospace">{{ incident.domain }}</span>{% endif %}
+          · detectado {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} UTC
+        </p>
+      </td>
+    </tr>
+
+    {# ── Resumen del incidente ─────────────────────────────────────── #}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <h2 style="margin:0 0 12px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">📋 Resumen del incidente</h2>
+        <table width="100%" cellpadding="6" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:6px">
+          <tr style="background:#f8fafc">
+            <td width="38%" style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">IP origen</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:13px;border-bottom:1px solid #e2e8f0">
+              {{ incident.source_ip }}
+              <a href="https://www.abuseipdb.com/check/{{ incident.source_ip }}" style="font-size:11px;color:#3b82f6;text-decoration:none;margin-left:6px">Ver en AbuseIPDB ↗</a>
+            </td>
+          </tr>
+          {% if incident.domain %}
+          <tr>
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Dominio</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:13px;border-bottom:1px solid #e2e8f0">{{ incident.domain }}</td>
+          </tr>
+          {% endif %}
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Ventana</td>
+            <td style="padding:8px 12px;font-family:monospace;font-size:12px;border-bottom:1px solid #e2e8f0">
+              {{ incident.window_start.strftime('%Y-%m-%d %H:%M') }} → {{ incident.window_end.strftime('%H:%M') }} UTC
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;border-bottom:1px solid #e2e8f0">Eventos WAF</td>
+            <td style="padding:8px 12px;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0">{{ incident.event_count }}</td>
+          </tr>
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096">Estado</td>
+            <td style="padding:8px 12px;font-size:13px">
+              <span style="background:#f1f5f9;color:#475569;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;text-transform:uppercase">{{ incident.status }}</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Score cards ───────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:16px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">📊 Scores de riesgo</h2>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td width="{% if incident.ml_score is not none and incident.abuse_score is not none %}33%{% elif incident.ml_score is not none or incident.abuse_score is not none %}50%{% else %}100%{% endif %}" style="padding:0 6px 0 0">
+              <div style="background:{{ sev_bg.get(sev_label,'#fff7ed') }};border:1px solid {{ sev_colors.get(sev_label,'#c2410c') }}20;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:22px;font-weight:700;color:{{ sev_colors.get(sev_label,'#c2410c') }}">{{ incident.score | int }}/100</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">Heurístico</div>
+              </div>
+            </td>
+            {% if incident.ml_score is not none %}
+            <td width="{% if incident.abuse_score is not none %}33%{% else %}50%{% endif %}" style="padding:0 6px">
+              <div style="background:#eff6ff;border:1px solid #3b82f620;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:22px;font-weight:700;color:#1d4ed8">{{ incident.ml_score | int }}/100</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">Anomalía ML</div>
+              </div>
+            </td>
+            {% endif %}
+            {% if incident.abuse_score is not none %}
+            <td width="{% if incident.ml_score is not none %}33%{% else %}50%{% endif %}" style="padding:0 0 0 {% if incident.ml_score is not none %}6px{% else %}6px{% endif %}">
+              {% set abuse_color = '#b91c1c' if incident.abuse_score >= 75 else '#b45309' if incident.abuse_score >= 40 else '#166534' %}
+              {% set abuse_bg = '#fef2f2' if incident.abuse_score >= 75 else '#fffbeb' if incident.abuse_score >= 40 else '#f0fdf4' %}
+              <div style="background:{{ abuse_bg }};border:1px solid {{ abuse_color }}20;border-radius:6px;padding:12px;text-align:center">
+                <div style="font-size:22px;font-weight:700;color:{{ abuse_color }}">{{ incident.abuse_score }}/100</div>
+                <div style="font-size:10px;text-transform:uppercase;color:#9ca3af;margin-top:2px">AbuseIPDB</div>
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    {# ── Análisis IA ───────────────────────────────────────────────── #}
+    {% if payload and payload.summary %}
+    <tr>
+      <td style="padding:20px 28px 0">
+        <div style="background:#eff6ff;border-left:4px solid #3b82f6;border-radius:4px;padding:14px 16px">
+          <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;color:#3b82f6;letter-spacing:.5px">🤖 Análisis IA</p>
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#1e3a5f;line-height:1.6">{{ payload.summary }}</p>
+          {% if payload.explanation %}
+          <p style="margin:0 0 8px;font-size:12px;color:#4a5568;line-height:1.6">{{ payload.explanation }}</p>
+          {% endif %}
+          <div style="font-size:11px;color:#64748b">
+            Severidad sugerida:
+            <span style="background:{{ sev_bg.get(payload.severity_suggested,'#fff7ed') }};color:{{ sev_colors.get(payload.severity_suggested,'#c2410c') }};border-radius:3px;padding:1px 6px;font-size:10px;font-weight:700;text-transform:uppercase">{{ payload.severity_suggested }}</span>
+            &nbsp;·&nbsp; Confianza: <strong>{{ payload.confidence }}%</strong>
+          </div>
+        </div>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── Hipótesis + Recomendaciones ───────────────────────────────── #}
+    {% if payload and (payload.hypotheses or payload.recommendations) %}
+    <tr>
+      <td style="padding:16px 28px 0">
+        <table width="100%" cellpadding="0" cellspacing="12" border="0">
+          <tr>
+            {% if payload.hypotheses %}
+            <td width="50%" valign="top" style="padding-right:8px">
+              <div style="border:1px solid #e2e8f0;border-radius:6px;padding:14px">
+                <p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">💡 Hipótesis</p>
+                {% for h in payload.hypotheses %}
+                <div style="margin-bottom:10px">
+                  <div style="font-size:12px;color:#1a202c;margin-bottom:4px">{{ h.text }}</div>
+                  <div style="background:#f1f5f9;border-radius:3px;height:8px;position:relative">
+                    <div style="background:#3b82f6;border-radius:3px;height:8px;width:{{ [h.confidence, 100] | min }}%"></div>
+                  </div>
+                  <div style="font-size:10px;color:#9ca3af;margin-top:2px">confianza {{ h.confidence }}%</div>
+                </div>
+                {% endfor %}
+              </div>
+            </td>
+            {% endif %}
+            {% if payload.recommendations %}
+            <td width="50%" valign="top" style="padding-left:{% if payload.hypotheses %}8px{% else %}0{% endif %}">
+              <div style="border:1px solid #e2e8f0;border-radius:6px;padding:14px">
+                <p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">✅ Recomendaciones</p>
+                {% for rec in payload.recommendations %}
+                <div style="margin-bottom:8px;display:table;width:100%">
+                  <div style="display:table-cell;width:50px;vertical-align:top;padding-right:6px;padding-top:2px">
+                    {% if rec.priority == 'alta' %}
+                    <span style="background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">alta</span>
+                    {% elif rec.priority == 'baja' %}
+                    <span style="background:#f1f5f9;color:#475569;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">baja</span>
+                    {% else %}
+                    <span style="background:#fffbeb;color:#b45309;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">media</span>
+                    {% endif %}
+                  </div>
+                  <div style="display:table-cell;vertical-align:top;font-size:12px;color:#1a202c">
+                    {{ rec.text }}
+                    <span style="font-family:monospace;font-size:10px;color:#94a3b8;margin-left:3px">[{{ rec.action_type }}]</span>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </td>
+            {% endif %}
+          </tr>
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── MITRE ATT&CK ─────────────────────────────────────────────── #}
+    {% if mitre_combined %}
+    <tr>
+      <td style="padding:16px 28px 0">
+        <h2 style="margin:0 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;color:#718096;letter-spacing:.5px">🛡 Técnicas MITRE ATT&amp;CK</h2>
+        <div>
+          {% for t in mitre_combined %}
+          <a href="https://attack.mitre.org/techniques/{{ t.id | replace('.', '/') }}/"
+             style="display:inline-block;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:3px 9px;font-size:11px;font-family:monospace;text-decoration:none;color:#1a202c;margin:0 4px 4px 0">
+            {{ t.id }} · {{ t.name }}{% if t.tactic %} <span style="color:#94a3b8">({{ t.tactic }})</span>{% endif %}
+          </a>
+          {% endfor %}
+        </div>
+      </td>
+    </tr>
+    {% endif %}
+
+    {# ── CTA ──────────────────────────────────────────────────────── #}
+    <tr>
+      <td style="padding:24px 28px">
+        {% if base_url %}
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:0 8px 0 0">
+              <a href="{{ base_url }}/soc/incidente/{{ incident.id }}"
+                 style="display:inline-block;background:#1a202c;color:#e2e8f0;text-decoration:none;font-size:12px;font-weight:600;padding:10px 20px;border-radius:6px">
+                🔍 Ver detalle del incidente
+              </a>
+            </td>
+            <td>
+              <a href="{{ base_url }}/soc/bitacora"
+                 style="display:inline-block;border:1px solid #e2e8f0;color:#1a202c;text-decoration:none;font-size:12px;font-weight:600;padding:10px 20px;border-radius:6px">
+                Bitácora SOC
+              </a>
+            </td>
+          </tr>
+        </table>
+        {% endif %}
+      </td>
+    </tr>
+
+    {# ── Footer ───────────────────────────────────────────────────── #}
+    <tr>
+      <td style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0">
+        <p style="margin:0;font-size:11px;color:#9ca3af">
+          Alerta generada automáticamente por WardNode SOC.
+          Para ajustar umbrales o desactivar las alertas, accede a Configuración → SOC → Alertas.
+        </p>
+      </td>
+    </tr>
+
+  </table>
+  </td></tr>
+</table>
+
+</body>
+</html>

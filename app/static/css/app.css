@@ -684,6 +684,8 @@ code, pre, .font-mono {
 @media (max-width: 1100px) {
   .dash-grid { grid-template-columns: 1fr; }
   .dash-col-aside { display: grid; grid-template-columns: repeat(2, 1fr); }
+  /* Donuts: contenedor cuadrado para que chart.js los dibuje circulares, no ovalados */
+  .chart-wrap-sm { height: auto; aspect-ratio: 1 / 1; max-width: 280px; margin-left: auto; margin-right: auto; }
 }
 
 @media (max-width: 900px) {
@@ -703,6 +705,8 @@ code, pre, .font-mono {
   .topbar-breadcrumb .bc-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar-actions { flex-wrap: wrap; gap: 6px; }
   .dash-col-aside { grid-template-columns: 1fr; }
+  /* Barras: más altura a ancho completo para mejor legibilidad */
+  .chart-wrap { height: 240px; }
   .crs-accordion-btn { font-size: 12px; }
   .data-table th { white-space: normal; }
   .auth-panel { padding: 24px 20px; }
@@ -717,4 +721,6 @@ code, pre, .font-mono {
   .card-panel-body  { padding: 12px 14px 16px; }
   .events-panel-head { padding: 8px 14px; }
   .events-panel-sec  { padding: 12px 14px; }
+  /* Donut más compacto en teléfonos pequeños */
+  .chart-wrap-sm { max-width: 240px; }
 }

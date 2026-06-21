@@ -1,3 +1,5 @@
+import pytest
+
 from app import create_app
 from app.config import Config
 
@@ -39,7 +41,8 @@ def test_csrf_blocks_mutating_request_when_enabled():
     client = app.test_client()
     response = client.post("/auth/setup")
 
-    assert response.status_code == 400
+    # CSRFError interceptado: redirige (302) o devuelve 400 según el handler activo
+    assert response.status_code in (302, 400)
 
 
 def test_secure_cookie_config_can_be_enabled():
@@ -52,3 +55,179 @@ def test_secure_cookie_config_can_be_enabled():
     assert app.config["SESSION_COOKIE_HTTPONLY"] is True
     assert app.config["SESSION_COOKIE_SAMESITE"] == "Strict"
     assert app.config["SESSION_COOKIE_SECURE"] is True
+
+
+# ── #2: SECRET_KEY guard ──────────────────────────────────────────────────────
+
+def test_production_config_rejects_default_secret_key():
+    class BadKeyConfig(Config):
+        DEBUG = False
+        TESTING = False
+        PUBLIC_BASE_URL = "https://example.com"
+        SECRET_KEY = "dev-secret-key"
+
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        create_app(BadKeyConfig)
+
+
+def test_production_config_rejects_change_me_key():
+    class BadKeyConfig(Config):
+        DEBUG = False
+        TESTING = False
+        PUBLIC_BASE_URL = "https://example.com"
+        SECRET_KEY = "change-me"
+
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        create_app(BadKeyConfig)
+
+
+def test_production_config_rejects_empty_secret_key():
+    class BadKeyConfig(Config):
+        DEBUG = False
+        TESTING = False
+        PUBLIC_BASE_URL = "https://example.com"
+        SECRET_KEY = ""
+
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        create_app(BadKeyConfig)
+
+
+def test_production_config_accepts_strong_secret_key():
+    import secrets
+
+    class GoodKeyConfig(Config):
+        DEBUG = False
+        TESTING = False
+        PUBLIC_BASE_URL = "https://example.com"
+        SECRET_KEY = secrets.token_hex(32)
+
+    app = create_app(GoodKeyConfig)
+    assert app is not None
+
+
+# ── #1: validación de dominio ─────────────────────────────────────────────────
+
+from app.proxy.validators import is_valid_domain, is_valid_email
+
+
+@pytest.mark.parametrize("domain", [
+    "example.com",
+    "sub.example.com",
+    "my-site.example.co.uk",
+    "a.io",
+    "xn--nxasmq6b.com",
+])
+def test_valid_domains_accepted(domain):
+    assert is_valid_domain(domain) is True
+
+
+@pytest.mark.parametrize("domain", [
+    "",
+    "localhost",
+    "evil.com;\n}",
+    "evil.com; alias /etc/;",
+    "no spaces allowed.com",
+    ".leading-dot.com",
+    "-leading-dash.com",
+    "trailing-.com",
+    "a" * 64 + ".com",
+])
+def test_invalid_domains_rejected(domain):
+    assert is_valid_domain(domain) is False
+
+
+@pytest.mark.parametrize("email", [
+    "user@example.com",
+    "user+tag@sub.example.co.uk",
+    "admin@wardnode.io",
+])
+def test_valid_emails_accepted(email):
+    assert is_valid_email(email) is True
+
+
+@pytest.mark.parametrize("email", [
+    "",
+    "user @example.com",
+    "user\nexample.com",
+    "--email user@example.com",
+    "notanemail",
+    "user@",
+])
+def test_invalid_emails_rejected(email):
+    assert is_valid_email(email) is False
+
+
+# ── #4: ctl: bloqueado en reglas ModSecurity ──────────────────────────────────
+
+from app.proxy.custom_rules import validate_custom_rule
+
+
+def test_ctl_ruleengine_off_blocked():
+    errors = validate_custom_rule(
+        "test", 'SecAction "id:1000001,phase:1,pass,nolog,ctl:ruleEngine=Off"'
+    )
+    assert any("ctl:" in e for e in errors)
+
+
+def test_ctl_ruleengine_detectiononly_blocked():
+    errors = validate_custom_rule(
+        "test", 'SecAction "id:1000001,phase:1,pass,nolog,ctl:ruleEngine=DetectionOnly"'
+    )
+    assert any("ctl:" in e for e in errors)
+
+
+def test_ctl_requestbodyaccess_off_blocked():
+    errors = validate_custom_rule(
+        "test", 'SecAction "id:1000001,phase:1,pass,nolog,ctl:requestBodyAccess=Off"'
+    )
+    assert any("ctl:" in e for e in errors)
+
+
+def test_ctl_removebyid_blocked():
+    errors = validate_custom_rule(
+        "test", 'SecAction "id:1000001,phase:1,pass,nolog,ctl:ruleRemoveById=920000"'
+    )
+    assert any("ctl:" in e for e in errors)
+
+
+def test_valid_secrule_without_ctl_passes():
+    errors = validate_custom_rule(
+        "block-scanner",
+        'SecRule REQUEST_URI "@contains /etc/passwd" "id:1000002,phase:1,deny,status:403,log"',
+    )
+    assert errors == []
+
+
+# ── #8: directivas peligrosas en nginx_extra ─────────────────────────────────
+
+from app.proxy.nginx_extra import validate_nginx_extra_config
+
+
+def test_proxy_pass_blocked_in_server_snippet():
+    errors = validate_nginx_extra_config("proxy_pass http://evil.internal;", "")
+    assert any("proxy_pass" in e for e in errors)
+
+
+def test_proxy_pass_blocked_in_location_snippet():
+    errors = validate_nginx_extra_config("", "proxy_pass http://169.254.169.254;")
+    assert any("proxy_pass" in e for e in errors)
+
+
+def test_return_blocked_in_nginx_extra():
+    errors = validate_nginx_extra_config("return 301 https://evil.com;", "")
+    assert any("return" in e for e in errors)
+
+
+def test_add_header_blocked_in_nginx_extra():
+    errors = validate_nginx_extra_config('add_header X-Evil "injected";', "")
+    assert any("add_header" in e for e in errors)
+
+
+def test_rewrite_blocked_in_nginx_extra():
+    errors = validate_nginx_extra_config("rewrite ^/(.*)$ https://evil.com/$1;", "")
+    assert any("rewrite" in e for e in errors)
+
+
+def test_mirror_blocked_in_nginx_extra():
+    errors = validate_nginx_extra_config("mirror /exfil;", "")
+    assert any("mirror" in e for e in errors)

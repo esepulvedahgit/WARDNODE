@@ -26,13 +26,12 @@ Get-ChildItem "$Dist\wardnode-*.tar" |
     Format-Table -AutoSize
 
 Write-Host "Transferir al VPS con:" -ForegroundColor Yellow
-Write-Host "  scp $Dist\wardnode-console.tar $Dist\wardnode-proxy.tar $Dist\wardnode-crowdsec-bouncer.tar docker-compose.vps.yml .env.prod.example usuario@VPS:~/wardnode/"
+Write-Host "  scp $Dist\wardnode-console.tar $Dist\wardnode-proxy.tar $Dist\wardnode-crowdsec-bouncer.tar docker-compose.vps.yml .env.prod.example deploy-vps.sh usuario@VPS:~/wardnode/"
 Write-Host "  # El modulo DDoS necesita ademas el directorio crowdsec/ (acquis.yaml):"
 Write-Host "  scp -r crowdsec usuario@VPS:~/wardnode/"
 Write-Host ""
 Write-Host "En el VPS:" -ForegroundColor Yellow
-Write-Host "  docker load -i wardnode-console.tar"
-Write-Host "  docker load -i wardnode-proxy.tar"
-Write-Host "  docker load -i wardnode-crowdsec-bouncer.tar   # necesario para el modulo DDoS"
-Write-Host "  cp .env.prod.example .env.prod  # editar con secretos reales"
-Write-Host "  docker compose -f docker-compose.vps.yml up -d"
+Write-Host "  cp .env.prod.example .env.prod   # editar con secretos reales"
+Write-Host "  bash deploy-vps.sh               # [1/3] load imagenes propias"
+Write-Host "                                   # [2/3] precarga imagenes de terceros (OBS + DDoS)"
+Write-Host "                                   # [3/3] docker compose up -d (stack base)"

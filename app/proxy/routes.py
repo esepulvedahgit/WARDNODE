@@ -24,10 +24,12 @@ from app.models import (
     Site,
 )
 from app.proxy import bp
+from app.proxy.validators import is_valid_domain
 from flask_login import current_user
 
 from app.proxy.services import (
     attack_events_to_csv,
+    clear_waf_events,
     ensure_default_rule_categories,
     ensure_site_bot_protection,
     ensure_site_traffic_policy,
@@ -46,7 +48,7 @@ from app.proxy.security_headers import (
     validate_security_header,
 )
 from app.proxy.custom_rules import validate_custom_rule
-from app.proxy.geoip import get_country_code
+from app.proxy.geoip import download_geoip_db, geoip_db_status, get_country_code, read_maxmind_credentials
 from app.proxy.geoip_blocklist import write_blocklist_conf, reload_nginx, COUNTRY_NAMES
 
 
@@ -96,7 +98,11 @@ def dashboard():
     events_24h = AttackEvent.query.filter(AttackEvent.created_at >= since_24h).all()
 
     blocked_24h = sum(1 for e in events_24h if e.action == "block")
-    unique_ips = db.session.query(func.count(func.distinct(AttackEvent.source_ip))).scalar() or 0
+    unique_ips = (
+        db.session.query(func.count(func.distinct(AttackEvent.source_ip)))
+        .filter(AttackEvent.created_at >= since_24h)
+        .scalar() or 0
+    )
     waf_active = sum(1 for s in sites if s.waf_enabled)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -117,7 +123,7 @@ def dashboard():
 
     all_countries = (
         db.session.query(AttackEvent.country_code, func.count().label("cnt"))
-        .filter(AttackEvent.country_code.isnot(None))
+        .filter(AttackEvent.country_code.isnot(None), AttackEvent.created_at >= since_24h)
         .group_by(AttackEvent.country_code)
         .order_by(func.count().desc())
         .all()
@@ -368,9 +374,14 @@ def create_site():
             )
             return redirect(url_for("proxy.sites_list"))
 
+    _domain = request.form["domain"].strip().lower()
+    if not is_valid_domain(_domain):
+        flash("El dominio no es válido. Usa un FQDN como ejemplo.com o sub.ejemplo.com.", "danger")
+        return redirect(url_for("proxy.sites_list"))
+
     site = Site(
         name=request.form["name"].strip(),
-        domain=request.form["domain"].strip().lower(),
+        domain=_domain,
         upstream_url=upstream_url,
         waf_enabled=bool(request.form.get("waf_enabled")),
         letsencrypt_enabled=bool(request.form.get("letsencrypt_enabled")),
@@ -1002,6 +1013,22 @@ def settings():
     syslog_sources  = (AppConfig.get("syslog_sources") or "nginx_access,modsecurity").split(",")
     syslog_running  = _fluent_bit_status()
 
+    # GeoIP: DB status + enrichment coverage (last 24h)
+    db_path_str = current_app.config.get("GEOIP_DB_PATH", "")
+    geoip_status = geoip_db_status(db_path_str)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    geoip_coverage_total = db.session.query(func.count(AttackEvent.id)).filter(
+        AttackEvent.created_at >= cutoff
+    ).scalar() or 0
+    geoip_coverage_with = db.session.query(func.count(AttackEvent.id)).filter(
+        AttackEvent.created_at >= cutoff,
+        AttackEvent.country_code.isnot(None),
+    ).scalar() or 0
+    geoip_coverage = (
+        round(geoip_coverage_with * 100 / geoip_coverage_total)
+        if geoip_coverage_total > 0 else None
+    )
+
     return render_template(
         "proxy/settings.html",
         account_id_masked=account_id_masked,
@@ -1021,6 +1048,10 @@ def settings():
         syslog_sources=syslog_sources,
         syslog_running=syslog_running,
         secrets_broken=secrets_broken,
+        geoip_status=geoip_status,
+        geoip_coverage=geoip_coverage,
+        geoip_coverage_total=geoip_coverage_total,
+        geoip_coverage_with=geoip_coverage_with,
     )
 
 
@@ -1046,6 +1077,23 @@ def settings_reset_secrets():
     return redirect(url_for("proxy.settings"))
 
 
+@bp.post("/settings/clear-waf-events")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("3 per minute")
+def settings_clear_waf_events():
+    """Borra todos los AttackEvent y reinicia los paneles del overview WAF."""
+    n = clear_waf_events()
+    log_audit(
+        "settings.clear_waf_events",
+        resource_type="attack_events",
+        severity="warning",
+        status="success",
+        detail={"deleted": n},
+    )
+    flash(f"Overview WAF reiniciado: se borraron {n} evento(s).", "success")
+    return redirect(url_for("proxy.settings"))
+
+
 @bp.post("/dismiss-setup-prompt")
 @roles_required(ROLE_ADMIN)
 def dismiss_setup_prompt():
@@ -1066,6 +1114,10 @@ def save_console_site():
         flash("El dominio es requerido.", "danger")
         return redirect(url_for("proxy.settings"))
 
+    if not is_valid_domain(domain):
+        flash("El dominio no es válido. Usa un FQDN como panel.midominio.com.", "danger")
+        return redirect(url_for("proxy.settings"))
+
     upstream = f"http://console:{port}"
 
     console_site_id = AppConfig.get("console_site_id")
@@ -1075,6 +1127,10 @@ def save_console_site():
 
     if site is None:
         site = Site.query.filter_by(is_console=True).first()
+
+    # Detectar puesta en marcha inicial ANTES de crear el Site.
+    # Si sigue siendo None tras ambas búsquedas es la primera configuración real.
+    is_first_setup = site is None
 
     if site is None:
         site = Site(name="WardNode Console", is_console=True)
@@ -1086,6 +1142,18 @@ def save_console_site():
     db.session.commit()
 
     AppConfig.set("console_site_id", str(site.id))
+
+    # Limpiar eventos WAF acumulados antes de la puesta en marcha real.
+    # Solo se dispara la primera vez; editar el dominio después no borra datos.
+    if is_first_setup:
+        n = clear_waf_events()
+        log_audit(
+            "console.first_setup_waf_reset",
+            resource_type="attack_events",
+            severity="info",
+            status="success",
+            detail={"deleted": n},
+        )
 
     # Si WF está activo bloquear el puerto 5000 de forma diferida para que este
     # redirect llegue al cliente antes de que iptables corte TCP:5000.
@@ -1130,6 +1198,53 @@ def settings_save():
 
     if account_id or license_key:
         flash("Credenciales MaxMind guardadas correctamente.", "success")
+    return redirect(url_for("proxy.settings"))
+
+
+@bp.post("/settings/geoip-download")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("5 per hour")
+def geoip_download():
+    """Descarga o actualiza la base GeoLite2-Country desde MaxMind bajo demanda."""
+    if not current_app.config.get("WARDNODE_SECRET_KEY"):
+        flash("WARDNODE_SECRET_KEY no configurado en .env.", "danger")
+        return redirect(url_for("proxy.settings"))
+
+    account_id, license_key = read_maxmind_credentials()
+    if not account_id or not license_key:
+        flash("Credenciales MaxMind no configuradas. Configúralas primero.", "warning")
+        return redirect(url_for("proxy.settings"))
+
+    db_path_str = current_app.config.get("GEOIP_DB_PATH", "")
+    ok, msg = download_geoip_db(db_path_str, account_id, license_key)
+
+    if ok:
+        try:
+            render_nginx_configs()
+        except Exception:
+            pass  # la regeneración de config es no-fatal; el proxy seguirá funcionando
+        flash(msg, "success")
+        log_audit(
+            actor_email=current_user.email,
+            action="geoip_db_download",
+            resource_type="geoip",
+            resource_name="GeoLite2-Country",
+            severity="info",
+            status="success",
+            detail=msg,
+        )
+    else:
+        flash(f"Error al descargar la base GeoIP: {msg}", "danger")
+        log_audit(
+            actor_email=current_user.email,
+            action="geoip_db_download",
+            resource_type="geoip",
+            resource_name="GeoLite2-Country",
+            severity="warning",
+            status="failure",
+            detail=msg,
+        )
+
     return redirect(url_for("proxy.settings"))
 
 

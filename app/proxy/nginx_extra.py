@@ -26,6 +26,16 @@ DISALLOWED_DIRECTIVES = {
     "root",
     "alias",
     "ssl_certificate_key",
+    # SSRF / exfiltración / redirección
+    "proxy_pass",
+    "proxy_redirect",
+    "mirror",
+    "return",
+    "rewrite",
+    "sub_filter",
+    "internal",
+    "add_header",
+    "error_page",
 }
 
 

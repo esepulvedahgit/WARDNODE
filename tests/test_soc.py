@@ -92,8 +92,10 @@ def test_soc_reader_cannot_change_incident_state(client, login_as):
     assert client.post("/soc/incidente/1/estado", data={"estado": "revisado"}).status_code == 403
 
 
-def test_module_toggle_soc(client, login_as):
+def test_module_toggle_soc(client, login_as, monkeypatch):
     login_as()
+    AppConfig.set("module_wf_enabled", "1")  # gate: WF debe estar activo
+    monkeypatch.setattr("app.modules.socket_client.ufw_is_operational", lambda **kw: True)
     response = client.post("/modules/soc/toggle")
     assert response.status_code == 302
     assert AppConfig.get("module_soc_enabled") == "1"
@@ -631,7 +633,7 @@ def test_revisado_saves_comment_and_emails(client, login_as, monkeypatch):
     sent = []
     monkeypatch.setattr(
         "app.email.send_soc_alert_email",
-        lambda to, subject, body: sent.append((to, subject, body)),
+        lambda to, subject, body, **kwargs: sent.append((to, subject, body)),
     )
 
     incident = _make_incident()
@@ -1574,7 +1576,7 @@ def _capture_channels(monkeypatch):
 
     monkeypatch.setattr(
         "app.email.send_soc_alert_email",
-        lambda to, subject, body: sent["emails"].append((to, subject, body)),
+        lambda to, subject, body, **kwargs: sent["emails"].append((to, subject, body)),
     )
 
     class _OkResp:

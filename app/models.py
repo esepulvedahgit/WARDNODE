@@ -1,10 +1,17 @@
+import re
 import uuid
 from datetime import datetime, timezone
 
 from flask_login import UserMixin
+from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.extensions import db
+
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
+    r"(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$"
+)
 
 
 ROLE_ADMIN = "admin"
@@ -92,6 +99,13 @@ class Site(db.Model, TimestampMixin):
     force_https = db.Column(db.Boolean, default=False, nullable=False)
     hsts_mode = db.Column(db.String(20), nullable=False, default="off")
     host_port_blocked = db.Column(db.Boolean, default=False, nullable=False)
+
+    @validates("domain")
+    def _validate_domain(self, key, value):
+        v = (value or "").strip().lower()
+        if not _DOMAIN_RE.match(v):
+            raise ValueError(f"Dominio inválido: {v!r}")
+        return v
 
     rule_settings = db.relationship(
         "SiteRuleSetting",
