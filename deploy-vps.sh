@@ -82,7 +82,7 @@ fi
 
 # ── [2/3] Precargar imágenes de terceros ──────────────────────────────────────
 echo ""
-echo "==> [2/3] Precargando imágenes de terceros (OBS + DDoS) sin arrancar nada..."
+echo "==> [2/3] Precargando imágenes de terceros (Grafana + base OBS + CrowdSec) sin arrancar nada..."
 dc --profile obs --profile ddos pull "${THIRD_PARTY_SERVICES[@]}"
 
 # ── [3/3] Levantar el stack base ──────────────────────────────────────────────
