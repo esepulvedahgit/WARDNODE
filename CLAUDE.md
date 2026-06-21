@@ -28,8 +28,8 @@ pytest -k "test_name"    # Single test
 pytest --cov=app          # With coverage
 
 # Docker (full stack)
-docker compose up --build          # console + proxy + db
-docker compose --profile obs up    # also starts Alloy + Loki + Prometheus + Grafana
+docker compose up --build          # console + proxy + db + Loki + Alloy + Prometheus + nginx-exporter
+docker compose --profile obs up    # also starts Grafana (visualization only; collection is always-on)
 docker compose restart proxy       # Required after generating new Nginx configs
 ```
 
@@ -46,6 +46,8 @@ The **Flask console** (port 5000) is purely a management plane — it never hand
 ### Config generation pipeline
 
 Nginx configs are regenerated automatically after every route that modifies proxy-relevant settings, via `_apply_nginx()` in `proxy/routes.py` (calls `render_nginx_configs()` + `reload_nginx()`, fails silently in dev without Docker). Manual trigger: `POST /proxy/render-configs`.
+
+The `dashboard()` function in `proxy/routes.py` computes four KPI cards for `/proxy/`: `events_24h`, `unique_ips`, `top_country`, and `geo_data`. All four use the same 24-hour window (`since_24h = now - timedelta(hours=24)`) so they always report a consistent cohort.
 
 - `generated/nginx/00-geoip.conf` — GeoIP2 database load + `$geo_blocked` map for country blocklist
 - `generated/nginx/00-zones.conf` — global `limit_req_zone` / `limit_conn_zone` declarations
@@ -141,7 +143,30 @@ The host agent (`host-agent/wardnode-wf-agent.py`) is installed via `host-agent/
 
 **WardNode CS** — CrowdSec IDS/IPS. CrowdSec is installed by `host-agent/install.sh` and left disabled until the module is enabled. Post-install, the Flask UI drives status, decisions, ban/unban, and service start/stop through the same WF Unix socket; the agent calls `cscli` or `/opt/wardnode/wardnode-cs-control.sh`. Requires WF to be active first (CS bouncer acts via UFW).
 
-**WardNode OBS** — Observability stack activated via the `obs` Docker Compose profile. Stack: Grafana Alloy (collector) → Loki (logs) + Prometheus (metrics) → Grafana. Alloy replaces Fluent Bit for OBS collection and embeds node-exporter functionality via `prometheus.exporter.unix`. Grafana is served at `/obs/` through an `obs.conf` file injected into the running proxy container by `modules/routes.py:_inject_obs_nginx_conf()`. In production, observability configs are copied from the console image into named volumes before the OBS containers start.
+**WardNode OBS** — Observability stack with a two-tier split:
+
+| Tier | Services | When started | Gate |
+|------|----------|-------------|------|
+| Collection | Alloy, Loki, Prometheus, nginx-exporter | Always — `docker compose up` base | None |
+| Visualization | Grafana | `--profile obs` only | OBS module toggle |
+
+Alloy (collector) streams Docker logs from the proxy container and scrapes Prometheus metrics; Loki stores log lines; Prometheus stores metrics. These four services start with the base stack so logs are captured from the first `docker compose up` — minimizing log leakage before the OBS module is enabled. `mem_limit` is set on each (Loki/Alloy/Prometheus 256m, nginx-exporter 32m).
+
+Grafana is the visualization layer and is the only service behind `--profile obs`. Activating the OBS module from the UI (`obs_activate` in `modules/routes.py`) starts only `wardnode-grafana`. Grafana is served at `/obs/` via an `obs.conf` file injected into the running proxy container by `_inject_obs_nginx_conf()`. In production, observability configs are copied from the console image into named volumes before the OBS containers start.
+
+Fluent Bit has been removed; Alloy covers all log collection. `prometheus.exporter.unix` inside Alloy provides node-level metrics.
+
+**Grafana dashboard roles and authoritative sources:**
+
+| Dashboard | Data source | Role |
+|-----------|-------------|------|
+| WAF Analytics (`03`) | PostgreSQL `attack_event` | Official WAF event counts — matches `/proxy/` exactly |
+| Security Overview (`01`) | PostgreSQL (WAF stat) + Loki (trends) | High-level security posture |
+| ModSecurity WAF (`02`) | Loki | Live log explorer and trend charts — **not** a count source |
+| NGINX Logs (`04`) | Loki | Authoritative HTTP 4xx/5xx, URIs, vhosts |
+| NGINX Metrics (`07`) | Loki | HTTP response code aggregates |
+
+Key invariant: **WAF event counts are always read from PostgreSQL** (`attack_event` table, 1 row = 1 deduplicated ModSecurity transaction). Loki counts raw log lines with best-effort retention (30 days) — the two numbers are not expected to match. Always refer users to WAF Analytics or `/proxy/` for official counts.
 
 ### Frontend stack
 
