@@ -59,6 +59,10 @@ def run_detection_cycle() -> int:
     # Scoring ML opcional (Fase 5): el heurístico es el piso, el ML solo sube.
     ml_enabled = AppConfig.get("soc_ml_enabled") == "1"
 
+    # Leer umbrales de severidad una sola vez por ciclo (evita 3·N consultas
+    # a AppConfig cuando hay N candidatos — H3 remediación de audit).
+    sev_thresholds = detect.resolve_severity_thresholds()
+
     created: list[SocIncident] = []
     enriched_count = 0  # contador de llamadas AbuseIPDB este ciclo (cap A-2)
     for cand in candidates:
@@ -69,7 +73,7 @@ def run_detection_cycle() -> int:
 
             ml_score = ml.score_candidate(cand)
         blended = max(score, ml_score or 0.0)
-        severity = detect.severity_for_score(blended)
+        severity = detect.severity_for_score(blended, sev_thresholds)
 
         # Dedupe: incidente abierto reciente de la misma IP → actualizar, no duplicar.
         existing = (

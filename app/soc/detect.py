@@ -102,12 +102,12 @@ def score_candidate(c: dict) -> float:
     return round(volume + diversity + block_ratio + fanout, 1)
 
 
-def severity_for_score(score: float) -> str:
-    """Clasifica un score 0-100 en severidad.
+def resolve_severity_thresholds() -> "tuple[int, int, int]":
+    """Lee soc_sev_critical/high/medium desde AppConfig y devuelve (crit, high, med).
 
-    Los umbrales se leen desde AppConfig (soc_sev_critical/high/medium) con
-    defaults 80/60/40. Si el orden no es coherente (med >= high o high >= crit)
-    se usan los defaults para garantizar una clasificación correcta.
+    Centraliza la lógica de resolución para que run_detection_cycle() pueda
+    leerla una sola vez por ciclo y pasarla a severity_for_score(), evitando
+    3·N consultas a AppConfig cuando hay N candidatos (H3 — N+2 queries SOC).
     """
     try:
         crit = max(1, min(100, int(AppConfig.get("soc_sev_critical") or 80)))
@@ -118,6 +118,21 @@ def severity_for_score(score: float) -> str:
     # Orden incoherente → caer a defaults para no romper la clasificación.
     if not (med < high < crit):
         crit, high, med = 80, 60, 40
+    return crit, high, med
+
+
+def severity_for_score(
+    score: float,
+    thresholds: "tuple[int, int, int] | None" = None,
+) -> str:
+    """Clasifica un score 0-100 en severidad.
+
+    Si se pasa ``thresholds`` (crit, high, med), se usan directamente; de lo
+    contrario se resuelven desde AppConfig. Pasar los umbrales precalculados
+    permite que run_detection_cycle() haga una sola lectura por ciclo en lugar
+    de 3·N (N = número de candidatos).
+    """
+    crit, high, med = thresholds if thresholds is not None else resolve_severity_thresholds()
     if score >= crit:
         return "critical"
     if score >= high:

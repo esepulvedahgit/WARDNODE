@@ -155,5 +155,8 @@
       "/home/esepulvedah/wardnode/host-agent",
       "/home/esepulvedah/wardnode/app"
     ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
   }
 }

@@ -202,6 +202,17 @@ _MAX_EXPORT_ROWS = 50_000
 _EVENTS_PER_PAGE = 50
 
 
+def _ip_prefix_filter(q, ip: str):
+    """Filtra AttackEvent por prefijo de IP con metacaracteres LIKE escapados.
+
+    Usa LIKE 'ip%' (sargable) en lugar de LIKE '%ip%' (comodín inicial),
+    lo que permite al motor usar el índice ix_attack_event_ip_created.
+    Los metacaracteres % y _ se escapan para evitar over-match (CWE-150).
+    """
+    esc = ip.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return q.filter(AttackEvent.source_ip.like(f"{esc}%", escape="\\"))
+
+
 def _parse_event_date(s: str):
     """Parsea una fecha en formato YYYY-MM-DD; devuelve None si inválida."""
     try:
@@ -230,7 +241,7 @@ def _build_filtered_events_query(args):
     if domain:
         q = q.filter(AttackEvent.domain == domain)
     if ip:
-        q = q.filter(AttackEvent.source_ip.ilike(f"%{ip}%"))
+        q = _ip_prefix_filter(q, ip)
     if dt_from:
         q = q.filter(AttackEvent.created_at >= dt_from)
     if dt_to:
@@ -275,18 +286,28 @@ def events_list():
         if _domain:
             q = q.filter(AttackEvent.domain == _domain)
         if _ip:
-            q = q.filter(AttackEvent.source_ip.ilike(f"%{_ip}%"))
+            q = _ip_prefix_filter(q, _ip)
         if _date_from:
             q = q.filter(AttackEvent.created_at >= _date_from)
         if _date_to:
             q = q.filter(AttackEvent.created_at < _date_to + timedelta(days=1))
         return q
 
-    counts = {"all": _apply_base(AttackEvent.query).count()}
-    for sev in ("critical", "high", "medium", "low"):
-        counts[sev] = _apply_base(AttackEvent.query).filter(AttackEvent.severity == sev).count()
-    counts["block"]  = _apply_base(AttackEvent.query).filter(AttackEvent.action == "block").count()
-    counts["detect"] = _apply_base(AttackEvent.query).filter(AttackEvent.action == "detect").count()
+    # Conteos por severidad: un solo GROUP BY en lugar de 5 COUNT individuales.
+    sev_rows = _apply_base(
+        db.session.query(AttackEvent.severity, func.count(AttackEvent.id))
+    ).group_by(AttackEvent.severity).all()
+    sev_map = {s: c for s, c in sev_rows}
+    counts = {sev: sev_map.get(sev, 0) for sev in ("critical", "high", "medium", "low")}
+    counts["all"] = sum(sev_map.values())   # equivalente al count sin filtro sev/acción
+
+    # Conteos por acción: un solo GROUP BY en lugar de 2 COUNT individuales.
+    act_rows = _apply_base(
+        db.session.query(AttackEvent.action, func.count(AttackEvent.id))
+    ).group_by(AttackEvent.action).all()
+    act_map = {a: c for a, c in act_rows}
+    counts["block"]  = act_map.get("block", 0)
+    counts["detect"] = act_map.get("detect", 0)
 
     # IPs únicas bajo filtros de dominio/IP/fechas (sin sev/acción).
     unique_ips = _apply_base(
