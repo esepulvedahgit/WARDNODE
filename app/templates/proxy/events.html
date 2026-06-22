@@ -17,7 +17,6 @@
       <h1 class="h3 mb-1">Eventos WAF</h1>
       <p class="text-secondary mb-0 small">
         {% if domain %}{{ domain }}{% else %}Todos los dominios{% endif %}
-        · últimos {{ events | length }} registros
       </p>
     </div>
     <div>
@@ -34,171 +33,13 @@
     </div>
   </div>
 
-  {# ── Panel unificado: filtros + tabs + tabla ─────────────────────── #}
-  <div class="card-panel events-panel">
-
-    {# Franja de encabezado #}
-    <div class="events-panel-head">
-      <i class="bi bi-funnel me-2"></i>
-      <span>Búsqueda y filtros</span>
+  {# ── Panel: console + filtros + tabs + tabla + paginación ─────────── #}
+  <div class="card-panel events-panel" hx-indicator="#events-loading">
+    <div id="events-loading" class="events-loading htmx-indicator"></div>
+    <div id="events-results">
+      {% include "proxy/_events_results.html" %}
     </div>
-
-    {# Sección: filtros #}
-    <div class="events-panel-sec">
-      <form method="get" action="{{ url_for('proxy.events_list') }}" class="row g-2 align-items-end">
-        {# Conservar tabs activos #}
-        {% if severity %}<input type="hidden" name="severity" value="{{ severity }}">{% endif %}
-        {% if action %}<input type="hidden" name="action" value="{{ action }}">{% endif %}
-
-        {# Dominio #}
-        <div class="col-sm-auto" style="min-width:200px">
-          <label class="form-label mb-1" style="font-size:12px;font-weight:600;color:var(--text-secondary)">Dominio</label>
-          <select name="domain" class="form-select form-select-sm">
-            <option value="">Todos los dominios</option>
-            {% for d in domains %}
-              <option value="{{ d }}" {% if d == domain %}selected{% endif %}>{{ d }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        {# Desde #}
-        <div class="col-sm-auto">
-          <label class="form-label mb-1" style="font-size:12px;font-weight:600;color:var(--text-secondary)">Desde</label>
-          <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm">
-        </div>
-
-        {# Hasta #}
-        <div class="col-sm-auto">
-          <label class="form-label mb-1" style="font-size:12px;font-weight:600;color:var(--text-secondary)">Hasta</label>
-          <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm">
-        </div>
-
-        {# IP atacante #}
-        <div class="col-sm-auto" style="min-width:180px">
-          <label class="form-label mb-1" style="font-size:12px;font-weight:600;color:var(--text-secondary)">IP atacante</label>
-          <input type="text" name="ip" value="{{ ip }}" placeholder="ej. 203.0.113" class="form-control form-control-sm" style="font-family:var(--font-mono)">
-        </div>
-
-        {# Botones #}
-        <div class="col-sm-auto d-flex gap-2">
-          <button type="submit" class="btn btn-primary btn-sm">
-            <i class="bi bi-funnel me-1"></i>Aplicar
-          </button>
-          <a href="{{ url_for('proxy.events_list') }}" class="btn btn-outline-secondary btn-sm">
-            <i class="bi bi-x-lg me-1"></i>Limpiar
-          </a>
-        </div>
-      </form>
-    </div>
-
-    {# Sección: tabs de severidad y acción WAF #}
-    <div class="events-panel-sec">
-      <div class="events-filters">
-        {# Severidad #}
-        <div class="events-sev-tabs">
-          <a href="{{ url_for('proxy.events_list', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab {% if not severity %}sev-tab-active{% endif %}">
-            Todos <span class="sev-count">{{ counts.all }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity='critical', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-critical {% if severity == 'critical' %}sev-tab-active{% endif %}">
-            Critical <span class="sev-count">{{ counts.critical }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity='high', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-high {% if severity == 'high' %}sev-tab-active{% endif %}">
-            High <span class="sev-count">{{ counts.high }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity='medium', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-warning {% if severity == 'medium' %}sev-tab-active{% endif %}">
-            Medium <span class="sev-count">{{ counts.medium }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity='low', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-low {% if severity == 'low' %}sev-tab-active{% endif %}">
-            Low <span class="sev-count">{{ counts.low }}</span>
-          </a>
-        </div>
-        {# Acción WAF #}
-        <div class="events-sev-tabs">
-          <a href="{{ url_for('proxy.events_list', severity=severity or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab {% if not action %}sev-tab-active{% endif %}">
-            Todos <span class="sev-count">{{ counts.all }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity=severity or None, action='block', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-block {% if action == 'block' %}sev-tab-active{% endif %}">
-            Bloqueados <span class="sev-count">{{ counts.block }}</span>
-          </a>
-          <a href="{{ url_for('proxy.events_list', severity=severity or None, action='detect', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
-             class="sev-tab sev-tab-detect {% if action == 'detect' %}sev-tab-active{% endif %}">
-            Detectados <span class="sev-count">{{ counts.detect }}</span>
-          </a>
-        </div>
-      </div>
-    </div>
-
-    {# Sección: tabla de eventos #}
-    <div class="events-panel-sec events-panel-table">
-      {% if events %}
-      <div class="table-responsive">
-        <table class="data-table events-table">
-          <thead>
-            <tr>
-              <th style="width:140px">Fecha / Hora</th>
-              <th>Dominio</th>
-              <th>IP origen</th>
-              <th>Acción atacante</th>
-              <th>Acción WAF</th>
-              <th style="width:100px">Severidad</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for event in events %}
-            <tr>
-              <td class="t-mono t-dim" style="white-space:nowrap">
-                {{ event.created_at.strftime('%Y-%m-%d') }}<br>
-                <span style="font-size:11px">{{ event.created_at.strftime('%H:%M:%S') }}</span>
-              </td>
-              <td class="t-mono t-blue">{{ event.domain }}</td>
-              <td class="t-mono">{{ event.source_ip }}</td>
-              <td>
-                <span class="event-method event-method-{{ event.method | lower }}">{{ event.method }}</span>
-                <span class="event-path t-mono">{{ event.path | truncate(60, True, '…') }}</span>
-              </td>
-              <td>
-                {% if event.action == "block" %}
-                  <span class="action-badge action-badge-block">Bloqueado</span>
-                {% else %}
-                  <span class="action-badge action-badge-detect">Detectado</span>
-                {% endif %}
-                <span class="event-status">{{ event.status_code }}</span>
-                <span class="event-category">{{ event.category }}</span>
-                {% if event.rule_id %}
-                  <span class="event-rule t-mono t-dim">regla {{ event.rule_id }}</span>
-                {% endif %}
-              </td>
-              <td>
-                {% set sev = event.severity | lower %}
-                <span class="sev-badge sev-badge-{{ sev }}">
-                  {{ sev }}
-                </span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <div style="padding:48px 0;text-align:center;color:var(--text-muted)">
-        <i class="bi bi-shield-check" style="font-size:36px;display:block;margin-bottom:12px;color:var(--c-success)"></i>
-        <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">Sin eventos registrados</p>
-        <p style="font-size:12px;margin:0">
-          {% if severity or action or domain or ip or date_from or date_to %}El filtro activo no tiene resultados.
-          {% else %}El WAF no ha registrado eventos aún.{% endif %}
-        </p>
-      </div>
-      {% endif %}
-    </div>
-
-  </div>{# /events-panel #}
+  </div>
 
 </div>
 {% endblock %}

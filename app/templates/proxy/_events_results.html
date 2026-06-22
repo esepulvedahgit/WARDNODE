@@ -1,0 +1,323 @@
+{# ── Threat console (dark band) ──────────────────────────────────────── #}
+<div class="events-console">
+  <div class="events-console-stats">
+
+    <div class="events-stat events-stat-hero">
+      <span class="events-stat-value">{{ "{:,}".format(total) }}</span>
+      <span class="events-stat-label">
+        Eventos{% if severity or action or domain or ip or date_from or date_to %}&nbsp;·&nbsp;filtrado{% endif %}
+      </span>
+    </div>
+
+    <div class="events-stat">
+      <span class="events-stat-value">{{ "{:,}".format(counts.block) }}</span>
+      <span class="events-stat-label">Bloqueados</span>
+    </div>
+
+    <div class="events-stat">
+      <span class="events-stat-value">{{ "{:,}".format(counts.detect) }}</span>
+      <span class="events-stat-label">Detectados</span>
+    </div>
+
+    <div class="events-stat">
+      <span class="events-stat-value">{{ "{:,}".format(unique_ips) }}</span>
+      <span class="events-stat-label">IPs únicas</span>
+    </div>
+
+  </div>
+
+  {% if total > 0 %}
+  <div class="events-sevbar"
+       role="img"
+       aria-label="Distribución por severidad — critical: {{ counts.critical }}, high: {{ counts.high }}, medium: {{ counts.medium }}, low: {{ counts.low }}">
+    {% if counts.critical %}<div class="events-sevbar-seg events-sevbar-crit" style="flex:{{ counts.critical }}" title="Critical · {{ counts.critical }}"></div>{% endif %}
+    {% if counts.high     %}<div class="events-sevbar-seg events-sevbar-high" style="flex:{{ counts.high }}"     title="High · {{ counts.high }}"></div>{% endif %}
+    {% if counts.medium   %}<div class="events-sevbar-seg events-sevbar-med"  style="flex:{{ counts.medium }}"   title="Medium · {{ counts.medium }}"></div>{% endif %}
+    {% if counts.low      %}<div class="events-sevbar-seg events-sevbar-low"  style="flex:{{ counts.low }}"      title="Low · {{ counts.low }}"></div>{% endif %}
+  </div>
+  <div class="events-sevbar-legend">
+    {% if counts.critical %}<span class="esl-crit">&#9679; Critical <strong>{{ counts.critical }}</strong></span>{% endif %}
+    {% if counts.high     %}<span class="esl-high">&#9679; High <strong>{{ counts.high }}</strong></span>{% endif %}
+    {% if counts.medium   %}<span class="esl-med">&#9679; Medium <strong>{{ counts.medium }}</strong></span>{% endif %}
+    {% if counts.low      %}<span class="esl-low">&#9679; Low <strong>{{ counts.low }}</strong></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Toolbar: filtros + chips de filtro activo ────────────────────────── #}
+<div class="events-panel-sec events-toolbar">
+  <form id="events-filter-form"
+        hx-get="{{ url_for('proxy.events_list') }}"
+        hx-target="#events-results"
+        hx-push-url="true">
+    {# Preservar severidad y acción activas al usar filtros del form #}
+    {% if severity %}<input type="hidden" name="severity" value="{{ severity }}">{% endif %}
+    {% if action   %}<input type="hidden" name="action"   value="{{ action }}">{% endif %}
+
+    <div class="events-toolbar-fields">
+
+      <div class="events-toolbar-field" style="min-width:200px">
+        <label class="events-field-label" for="ef-domain">Dominio</label>
+        <select id="ef-domain" name="domain" class="form-select form-select-sm"
+                hx-get="{{ url_for('proxy.events_list') }}"
+                hx-target="#events-results"
+                hx-push-url="true"
+                hx-trigger="change">
+          <option value="">Todos los dominios</option>
+          {% for d in domains %}
+            <option value="{{ d }}" {% if d == domain %}selected{% endif %}>{{ d }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="events-toolbar-field">
+        <label class="events-field-label" for="ef-date-from">Desde</label>
+        <input id="ef-date-from" type="date" name="date_from" value="{{ date_from }}"
+               class="form-control form-control-sm"
+               hx-get="{{ url_for('proxy.events_list') }}"
+               hx-target="#events-results"
+               hx-push-url="true"
+               hx-trigger="change">
+      </div>
+
+      <div class="events-toolbar-field">
+        <label class="events-field-label" for="ef-date-to">Hasta</label>
+        <input id="ef-date-to" type="date" name="date_to" value="{{ date_to }}"
+               class="form-control form-control-sm"
+               hx-get="{{ url_for('proxy.events_list') }}"
+               hx-target="#events-results"
+               hx-push-url="true"
+               hx-trigger="change">
+      </div>
+
+      <div class="events-toolbar-field" style="min-width:160px">
+        <label class="events-field-label" for="ef-ip">IP atacante</label>
+        <input id="ef-ip" name="ip" type="text" value="{{ ip }}"
+               placeholder="ej. 203.0.113"
+               class="form-control form-control-sm t-mono"
+               hx-get="{{ url_for('proxy.events_list') }}"
+               hx-target="#events-results"
+               hx-push-url="true"
+               hx-trigger="keyup changed delay:500ms"
+               hx-preserve>
+      </div>
+
+      <div class="events-toolbar-field events-toolbar-actions">
+        <label class="events-field-label" aria-hidden="true">&nbsp;</label>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-funnel me-1"></i>Aplicar
+          </button>
+          <a href="{{ url_for('proxy.events_list') }}"
+             hx-get="{{ url_for('proxy.events_list') }}"
+             hx-target="#events-results"
+             hx-push-url="true"
+             class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-x-lg me-1"></i>Limpiar
+          </a>
+        </div>
+      </div>
+
+    </div>
+  </form>
+
+  {# Chips de filtros activos (domain/ip/fechas — severity y action van en las tabs) #}
+  {% if domain or ip or date_from or date_to %}
+  <div class="events-chips">
+    <span class="events-chips-label">Filtros:</span>
+    {% if domain %}
+    <a class="events-chip"
+       href="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+       hx-get="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+       hx-target="#events-results" hx-push-url="true">
+      dominio:{{ domain }}&nbsp;<i class="bi bi-x"></i>
+    </a>
+    {% endif %}
+    {% if ip %}
+    <a class="events-chip"
+       href="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, date_from=date_from or None, date_to=date_to or None) }}"
+       hx-get="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, date_from=date_from or None, date_to=date_to or None) }}"
+       hx-target="#events-results" hx-push-url="true">
+      ip:{{ ip }}&nbsp;<i class="bi bi-x"></i>
+    </a>
+    {% endif %}
+    {% if date_from %}
+    <a class="events-chip"
+       href="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_to=date_to or None) }}"
+       hx-get="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_to=date_to or None) }}"
+       hx-target="#events-results" hx-push-url="true">
+      desde:{{ date_from }}&nbsp;<i class="bi bi-x"></i>
+    </a>
+    {% endif %}
+    {% if date_to %}
+    <a class="events-chip"
+       href="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None) }}"
+       hx-get="{{ url_for('proxy.events_list', severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None) }}"
+       hx-target="#events-results" hx-push-url="true">
+      hasta:{{ date_to }}&nbsp;<i class="bi bi-x"></i>
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{# ── Pestañas segmentadas ─────────────────────────────────────────────── #}
+<div class="events-panel-sec events-seg-sec">
+
+  <div class="events-seg-group">
+    <span class="events-seg-label">Severidad</span>
+    <div class="events-segmented">
+      <a class="seg {% if not severity %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Todos <span class="seg-count">{{ counts.all }}</span>
+      </a>
+      <a class="seg seg-crit {% if severity == 'critical' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity='critical', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity='critical', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Critical <span class="seg-count">{{ counts.critical }}</span>
+      </a>
+      <a class="seg seg-high {% if severity == 'high' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity='high', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity='high', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        High <span class="seg-count">{{ counts.high }}</span>
+      </a>
+      <a class="seg seg-med {% if severity == 'medium' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity='medium', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity='medium', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Medium <span class="seg-count">{{ counts.medium }}</span>
+      </a>
+      <a class="seg seg-low {% if severity == 'low' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity='low', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity='low', action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Low <span class="seg-count">{{ counts.low }}</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="events-seg-group">
+    <span class="events-seg-label">Acción WAF</span>
+    <div class="events-segmented">
+      <a class="seg {% if not action %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity=severity or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity=severity or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Todos <span class="seg-count">{{ counts.all }}</span>
+      </a>
+      <a class="seg seg-block {% if action == 'block' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity=severity or None, action='block', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity=severity or None, action='block', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Bloqueados <span class="seg-count">{{ counts.block }}</span>
+      </a>
+      <a class="seg seg-detect {% if action == 'detect' %}is-active{% endif %}"
+         href="{{ url_for('proxy.events_list', severity=severity or None, action='detect', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-get="{{ url_for('proxy.events_list', severity=severity or None, action='detect', domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+         hx-target="#events-results" hx-push-url="true">
+        Detectados <span class="seg-count">{{ counts.detect }}</span>
+      </a>
+    </div>
+  </div>
+
+</div>
+
+{# ── Tabla de eventos ─────────────────────────────────────────────────── #}
+<div class="events-panel-sec events-panel-table">
+  {% if events %}
+  <div class="table-responsive">
+    <table class="data-table events-table">
+      <thead>
+        <tr>
+          <th style="width:140px">Fecha / Hora</th>
+          <th>Dominio</th>
+          <th>IP origen</th>
+          <th>Acción atacante</th>
+          <th>Acción WAF</th>
+          <th style="width:100px">Severidad</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+        <tr>
+          <td class="t-mono t-dim" style="white-space:nowrap">
+            {{ event.created_at.strftime('%Y-%m-%d') }}<br>
+            <span style="font-size:11px">{{ event.created_at.strftime('%H:%M:%S') }}</span>
+          </td>
+          <td class="t-mono t-blue">{{ event.domain }}</td>
+          <td class="t-mono">{{ event.source_ip }}</td>
+          <td>
+            <span class="event-method event-method-{{ event.method | lower }}">{{ event.method }}</span>
+            <span class="event-path t-mono">{{ event.path | truncate(60, True, '…') }}</span>
+          </td>
+          <td>
+            {% if event.action == "block" %}
+              <span class="action-badge action-badge-block">Bloqueado</span>
+            {% else %}
+              <span class="action-badge action-badge-detect">Detectado</span>
+            {% endif %}
+            <span class="event-status">{{ event.status_code }}</span>
+            <span class="event-category">{{ event.category }}</span>
+            {% if event.rule_id %}
+              <span class="event-rule t-mono t-dim">regla {{ event.rule_id }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% set sev = event.severity | lower %}
+            <span class="sev-badge sev-badge-{{ sev }}">{{ sev }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="padding:48px 0;text-align:center;color:var(--text-muted)">
+    <i class="bi bi-shield-check" style="font-size:36px;display:block;margin-bottom:12px;color:var(--c-success)"></i>
+    <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">Sin eventos registrados</p>
+    <p style="font-size:12px;margin:0">
+      {% if severity or action or domain or ip or date_from or date_to %}El filtro activo no tiene resultados.
+      {% else %}El WAF no ha registrado eventos aún.{% endif %}
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Paginación ───────────────────────────────────────────────────────── #}
+{% if total_pages > 1 %}
+<div class="events-pager">
+  {% if page > 1 %}
+  <a class="btn btn-outline-secondary btn-sm"
+     href="{{ url_for('proxy.events_list', page=page-1, severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+     hx-get="{{ url_for('proxy.events_list', page=page-1, severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+     hx-target="#events-results" hx-push-url="true">
+    <i class="bi bi-chevron-left me-1"></i>Anterior
+  </a>
+  {% else %}
+  <button class="btn btn-outline-secondary btn-sm" disabled>
+    <i class="bi bi-chevron-left me-1"></i>Anterior
+  </button>
+  {% endif %}
+
+  <span class="events-pager-info">
+    Página {{ page }} / {{ total_pages }}&nbsp;&nbsp;·&nbsp;&nbsp;{{ "{:,}".format(total) }} eventos
+  </span>
+
+  {% if page < total_pages %}
+  <a class="btn btn-outline-secondary btn-sm"
+     href="{{ url_for('proxy.events_list', page=page+1, severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+     hx-get="{{ url_for('proxy.events_list', page=page+1, severity=severity or None, action=action or None, domain=domain or None, ip=ip or None, date_from=date_from or None, date_to=date_to or None) }}"
+     hx-target="#events-results" hx-push-url="true">
+    Siguiente<i class="bi bi-chevron-right ms-1"></i>
+  </a>
+  {% else %}
+  <button class="btn btn-outline-secondary btn-sm" disabled>
+    Siguiente<i class="bi bi-chevron-right ms-1"></i>
+  </button>
+  {% endif %}
+</div>
+{% endif %}

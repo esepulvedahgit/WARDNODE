@@ -4,10 +4,11 @@ import hmac as _hmac_mod
 import json as _json
 import os
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from urllib.parse import quote as _url_quote
 
 from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for, Response
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 
 from app.audit.helpers import log_audit
 from app.auth.decorators import roles_required
@@ -197,6 +198,9 @@ def dashboard():
 # Tope máximo de filas para el export CSV (evita OOM en tablas grandes)
 _MAX_EXPORT_ROWS = 50_000
 
+# Eventos por página en la vista paginada
+_EVENTS_PER_PAGE = 50
+
 
 def _parse_event_date(s: str):
     """Parsea una fecha en formato YYYY-MM-DD; devuelve None si inválida."""
@@ -247,11 +251,20 @@ def events_list():
     ip        = request.args.get("ip", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to   = request.args.get("date_to", "").strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
 
-    events = _build_filtered_events_query(request.args).limit(500).all()
+    # Query paginada con todos los filtros activos.
+    full_q      = _build_filtered_events_query(request.args)
+    total       = full_q.count()
+    total_pages = max(1, ceil(total / _EVENTS_PER_PAGE))
+    page        = min(page, total_pages)
+    events      = full_q.offset((page - 1) * _EVENTS_PER_PAGE).limit(_EVENTS_PER_PAGE).all()
 
     # Contadores coherentes con los filtros de dominio/IP/fechas (sin filtro sev/acción).
-    base_args = {k: v for k, v in request.args.items() if k not in ("severity", "action")}
+    base_args = {k: v for k, v in request.args.items() if k not in ("severity", "action", "page")}
 
     def _apply_base(q):
         """Aplica solo filtros de dominio, IP y fechas para contar por severidad/acción."""
@@ -275,24 +288,29 @@ def events_list():
     counts["block"]  = _apply_base(AttackEvent.query).filter(AttackEvent.action == "block").count()
     counts["detect"] = _apply_base(AttackEvent.query).filter(AttackEvent.action == "detect").count()
 
+    # IPs únicas bajo filtros de dominio/IP/fechas (sin sev/acción).
+    unique_ips = _apply_base(
+        db.session.query(func.count(distinct(AttackEvent.source_ip)))
+    ).scalar() or 0
+
     # Dominios distintos que tienen eventos (para el desplegable de filtro).
     domains = [
         row[0] for row in
         db.session.query(AttackEvent.domain).distinct().order_by(AttackEvent.domain).all()
     ]
 
-    return render_template(
-        "proxy/events.html",
-        events=events,
-        severity=severity,
-        action=action,
-        domain=domain,
-        ip=ip,
-        date_from=date_from,
-        date_to=date_to,
-        domains=domains,
-        counts=counts,
+    ctx = dict(
+        events=events, severity=severity, action=action,
+        domain=domain, ip=ip, date_from=date_from, date_to=date_to,
+        domains=domains, counts=counts, unique_ips=unique_ips,
+        page=page, total=total, total_pages=total_pages, per_page=_EVENTS_PER_PAGE,
     )
+
+    # Respuesta parcial para swaps HTMX (solo la región de resultados).
+    if request.headers.get("HX-Request"):
+        return render_template("proxy/_events_results.html", **ctx)
+
+    return render_template("proxy/events.html", **ctx)
 
 
 @bp.get("/events/export.csv")
