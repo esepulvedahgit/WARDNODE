@@ -167,6 +167,14 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'ml' %}active{% endif %}"
+              id="tab-ml-btn" data-bs-toggle="pill" data-bs-target="#tab-ml"
+              type="button" role="tab" aria-controls="tab-ml"
+              aria-selected="{{ 'true' if active_tab == 'ml' else 'false' }}">
+        <i class="bi bi-cpu me-1"></i>Ajuste ML
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link {% if active_tab == 'alerts' %}active{% endif %}"
               id="tab-alerts-btn" data-bs-toggle="pill" data-bs-target="#tab-alerts"
               type="button" role="tab" aria-controls="tab-alerts"
@@ -331,7 +339,7 @@
             </span>
           </div>
           <div class="card-panel-body">
-            <p class="text-secondary small mb-3">Parámetros del worker periódico de correlación.</p>
+            <p class="text-secondary small mb-3">Parámetros del worker periódico de correlación y de la detección heurística.</p>
 
             <div class="row g-3">
               <div class="col-md-4">
@@ -339,6 +347,7 @@
                 <input type="number" id="interval" name="interval"
                        class="form-control form-control-sm" min="1" max="60"
                        value="{{ interval }}">
+                <div class="form-text">Frecuencia del ciclo de correlación. Rango: 1–60 min.</div>
               </div>
               <div class="col-md-4">
                 <label class="form-label fw-medium" for="min_severity">Severidad mínima para análisis IA</label>
@@ -348,6 +357,57 @@
                   {% endfor %}
                 </select>
                 <div class="form-text">Incidentes por debajo de este umbral no se envían al LLM.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+            <p class="fw-medium mb-2" style="font-size:13px">Detección heurística</p>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="window_minutes">Ventana de detección (minutos)</label>
+                <input type="number" id="window_minutes" name="window_minutes"
+                       class="form-control form-control-sm" min="1" max="1440"
+                       value="{{ window_minutes }}">
+                <div class="form-text">Intervalo de tiempo analizado en cada ciclo. Rango: 1–1440 min.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="threshold_events">Umbral de eventos por IP</label>
+                <input type="number" id="threshold_events" name="threshold_events"
+                       class="form-control form-control-sm" min="1" max="100000"
+                       value="{{ threshold_events }}">
+                <div class="form-text">Mínimo de eventos que debe tener una IP para ser candidata. Rango: 1–100000.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+            <p class="fw-medium mb-2" style="font-size:13px">Umbrales de severidad</p>
+            <p class="text-secondary small mb-2">Se aplican al score combinado (heurístico + ML). Deben mantenerse en orden: medio &lt; alto &lt; crítico.</p>
+
+            <div class="row g-3">
+              <div class="col-md-3">
+                <label class="form-label fw-medium" for="sev_critical">
+                  <span class="badge bg-danger me-1" style="font-size:10px">CRÍTICO</span> Score ≥
+                </label>
+                <input type="number" id="sev_critical" name="sev_critical"
+                       class="form-control form-control-sm" min="1" max="100"
+                       value="{{ sev_critical }}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium" for="sev_high">
+                  <span class="badge bg-warning text-dark me-1" style="font-size:10px">ALTO</span> Score ≥
+                </label>
+                <input type="number" id="sev_high" name="sev_high"
+                       class="form-control form-control-sm" min="1" max="100"
+                       value="{{ sev_high }}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label fw-medium" for="sev_medium">
+                  <span class="badge bg-info text-dark me-1" style="font-size:10px">MEDIO</span> Score ≥
+                </label>
+                <input type="number" id="sev_medium" name="sev_medium"
+                       class="form-control form-control-sm" min="1" max="100"
+                       value="{{ sev_medium }}">
               </div>
             </div>
 
@@ -362,15 +422,7 @@
               <div class="form-text">
                 Score de anomalía complementario entrenado con el histórico local de eventos.
                 Las heurísticas son siempre el piso de severidad — el ML solo puede subirla.
-                Los datos nunca salen del servidor.
-              </div>
-            </div>
-            <div class="row g-3 mt-1">
-              <div class="col-md-4">
-                <label class="form-label fw-medium" for="ml_retrain_hours">Reentrenamiento (horas)</label>
-                <input type="number" id="ml_retrain_hours" name="ml_retrain_hours"
-                       class="form-control form-control-sm" min="1" max="168"
-                       value="{{ ml_retrain_hours }}">
+                Los datos nunca salen del servidor. Configura los parámetros del modelo en la pestaña <strong>Ajuste ML</strong>.
               </div>
             </div>
           </div>
@@ -438,7 +490,130 @@
     </div>
 
     {# ══════════════════════════════════════════════════════════════════ #}
-    {# PESTAÑA 3 — Alertas                                               #}
+    {# PESTAÑA 3 — Ajuste ML                                             #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'ml' %}show active{% endif %}"
+         id="tab-ml" role="tabpanel" aria-labelledby="tab-ml-btn">
+
+      {# — Estado actual del modelo (solo lectura) — #}
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <h2 class="card-panel-title">
+            <i class="bi bi-graph-up-arrow me-2" style="color:var(--accent)"></i>Estado del modelo
+          </h2>
+          {% if ml_model %}
+          <span class="soc-status-pill is-on">● Entrenado</span>
+          {% else %}
+          <span class="soc-status-pill is-off">○ Sin modelo</span>
+          {% endif %}
+        </div>
+        <div class="card-panel-body">
+          <div class="maint-status">
+            {% if ml_model %}
+              <i class="bi bi-check-circle-fill text-success me-1"></i>
+              Entrenado con <strong>{{ ml_model.n_samples }}</strong> muestras
+              · <span class="font-mono">{{ ml_model.trained_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>
+            {% else %}
+              <i class="bi bi-dash-circle text-secondary me-1"></i>
+              Sin modelo entrenado — los incidentes usan solo score heurístico
+            {% endif %}
+          </div>
+          <div class="mt-2">
+            <form method="post" action="{{ url_for('soc.ml_train') }}"
+                  class="d-inline" x-data="{s:false}" @submit="s=true">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-primary btn-sm" :disabled="s">
+                <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                      role="status" aria-hidden="true"></span>
+                <i class="bi bi-cpu me-1" x-show="!s"></i>
+                <span x-text="s ? 'Entrenando…' : 'Entrenar ahora'"></span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {# — Parámetros de entrenamiento e hiperparámetros — #}
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            class="mt-4" x-data="{s:false}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="ml_tuning">
+
+        <div class="card-panel">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-cpu me-2" style="color:var(--accent)"></i>Ajuste del modelo IsolationForest
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              Cambiar estos parámetros invalida el modelo actual — se reentrena automáticamente
+              en el próximo ciclo del worker o al pulsar <strong>Entrenar ahora</strong>.
+            </p>
+
+            <p class="fw-medium mb-2" style="font-size:13px">Entrenamiento</p>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_retrain_hours">Reentrenamiento automático (horas)</label>
+                <input type="number" id="ml_retrain_hours" name="ml_retrain_hours"
+                       class="form-control form-control-sm" min="1" max="168"
+                       value="{{ ml_retrain_hours }}">
+                <div class="form-text">Cada cuántas horas el worker reentrenará el modelo. Rango: 1–168 h.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_lookback_days">Histórico de entrenamiento (días)</label>
+                <input type="number" id="ml_lookback_days" name="ml_lookback_days"
+                       class="form-control form-control-sm" min="1" max="90"
+                       value="{{ ml_lookback_days }}">
+                <div class="form-text">Ventana de AttackEvent usada para construir la matriz. Rango: 1–90 días.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_min_samples">Mínimo de muestras para entrenar</label>
+                <input type="number" id="ml_min_samples" name="ml_min_samples"
+                       class="form-control form-control-sm" min="10" max="10000"
+                       value="{{ ml_min_samples }}">
+                <div class="form-text">Si hay menos agregados por IP/hora, no se entrena. Rango: 10–10000.</div>
+              </div>
+            </div>
+
+            <hr class="section-divider">
+            <p class="fw-medium mb-2" style="font-size:13px">Hiperparámetros</p>
+
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_n_estimators">Nº de árboles (n_estimators)</label>
+                <input type="number" id="ml_n_estimators" name="ml_n_estimators"
+                       class="form-control form-control-sm" min="50" max="500"
+                       value="{{ ml_n_estimators }}">
+                <div class="form-text">Árboles del bosque de aislamiento. Más = mayor precisión, más lento. Rango: 50–500.</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-medium" for="ml_contamination">Contaminación (contamination)</label>
+                <input type="text" id="ml_contamination" name="ml_contamination"
+                       class="form-control form-control-sm font-mono"
+                       value="{{ ml_contamination }}" placeholder="auto">
+                <div class="form-text">
+                  Proporción esperada de anomalías: <code>auto</code> (recomendado)
+                  o un número entre <code>0.001</code> y <code>0.5</code>.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar ajuste ML'"></span>
+          </button>
+        </div>
+      </form>
+    </div>{# /tab-ml #}
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA 4 — Alertas                                               #}
     {# ══════════════════════════════════════════════════════════════════ #}
     <div class="tab-pane fade {% if active_tab == 'alerts' %}show active{% endif %}"
          id="tab-alerts" role="tabpanel" aria-labelledby="tab-alerts-btn">
@@ -536,7 +711,7 @@
     </div>
 
     {# ══════════════════════════════════════════════════════════════════ #}
-    {# PESTAÑA 4 — Reporte diario                                        #}
+    {# PESTAÑA 5 — Reporte diario                                        #}
     {# ══════════════════════════════════════════════════════════════════ #}
     <div class="tab-pane fade {% if active_tab == 'daily_report' %}show active{% endif %}"
          id="tab-daily" role="tabpanel" aria-labelledby="tab-daily-btn">
@@ -600,7 +775,7 @@
     </div>
 
     {# ══════════════════════════════════════════════════════════════════ #}
-    {# PESTAÑA 5 — Mantenimiento                                         #}
+    {# PESTAÑA 6 — Mantenimiento                                         #}
     {# ══════════════════════════════════════════════════════════════════ #}
     <div class="tab-pane fade {% if active_tab == 'mantenimiento' %}show active{% endif %}"
          id="tab-maint" role="tabpanel" aria-labelledby="tab-maint-btn">

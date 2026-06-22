@@ -54,6 +54,31 @@ FEATURES = [
 _cache: dict = {"row_id": None, "model": None, "score_min": 0.0, "score_max": 0.0}
 
 
+def _cfg_int(key: str, default: int, lo: int, hi: int) -> int:
+    """Lee una clave de AppConfig como int con clamp [lo, hi] y fallback al default."""
+    try:
+        return max(lo, min(hi, int(AppConfig.get(key) or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cfg_contamination() -> "str | float":
+    """Lee soc_ml_contamination desde AppConfig.
+
+    Devuelve "auto" o un float en (0.0, 0.5]. Valor inválido → "auto".
+    """
+    raw = (AppConfig.get("soc_ml_contamination") or "auto").strip().lower()
+    if raw == "auto":
+        return "auto"
+    try:
+        val = float(raw)
+        if 0.0 < val <= 0.5:
+            return val
+    except (TypeError, ValueError):
+        pass
+    return "auto"
+
+
 def _bucket_expr():
     """Expresión SQL portable de bucket horario (PostgreSQL / SQLite)."""
     if db.engine.dialect.name == "postgresql":
@@ -63,7 +88,9 @@ def _bucket_expr():
 
 def build_training_matrix() -> list[list[float]]:
     """Matriz de features agregada por (source_ip, hora) — últimos N días."""
-    since = datetime.now(timezone.utc) - timedelta(days=TRAIN_LOOKBACK_DAYS)
+    since = datetime.now(timezone.utc) - timedelta(
+        days=_cfg_int("soc_ml_lookback_days", TRAIN_LOOKBACK_DAYS, 1, 90)
+    )
     bucket = _bucket_expr()
     rows = (
         db.session.query(
@@ -107,13 +134,16 @@ def train_model() -> tuple[bool, str]:
 
     try:
         matrix = build_training_matrix()
-        if len(matrix) < MIN_TRAIN_SAMPLES:
+        min_samples = _cfg_int("soc_ml_min_samples", MIN_TRAIN_SAMPLES, 10, 10_000)
+        if len(matrix) < min_samples:
             return False, (
-                f"histórico insuficiente ({len(matrix)}/{MIN_TRAIN_SAMPLES} muestras)"
+                f"histórico insuficiente ({len(matrix)}/{min_samples} muestras)"
             )
 
         model = IsolationForest(
-            n_estimators=100, contamination="auto", random_state=42
+            n_estimators=_cfg_int("soc_ml_n_estimators", 100, 50, 500),
+            contamination=_cfg_contamination(),
+            random_state=42,
         )
         model.fit(matrix)
 

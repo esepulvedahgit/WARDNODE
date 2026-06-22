@@ -158,11 +158,57 @@ def _save_detection(changed: list[str]) -> bool:
         AppConfig.set("soc_worker_interval_min", str(interval))
         changed.append("interval")
 
+    try:
+        window = max(1, min(1440, int(request.form.get("window_minutes", "15"))))
+    except (TypeError, ValueError):
+        window = 15
+    if str(window) != (AppConfig.get("soc_window_minutes") or "15"):
+        AppConfig.set("soc_window_minutes", str(window))
+        changed.append("window_minutes")
+
+    try:
+        threshold = max(1, min(100_000, int(request.form.get("threshold_events", "20"))))
+    except (TypeError, ValueError):
+        threshold = 20
+    if str(threshold) != (AppConfig.get("soc_threshold_events") or "20"):
+        AppConfig.set("soc_threshold_events", str(threshold))
+        changed.append("threshold_events")
+
+    # Umbrales de severidad — se validan en conjunto: si el orden resulta
+    # incoherente tras guardar, detect.severity_for_score cae a defaults.
+    try:
+        sev_crit = max(1, min(100, int(request.form.get("sev_critical", "80"))))
+    except (TypeError, ValueError):
+        sev_crit = 80
+    if str(sev_crit) != (AppConfig.get("soc_sev_critical") or "80"):
+        AppConfig.set("soc_sev_critical", str(sev_crit))
+        changed.append("sev_critical")
+
+    try:
+        sev_high = max(1, min(100, int(request.form.get("sev_high", "60"))))
+    except (TypeError, ValueError):
+        sev_high = 60
+    if str(sev_high) != (AppConfig.get("soc_sev_high") or "60"):
+        AppConfig.set("soc_sev_high", str(sev_high))
+        changed.append("sev_high")
+
+    try:
+        sev_med = max(1, min(100, int(request.form.get("sev_medium", "40"))))
+    except (TypeError, ValueError):
+        sev_med = 40
+    if str(sev_med) != (AppConfig.get("soc_sev_medium") or "40"):
+        AppConfig.set("soc_sev_medium", str(sev_med))
+        changed.append("sev_medium")
+
     ml_enabled = "1" if request.form.get("ml_enabled") else "0"
     if ml_enabled != (AppConfig.get("soc_ml_enabled") or "0"):
         AppConfig.set("soc_ml_enabled", ml_enabled)
         changed.append("ml_enabled")
 
+    return True
+
+
+def _save_ml_tuning(changed: list[str]) -> bool:
     try:
         ml_retrain = max(1, min(168, int(request.form.get("ml_retrain_hours", "24"))))
     except (TypeError, ValueError):
@@ -170,6 +216,43 @@ def _save_detection(changed: list[str]) -> bool:
     if str(ml_retrain) != (AppConfig.get("soc_ml_retrain_hours") or "24"):
         AppConfig.set("soc_ml_retrain_hours", str(ml_retrain))
         changed.append("ml_retrain_hours")
+
+    try:
+        lookback = max(1, min(90, int(request.form.get("ml_lookback_days", "14"))))
+    except (TypeError, ValueError):
+        lookback = 14
+    if str(lookback) != (AppConfig.get("soc_ml_lookback_days") or "14"):
+        AppConfig.set("soc_ml_lookback_days", str(lookback))
+        changed.append("ml_lookback_days")
+
+    try:
+        min_samp = max(10, min(10_000, int(request.form.get("ml_min_samples", "100"))))
+    except (TypeError, ValueError):
+        min_samp = 100
+    if str(min_samp) != (AppConfig.get("soc_ml_min_samples") or "100"):
+        AppConfig.set("soc_ml_min_samples", str(min_samp))
+        changed.append("ml_min_samples")
+
+    try:
+        n_est = max(50, min(500, int(request.form.get("ml_n_estimators", "100"))))
+    except (TypeError, ValueError):
+        n_est = 100
+    if str(n_est) != (AppConfig.get("soc_ml_n_estimators") or "100"):
+        AppConfig.set("soc_ml_n_estimators", str(n_est))
+        changed.append("ml_n_estimators")
+
+    # contamination: "auto" o float (0.0, 0.5]
+    raw_cont = (request.form.get("ml_contamination") or "auto").strip().lower()
+    if raw_cont != "auto":
+        try:
+            val = float(raw_cont)
+            if not (0.0 < val <= 0.5):
+                raw_cont = "auto"
+        except (TypeError, ValueError):
+            raw_cont = "auto"
+    if raw_cont != (AppConfig.get("soc_ml_contamination") or "auto"):
+        AppConfig.set("soc_ml_contamination", raw_cont)
+        changed.append("ml_contamination")
 
     return True
 
@@ -205,13 +288,14 @@ _SAVE_HANDLERS = {
     "threat_intel": _save_threat_intel,
     "alerts": _save_alerts,
     "detection": _save_detection,
+    "ml_tuning": _save_ml_tuning,
     "daily_report": _save_daily_report,
 }
 
 # Secciones cuyo formulario vive en una pestaña con id distinto al `section`.
 # Sin este mapeo el redirect aterriza en ?tab=llm / ?tab=threat_intel, que no
 # coincide con ningún tab-pane, dejando el contenido vacío.
-_SECTION_TO_TAB = {"llm": "ia", "threat_intel": "detection"}
+_SECTION_TO_TAB = {"llm": "ia", "threat_intel": "detection", "ml_tuning": "ml"}
 
 
 def _soc_required():
@@ -613,8 +697,17 @@ def config():
         alert_email_to=AppConfig.get("soc_alert_email_to") or "",
         alert_telegram_chat_id=AppConfig.get("soc_alert_telegram_chat_id") or "",
         alert_cooldown=AppConfig.get("soc_alert_cooldown_min") or "60",
+        window_minutes=AppConfig.get("soc_window_minutes") or "15",
+        threshold_events=AppConfig.get("soc_threshold_events") or "20",
+        sev_critical=AppConfig.get("soc_sev_critical") or "80",
+        sev_high=AppConfig.get("soc_sev_high") or "60",
+        sev_medium=AppConfig.get("soc_sev_medium") or "40",
         ml_enabled=AppConfig.get("soc_ml_enabled") == "1",
         ml_retrain_hours=AppConfig.get("soc_ml_retrain_hours") or "24",
+        ml_lookback_days=AppConfig.get("soc_ml_lookback_days") or "14",
+        ml_min_samples=AppConfig.get("soc_ml_min_samples") or "100",
+        ml_n_estimators=AppConfig.get("soc_ml_n_estimators") or "100",
+        ml_contamination=AppConfig.get("soc_ml_contamination") or "auto",
         ml_model=SocMlModel.query.order_by(SocMlModel.id.desc()).first(),
         daily_report_enabled=AppConfig.get("soc_daily_report_enabled") == "1",
         daily_report_email_to=AppConfig.get("soc_daily_report_email_to") or "",
