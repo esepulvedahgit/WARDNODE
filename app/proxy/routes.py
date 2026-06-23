@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from math import ceil
 from urllib.parse import quote as _url_quote
 
-from flask import abort, current_app, flash, jsonify, redirect, render_template, request, url_for, Response
+from flask import abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for, Response
 from sqlalchemy import distinct, func
 
 from app.audit.helpers import log_audit
@@ -18,6 +18,7 @@ from app.models import (
     AttackEvent,
     CustomModSecurityRule,
     GeoBlocklistEntry,
+    ModSecRawLog,
     ROLE_ADMIN,
     ROLE_OPERATOR,
     ROLE_READER,
@@ -51,6 +52,11 @@ from app.proxy.security_headers import (
 from app.proxy.custom_rules import validate_custom_rule
 from app.proxy.geoip import download_geoip_db, geoip_db_status, get_country_code, read_maxmind_credentials
 from app.proxy.geoip_blocklist import write_blocklist_conf, reload_nginx, COUNTRY_NAMES
+from app.proxy.rawlog_service import (
+    list_log_archives,
+    resolve_log_archive_path,
+    prune_and_archive,
+)
 
 
 _RESERVED_PORTS = {22, 80, 443, 5000}
@@ -200,6 +206,9 @@ _MAX_EXPORT_ROWS = 50_000
 
 # Eventos por página en la vista paginada
 _EVENTS_PER_PAGE = 50
+
+# Logs crudos ModSecurity por página en la vista paginada
+_LOGS_PER_PAGE = 100
 
 
 def _ip_prefix_filter(q, ip: str):
@@ -1624,3 +1633,172 @@ def _bounded_int(field_name: str, minimum: int, maximum: int) -> int | None:
         flash(f"{field_name} debe estar entre {minimum} y {maximum}.", "danger")
         return None
     return value
+
+
+# ── Raw ModSecurity log viewer ────────────────────────────────────────────────
+
+
+def _logs_search_filter(q, frase: str):
+    """Filtra ModSecRawLog por frase en raw_json (ILIKE, escapando metacaracteres).
+
+    Cubre IP, rule_id y mensaje porque todos viven en el JSON crudo.
+    No usa índice — aceptable con retención 30 días + LIMIT.
+    """
+    esc = frase.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return q.filter(ModSecRawLog.raw_json.ilike(f"%{esc}%", escape="\\"))
+
+
+@bp.get("/logs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def logs_list():
+    q_param = request.args.get("q", "").strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+
+    query = ModSecRawLog.query.order_by(ModSecRawLog.created_at.desc())
+    if q_param:
+        query = _logs_search_filter(query, q_param)
+
+    total = query.count()
+    total_pages = max(1, ceil(total / _LOGS_PER_PAGE))
+    page = min(page, total_pages)
+    offset = (page - 1) * _LOGS_PER_PAGE
+    rows = query.limit(_LOGS_PER_PAGE).offset(offset).all()
+
+    config_data = {
+        "retention_days": AppConfig.get("modsec_rawlog_retention_days") or "30",
+        "backup_before_prune": AppConfig.get("modsec_rawlog_backup_before_prune") or "0",
+        "zip_password_set": bool(AppConfig.get("modsec_rawlog_zip_password")),
+    }
+
+    ctx = dict(rows=rows, page=page, total_pages=total_pages, total=total, q=q_param)
+
+    if request.headers.get("HX-Request"):
+        return render_template("proxy/_logs_results.html", **ctx)
+
+    return render_template(
+        "proxy/logs.html",
+        **ctx,
+        archives=list_log_archives(),
+        config_data=config_data,
+    )
+
+
+@bp.post("/logs/config")
+@roles_required(ROLE_ADMIN)
+def logs_config_save():
+    from app.encryption import EncryptionNotConfigured, encrypt_secret
+
+    # retention_days — debe ser entero > 0
+    raw_days = request.form.get("retention_days", "").strip()
+    try:
+        days = int(raw_days)
+        if days <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        flash("La retención debe ser un entero mayor que 0.", "danger")
+        return redirect(url_for("proxy.logs_list"))
+
+    # zip_password — calcular máscara y verificar disponibilidad de cifrado
+    # ANTES de tocar la DB (P8: fail-fast si WARDNODE_SECRET_KEY no está configurada)
+    raw_pwd = request.form.get("zip_password", "")
+    current_enc = AppConfig.get("modsec_rawlog_zip_password")
+    current_masked = ""
+    if current_enc:
+        try:
+            from app.encryption import decrypt_secret
+            current_plain = decrypt_secret(current_enc) or ""
+            current_masked = "*" * max(8, len(current_plain))
+        except Exception:
+            current_masked = ""
+
+    zip_password_changed = bool(raw_pwd and raw_pwd != current_masked)
+    if zip_password_changed and not current_app.config.get("WARDNODE_SECRET_KEY"):
+        flash("WARDNODE_SECRET_KEY no configurada; no se pueden guardar secretos.", "danger")
+        return redirect(url_for("proxy.logs_list"))
+
+    AppConfig.set("modsec_rawlog_retention_days", str(days))
+
+    # backup_before_prune — checkbox
+    backup_flag = "1" if request.form.get("backup_before_prune") else "0"
+    AppConfig.set("modsec_rawlog_backup_before_prune", backup_flag)
+
+    if zip_password_changed:
+        try:
+            AppConfig.set("modsec_rawlog_zip_password", encrypt_secret(raw_pwd), encrypted=True)
+        except EncryptionNotConfigured:
+            flash("WARDNODE_SECRET_KEY no configurada; no se pueden guardar secretos.", "danger")
+            return redirect(url_for("proxy.logs_list"))
+
+    db.session.commit()
+    log_audit(
+        "rawlog.config_update",
+        resource_type="rawlog_config",
+        status="success",
+    )
+
+    if request.headers.get("HX-Request"):
+        flash("Configuración de logs guardada.", "success")
+        from flask import make_response
+        resp = make_response(redirect(url_for("proxy.logs_list")))
+        resp.headers["HX-Trigger"] = "rawlog-config-saved"
+        return resp
+
+    flash("Configuración de logs guardada.", "success")
+    return redirect(url_for("proxy.logs_list"))
+
+
+@bp.get("/logs/archives/download/<name>")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("10 per minute")
+def archive_download(name):
+    try:
+        path = resolve_log_archive_path(name)
+    except ValueError:
+        flash("Nombre de archive inválido.", "danger")
+        return redirect(url_for("proxy.logs_list"))
+    except FileNotFoundError:
+        from flask import abort as _abort
+        _abort(404)
+
+    log_audit(
+        "rawlog.archive_download",
+        resource_type="rawlog_archive",
+        resource_name=name,
+    )
+    return send_file(path, as_attachment=True, download_name=name, mimetype="application/zip")
+
+
+@bp.post("/logs/prune-now")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("5 per hour")
+def rawlog_prune_now():
+    result = prune_and_archive(datetime.now(timezone.utc))
+
+    if result["skipped_reason"]:
+        flash(
+            f"La poda fue omitida: {result['skipped_reason']}. "
+            "Revisa la configuración de password del archive.",
+            "warning",
+        )
+    else:
+        flash(
+            f"Poda completada: {result['deleted_rows']} fila(s) eliminada(s).",
+            "success",
+        )
+
+    log_audit(
+        "rawlog.prune_now",
+        resource_type="rawlog",
+        status="success" if not result["skipped_reason"] else "failure",
+        detail={
+            "deleted_rows": result["deleted_rows"],
+            "archived_rows": result["archived_rows"],
+            "archive_file": result["archive_file"],
+            "skipped_reason": result["skipped_reason"],
+        },
+    )
+
+    return redirect(url_for("proxy.logs_list"))

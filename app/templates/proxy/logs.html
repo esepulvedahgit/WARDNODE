@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Log ModSecurity – WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a class="bc-link" href="{{ url_for('proxy.dashboard') }}">Proxy</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Log ModSecurity</span>
+{% endblock %}
+
+{% block content %}
+<div class="events-page">
+
+  {# ── Header ──────────────────────────────────────────────────────────── #}
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+    <div>
+      <h1 class="h3 mb-1">Log ModSecurity</h1>
+      <p class="text-secondary mb-0 small">
+        Audit log crudo en tiempo real — todos los eventos, sin filtrado.
+      </p>
+    </div>
+  </div>
+
+  {# ── Panel principal ────────────────────────────────────────────────── #}
+  <div class="card-panel events-panel" hx-indicator="#logs-loading">
+    <div id="logs-loading" class="events-loading htmx-indicator"></div>
+
+    {# Buscador ─────────────────────────────────────────────────────────── #}
+    <div class="events-panel-sec" style="padding:12px 16px">
+      <form id="log-search-form"
+            hx-get="{{ url_for('proxy.logs_list') }}"
+            hx-target="#logs-results"
+            hx-push-url="true"
+            hx-trigger="submit, keyup[key=='Enter'] from:input[name='q']">
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="text"
+                 id="log-search-input"
+                 name="q"
+                 value="{{ q or '' }}"
+                 class="form-control"
+                 placeholder="Buscar… IP, rule_id, texto en el JSON"
+                 hx-get="{{ url_for('proxy.logs_list') }}"
+                 hx-target="#logs-results"
+                 hx-push-url="true"
+                 hx-trigger="keyup changed delay:600ms"
+                 autocomplete="off">
+          <button class="btn btn-outline-secondary" type="submit">Buscar</button>
+          {% if q %}
+          <a class="btn btn-outline-danger"
+             href="{{ url_for('proxy.logs_list') }}"
+             hx-get="{{ url_for('proxy.logs_list') }}"
+             hx-target="#logs-results"
+             hx-push-url="true"
+             title="Limpiar búsqueda">
+            <i class="bi bi-x-lg"></i>
+          </a>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+
+    {# Región de resultados (parcial — auto-refresca si no hay búsqueda activa) #}
+    <div id="logs-results">
+      {% include "proxy/_logs_results.html" %}
+    </div>
+  </div>
+
+  {# ── Panel de Retención y respaldo ──────────────────────────────────── #}
+  <div class="card mt-4">
+    <div class="card-header d-flex align-items-center gap-2">
+      <i class="bi bi-sliders2"></i>
+      <h5 class="mb-0">Retención y respaldo del Log</h5>
+    </div>
+    <div class="card-body">
+      <form hx-post="{{ url_for('proxy.logs_config_save') }}"
+            hx-target="#config-flash"
+            hx-swap="innerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label" for="retention_days">Retención (días)</label>
+            <input type="number"
+                   id="retention_days"
+                   name="retention_days"
+                   min="1" max="365"
+                   value="{{ config_data.retention_days }}"
+                   class="form-control">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="zip_password">Contraseña de respaldo (ZIP AES-256)</label>
+            <input type="password"
+                   id="zip_password"
+                   name="zip_password"
+                   class="form-control"
+                   placeholder="{% if config_data.zip_password_set %}••••••••{% else %}Sin contraseña{% endif %}"
+                   autocomplete="new-password">
+            {% if config_data.zip_password_set %}
+            <div class="form-text text-success">
+              <i class="bi bi-check-circle me-1"></i>Contraseña configurada
+            </div>
+            {% endif %}
+          </div>
+          <div class="col-md-3">
+            <div class="form-check mb-2">
+              <input type="checkbox"
+                     name="backup_before_prune"
+                     id="backup_before_prune"
+                     class="form-check-input"
+                     {% if config_data.backup_before_prune == "1" %}checked{% endif %}>
+              <label class="form-check-label" for="backup_before_prune">
+                Archivar antes de podar
+              </label>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="bi bi-save me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+      </form>
+      <div id="config-flash" class="mt-2"></div>
+
+      <hr>
+      <div class="d-flex align-items-center gap-3">
+        <form hx-post="{{ url_for('proxy.rawlog_prune_now') }}"
+              hx-confirm="¿Ejecutar prune ahora? Se archivarán y borrarán los logs antiguos según la retención configurada."
+              hx-target="#config-flash"
+              hx-swap="innerHTML">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline-warning btn-sm">
+            <i class="bi bi-scissors me-1"></i>Archivar y podar ahora
+          </button>
+        </form>
+        <span class="text-muted small">
+          Ejecuta el prune manualmente fuera del ciclo automático.
+        </span>
+      </div>
+    </div>
+  </div>
+
+  {# ── Panel de Respaldos existentes ──────────────────────────────────── #}
+  {% if archives %}
+  <div class="card mt-3">
+    <div class="card-header d-flex align-items-center gap-2">
+      <i class="bi bi-archive"></i>
+      <h5 class="mb-0">Respaldos de Log</h5>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Archivo</th>
+              <th style="width:110px">Tamaño</th>
+              <th style="width:160px">Fecha</th>
+              <th style="width:110px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for arc in archives %}
+            <tr>
+              <td class="font-monospace small">{{ arc.name }}</td>
+              <td class="small">{{ (arc.size_bytes / 1024 / 1024) | round(2) }} MB</td>
+              <td class="small text-nowrap">
+                {% if arc.mtime %}{{ arc.mtime.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
+              </td>
+              <td>
+                <a href="{{ url_for('proxy.archive_download', name=arc.name) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                  <i class="bi bi-download me-1"></i>Descargar
+                </a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

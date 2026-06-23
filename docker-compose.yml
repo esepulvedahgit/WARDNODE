@@ -21,6 +21,7 @@ services:
       - ${WARDNODE_PROJECT_DIR:-/home/esepulvedah/wardnode}:${WARDNODE_PROJECT_DIR:-/home/esepulvedah/wardnode}:ro
       - modsecurity_logs:/var/log/modsec:ro
       - backups:/app/data/backups
+      - log-archives:/app/data/log-archives
       - letsencrypt:/etc/letsencrypt:ro
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
@@ -236,6 +237,7 @@ volumes:
   prometheus_data:
   crowdsec-config:
   crowdsec-data:
+  log-archives:
 
 networks:
   wardnode_internal:

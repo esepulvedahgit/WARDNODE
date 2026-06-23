@@ -1,6 +1,6 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
-  "description": "Explorador de logs ModSecurity en vivo (fuente: Loki). Útil para inspeccionar reglas disparadas, IPs de origen y el log crudo. Para cifras oficiales de eventos WAF ver «WardNode – WAF Analytics» (PostgreSQL).",
+  "description": "Detalle forense WAF: registro evento-por-evento (PostgreSQL — completo, coincide con /proxy) + cola raw en vivo (Loki). Para analítica agregada ver «WardNode – WAF Analytics».",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -19,50 +19,69 @@
   ],
   "panels": [
     {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "description": "Tendencia temporal de eventos por severidad (fuente: Loki). Las severidades se extraen de messages[0] de cada línea de auditoría; líneas sin severidad parseable no aparecen en las series de severidad pero sí en «Total WAF».",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 15, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
-      "id": 5,
-      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "description": "Registro completo de eventos WAF desde PostgreSQL. Coincide exactamente con /proxy/. Filtra por IP, path o rule_id con el buscador superior.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Hora"},   "properties": [{"id": "custom.width", "value": 160}, {"id": "unit", "value": "dateTimeAsLocal"}]},
+          {"matcher": {"id": "byName", "options": "IP"},     "properties": [{"id": "custom.width", "value": 120}]},
+          {"matcher": {"id": "byName", "options": "País"},   "properties": [{"id": "custom.width", "value": 50}]},
+          {"matcher": {"id": "byName", "options": "Host"},   "properties": [{"id": "custom.width", "value": 160}]},
+          {"matcher": {"id": "byName", "options": "Status"}, "properties": [{"id": "custom.width", "value": 60}]},
+          {"matcher": {"id": "byName", "options": "Regla"},  "properties": [{"id": "custom.width", "value": 80}]},
+          {"matcher": {"id": "byName", "options": "Sev"},    "properties": [
+            {"id": "custom.width", "value": 80},
+            {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "basic"}},
+            {"id": "mappings", "value": [{"type": "value", "options": {
+              "critical": {"color": "#F2495C", "index": 0},
+              "high":     {"color": "#FF9830", "index": 1},
+              "medium":   {"color": "#FADE2A", "index": 2},
+              "low":      {"color": "#73BF69", "index": 3}
+            }}]}
+          ]},
+          {"matcher": {"id": "byName", "options": "Acción"}, "properties": [
+            {"id": "custom.width", "value": 80},
+            {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "basic"}},
+            {"id": "mappings", "value": [{"type": "value", "options": {
+              "block":  {"color": "#F2495C", "index": 0},
+              "detect": {"color": "#5794F2", "index": 1}
+            }}]}
+          ]}
+        ]
+      },
+      "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Hora"}]
+      },
       "targets": [
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"}[$__interval]))", "legendFormat": "Total WAF (Loki)", "queryType": "range", "refId": "A"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} | json sev=\"transaction.messages[0].details.severity\" | sev=~\"[0-2]\" [$__interval]))", "legendFormat": "CRITICAL", "queryType": "range", "refId": "B"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} | json sev=\"transaction.messages[0].details.severity\" | sev=\"3\" [$__interval]))", "legendFormat": "ERROR (high)", "queryType": "range", "refId": "C"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"modsecurity\"} | json sev=\"transaction.messages[0].details.severity\" | sev=\"4\" [$__interval]))", "legendFormat": "WARNING (medium)", "queryType": "range", "refId": "D"}
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS \"Hora\", source_ip AS \"IP\", country_code AS \"País\", domain AS \"Host\", method || ' ' || path AS \"Request\", status_code AS \"Status\", rule_id AS \"Regla\", severity AS \"Sev\", action AS \"Acción\", message AS \"Mensaje ModSecurity\" FROM attack_event WHERE $__timeFilter(created_at) AND ('${search}' = '' OR source_ip ILIKE '%${search}%' OR path ILIKE '%${search}%' OR rule_id::text = '${search}') ORDER BY created_at DESC LIMIT 500",
+          "format": "table",
+          "refId": "A"
+        }
       ],
-      "title": "Eventos WAF por severidad en el tiempo (Loki)",
-      "type": "timeseries"
+      "title": "Eventos WAF — registro completo (PostgreSQL)",
+      "type": "table"
     },
     {
       "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "id": 6,
-      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (rule) (count_over_time({job=\"modsecurity\"} | json rule=\"transaction.messages[0].details.ruleId\" | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{rule}}", "queryType": "instant", "refId": "A"}],
-      "title": "Top reglas ModSecurity disparadas",
-      "type": "table",
-      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "id": 7,
-      "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (src) (count_over_time({job=\"modsecurity\"} | json src=\"transaction.client_ip\" | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{src}}", "queryType": "instant", "refId": "A"}],
-      "title": "Top IPs de origen",
-      "type": "table",
-      "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
-    },
-    {
-      "datasource": {"type": "loki", "uid": "wardnode-loki"},
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 16},
+      "description": "Cola raw de audit logs ModSecurity en vivo (Loki, best-effort). Puede mostrar menos eventos que la tabla superior — es esperado; Loki es best-effort. Para el registro completo y fiel usa la tabla PostgreSQL de arriba.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 14},
       "id": 8,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": true, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"modsecurity\"} |= \"$search\"", "legendFormat": "", "queryType": "range", "refId": "A"}],
-      "title": "Audit logs de ModSecurity (raw)",
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"modsecurity\"} |= \"${search}\"", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "title": "Audit logs raw ModSecurity (Loki — cola en vivo, best-effort)",
       "type": "logs"
     }
   ],
@@ -86,5 +105,5 @@
   "timezone": "browser",
   "title": "WardNode – ModSecurity WAF",
   "uid": "wardnode-modsecurity-waf",
-  "version": 4
+  "version": 5
 }

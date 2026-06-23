@@ -28,6 +28,7 @@ services:
       - obs_grafana_provisioning:/tmp/obs/grafana_provisioning
       - modsecurity_logs:/var/log/modsec:ro
       - backups:/app/data/backups
+      - log-archives:/app/data/log-archives
       - letsencrypt:/etc/letsencrypt:ro
     group_add:
       - "1500"  # grupo wardnode del host — acceso al socket Unix del agente WF
@@ -173,9 +174,9 @@ services:
     restart: unless-stopped
     profiles:
       - obs
+    env_file: .env.prod        # carga GF_SECURITY_ADMIN_PASSWORD directamente, sin interpolación
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Define GRAFANA_ADMIN_PASSWORD en .env.prod}"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/obs/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
@@ -326,6 +327,7 @@ volumes:
   obs_grafana_provisioning:
   crowdsec-config:
   crowdsec-data:
+  log-archives:
 
 networks:
   wardnode_internal:

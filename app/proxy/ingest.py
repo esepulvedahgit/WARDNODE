@@ -10,6 +10,8 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_PROXY_CONTAINER = "wardnode-proxy"
 
+_RAW_JSON_MAX_BYTES = 64 * 1024  # 64 KB — cap por registro
+
 _SEVERITY_MAP = {
     # Texto (ModSecurity v2 / fixtures de tests)
     "EMERGENCY": "critical", "ALERT": "critical", "CRITICAL": "critical",
@@ -126,11 +128,14 @@ def _categorize(messages: list) -> str:
     return _category_from_rule_ids(rule_ids) or "unknown"
 
 
-def _parse_line(line: str) -> dict | None:
-    try:
-        data = json.loads(line.strip())
-    except (json.JSONDecodeError, ValueError):
-        return None
+def _parse_line(line_or_dict: str | dict) -> dict | None:
+    if isinstance(line_or_dict, dict):
+        data = line_or_dict
+    else:
+        try:
+            data = json.loads(line_or_dict.strip())
+        except (json.JSONDecodeError, ValueError):
+            return None
 
     txn = data.get("transaction", {})
     if not txn:
@@ -177,7 +182,7 @@ def _parse_line(line: str) -> dict | None:
     }
 
 
-def _process_line(app, line: str) -> None:
+def _process_line(app, line: str | dict) -> None:
     parsed = _parse_line(line)
     if not parsed:
         return
@@ -222,6 +227,58 @@ def _process_line(app, line: str) -> None:
             raise
 
 
+def _store_raw_log(app, raw_dict: dict) -> None:
+    """Persiste el JSON crudo de ModSecurity en modsec_raw_log.
+
+    Usa su propia transacción; dedup silencioso por transaction_id.
+    raw_dict es el dict ya parseado (no la string).
+    """
+    with app.app_context():
+        from sqlalchemy.exc import IntegrityError
+        from app.extensions import db
+        from app.models import ModSecRawLog
+
+        transaction_id = raw_dict.get("transaction", {}).get("id")
+        source_ip = raw_dict.get("transaction", {}).get("client_ip")
+        rule_id = raw_dict.get("messages", [{}])[0].get("details", {}).get("ruleId")
+
+        # P1: sin transaction_id no podemos deduplicar — descartar silenciosamente
+        if transaction_id is None:
+            return
+
+        # P7: cap raw_json a 64 KB para evitar acumulación de payloads enormes
+        raw_json_str = json.dumps(raw_dict, ensure_ascii=False)
+        if len(raw_json_str.encode("utf-8")) > _RAW_JSON_MAX_BYTES:
+            log.debug(
+                "ingest: raw log truncated (>%d bytes), storing header only",
+                _RAW_JSON_MAX_BYTES,
+            )
+            raw_json_str = json.dumps(
+                {
+                    "transaction": raw_dict.get("transaction", {}),
+                    "client_ip": raw_dict.get("client_ip"),
+                    "messages": raw_dict.get("messages", [])[:1],
+                    "_truncated": True,
+                },
+                ensure_ascii=False,
+            )
+
+        entry = ModSecRawLog(
+            transaction_id=transaction_id,
+            source_ip=source_ip,
+            rule_id=str(rule_id) if rule_id is not None else None,
+            raw_json=raw_json_str,
+        )
+        db.session.add(entry)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+        except Exception as exc:
+            db.session.rollback()
+            log.warning("ingest: error storing raw log: %s", exc)
+
+
 def _docker_log_loop(app, container_name: str) -> None:
     import docker
     import docker.errors
@@ -239,7 +296,15 @@ def _docker_log_loop(app, container_name: str) -> None:
                 if not line.startswith("{"):
                     continue
                 try:
-                    _process_line(app, line)
+                    raw_dict = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                try:
+                    _store_raw_log(app, raw_dict)
+                except Exception as exc:
+                    log.warning("ingest: error storing raw log (unhandled): %s", exc)
+                try:
+                    _process_line(app, raw_dict)
                 except Exception as exc:
                     log.warning("ingest: error processing line: %s", exc)
 

@@ -39,6 +39,10 @@
            href="{{ url_for('proxy.events_list') }}">
           <i class="bi bi-bell-fill"></i><span>Eventos</span>
         </a>
+        <a class="nav-link-item {% if request.endpoint == 'proxy.logs_list' %}active{% endif %}"
+           href="{{ url_for('proxy.logs_list') }}">
+          <i class="bi bi-journal-text"></i><span>Log</span>
+        </a>
       </div>
 
       <div class="nav-group">

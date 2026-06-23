@@ -1,0 +1,131 @@
+{# Parcial retornado por HX-Request o incluido en la página completa.
+   Variables esperadas: rows, page, total_pages, total, q
+   Auto-refresh (every 2s) solo cuando no hay búsqueda activa y estamos en la pág. 1. #}
+<div id="logs-results"
+     {% if not q and page == 1 %}
+     hx-get="{{ url_for('proxy.logs_list') }}"
+     hx-trigger="every 2s"
+     hx-target="#logs-results"
+     hx-swap="outerHTML"
+     {% endif %}>
+
+  {# ── Barra de estado ─────────────────────────────────────────────────── #}
+  <div class="events-panel-sec d-flex justify-content-between align-items-center"
+       style="padding:8px 16px">
+    <span class="text-muted small">
+      <strong>{{ "{:,}".format(total) }}</strong>
+      línea{{ 's' if total != 1 else '' }}
+      {% if q %}
+        &nbsp;·&nbsp;buscando <code>{{ q | e }}</code>
+      {% endif %}
+      {% if not q and page == 1 %}
+        <span class="badge bg-success ms-2">
+          <i class="bi bi-circle-fill" style="font-size:0.55em;vertical-align:middle"></i>
+          EN VIVO
+        </span>
+      {% endif %}
+    </span>
+    {% if total_pages > 1 %}
+    <span class="text-muted small">Pág. {{ page }}/{{ total_pages }}</span>
+    {% endif %}
+  </div>
+
+  {# ── Tabla de líneas crudas ────────────────────────────────────────── #}
+  {% if rows %}
+  <div class="events-panel-sec events-panel-table">
+    <div class="table-responsive">
+      <table class="data-table table table-sm table-hover font-monospace small align-middle">
+        <thead class="table-dark">
+          <tr>
+            <th style="width:160px">Hora</th>
+            <th style="width:130px">IP origen</th>
+            <th style="width:90px">Rule ID</th>
+            <th>Raw JSON</th>
+            <th style="width:50px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr x-data="{ open: false }">
+            <td class="text-nowrap t-mono t-dim">
+              {{ row.created_at.strftime('%Y-%m-%d') }}<br>
+              <span style="font-size:11px">{{ row.created_at.strftime('%H:%M:%S') }}</span>
+            </td>
+            <td class="t-mono">{{ row.source_ip or '—' }}</td>
+            <td class="t-mono">{{ row.rule_id or '—' }}</td>
+            <td style="max-width:420px;overflow:hidden">
+              <div x-show="!open" class="text-truncate" style="max-width:420px">
+                {{ row.raw_json[:220] }}{% if row.raw_json | length > 220 %}&hellip;{% endif %}
+              </div>
+              <pre x-show="open"
+                   x-cloak
+                   class="mb-0 small bg-dark text-light p-2 rounded"
+                   style="white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto">{{ row.raw_json | e }}</pre>
+            </td>
+            <td>
+              <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                      @click="open = !open"
+                      :title="open ? 'Colapsar' : 'Expandir JSON completo'"
+                      type="button">
+                <i :class="open ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="events-panel-sec" style="padding:48px 0;text-align:center;color:var(--text-muted)">
+    <i class="bi bi-journal-text"
+       style="font-size:36px;display:block;margin-bottom:12px;color:var(--c-success, #198754)"></i>
+    <p style="font-size:14px;margin-bottom:4px;font-weight:600;color:var(--text-secondary)">
+      {% if q %}Sin resultados para <code>{{ q | e }}</code>
+      {% else %}No hay líneas de log todavía{% endif %}
+    </p>
+    <p style="font-size:12px;margin:0;color:var(--text-muted)">
+      {% if q %}Prueba con otra búsqueda o limpia el filtro.
+      {% else %}El hilo ingest publicará filas cuando el proxy genere eventos ModSecurity.{% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  {# ── Paginador ───────────────────────────────────────────────────────── #}
+  {% if total_pages > 1 %}
+  <div class="events-pager">
+    {% if page > 1 %}
+    <a class="btn btn-outline-secondary btn-sm"
+       href="{{ url_for('proxy.logs_list', page=page-1) }}{% if q %}&q={{ q | urlencode }}{% endif %}"
+       hx-get="{{ url_for('proxy.logs_list', page=page-1) }}{% if q %}&q={{ q | urlencode }}{% endif %}"
+       hx-target="#logs-results"
+       hx-push-url="true">
+      <i class="bi bi-chevron-left me-1"></i>Anterior
+    </a>
+    {% else %}
+    <button class="btn btn-outline-secondary btn-sm" disabled>
+      <i class="bi bi-chevron-left me-1"></i>Anterior
+    </button>
+    {% endif %}
+
+    <span class="events-pager-info">
+      Página {{ page }} / {{ total_pages }}&nbsp;&nbsp;·&nbsp;&nbsp;{{ "{:,}".format(total) }} líneas
+    </span>
+
+    {% if page < total_pages %}
+    <a class="btn btn-outline-secondary btn-sm"
+       href="{{ url_for('proxy.logs_list', page=page+1) }}{% if q %}&q={{ q | urlencode }}{% endif %}"
+       hx-get="{{ url_for('proxy.logs_list', page=page+1) }}{% if q %}&q={{ q | urlencode }}{% endif %}"
+       hx-target="#logs-results"
+       hx-push-url="true">
+      Siguiente<i class="bi bi-chevron-right ms-1"></i>
+    </a>
+    {% else %}
+    <button class="btn btn-outline-secondary btn-sm" disabled>
+      Siguiente<i class="bi bi-chevron-right ms-1"></i>
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>

@@ -266,6 +266,28 @@ class AttackEvent(db.Model, TimestampMixin):
     site = db.relationship("Site", back_populates="attack_events")
 
 
+class ModSecRawLog(db.Model, TimestampMixin):
+    """Registro crudo de eventos ModSecurity tal como llegan del hilo ingest.
+
+    Un registro por transacción ModSecurity (transaction_id único).
+    raw_json almacena el JSON completo del audit log para consulta posterior
+    sin necesidad de re-parsear desde Docker logs.
+    """
+
+    __tablename__ = "modsec_raw_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    transaction_id = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    source_ip = db.Column(db.String(80), nullable=True)
+    rule_id = db.Column(db.String(80), nullable=True)
+    raw_json = db.Column(db.Text, nullable=False)
+
+    __table_args__ = (
+        db.Index("ix_modsec_raw_log_created_at", "created_at"),
+        db.Index("ix_modsec_raw_log_source_ip", "source_ip"),
+    )
+
+
 class GeoBlocklistEntry(db.Model, TimestampMixin):
     __table_args__ = (db.UniqueConstraint("site_id", "country_code", name="uq_geo_blocklist_site_country"),)
 

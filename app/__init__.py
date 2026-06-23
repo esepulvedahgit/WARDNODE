@@ -270,6 +270,9 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
     from app.backup.worker import start_backup_thread
     start_backup_thread(app)
 
+    from app.proxy.rawlog_worker import start_rawlog_thread
+    start_rawlog_thread(app)
+
     from app.modules.port_monitor import start_port_monitor_thread
     start_port_monitor_thread(app)
 
