@@ -1,6 +1,6 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
-  "description": "Vista general de seguridad. Eventos WAF: cifra oficial desde PostgreSQL (coincide con /proxy/). Para detalle de tráfico HTTP (4xx, 5xx, URIs) usa «WardNode – NGINX Logs». Para detalle forense evento-por-evento usa «WardNode – ModSecurity WAF».",
+  "description": "Vista general de seguridad. Eventos WAF: cifra oficial desde PostgreSQL (coincide con /proxy/). Para detalle de tráfico HTTP (4xx, 5xx, URIs) usa «WardNode – NGINX Logs». Para log crudo ModSecurity usa la pestaña Log de la consola (/proxy/logs).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -15,16 +15,6 @@
       "tooltip": "Tráfico HTTP — 4xx, 5xx, top URIs con error",
       "type": "link",
       "url": "/obs/d/wardnode-nginx-logs"
-    },
-    {
-      "icon": "external link",
-      "includeVars": false,
-      "keepTime": true,
-      "targetBlank": false,
-      "title": "ModSecurity WAF (detalle forense + logs raw)",
-      "tooltip": "Tabla evento-por-evento (PostgreSQL) y cola raw en vivo (Loki)",
-      "type": "link",
-      "url": "/obs/d/wardnode-modsecurity-waf"
     }
   ],
   "panels": [

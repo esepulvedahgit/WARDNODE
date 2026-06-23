@@ -80,6 +80,23 @@ loki.source.file "nginx_access" {
   forward_to = [loki.write.default.receiver]
 }
 
+// ── Logs: NGINX error log ─────────────────────────────────────────────────────
+// El proxy escribe /var/log/nginx/error.log (texto plano, no JSON).
+// Alloy lo ingiere crudo — los paneles del dashboard "NGINX Logs" lo muestran
+// como texto sin pipeline de parseo.
+
+local.file_match "nginx_error" {
+  path_targets = [{
+    "__path__" = "/var/log/nginx/error.log",
+    "job"      = "nginx_error",
+    "service"  = "nginx",
+  }]
+}
+
+loki.source.file "nginx_error" {
+  targets    = local.file_match.nginx_error.targets
+  forward_to = [loki.write.default.receiver]
+}
 
 // ── Logs: UFW firewall del host ───────────────────────────────────────────────
 // UFW registra en /var/log/kern.log cuando rsyslog no tiene una regla de

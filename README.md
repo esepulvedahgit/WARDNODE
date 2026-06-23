@@ -160,9 +160,9 @@ wardnode/
 │   ├── alloy/config.alloy        # Pipeline Alloy: ModSec + Nginx + UFW → Loki; métricas → Prometheus
 │   ├── grafana/provisioning/
 │   │   ├── datasources/          # loki.yaml, prometheus.yaml, postgres.yaml
-│   │   └── dashboards/           # 01-security-overview, 02-modsecurity-waf,
-│   │                             # 03-waf-analytics, 04-nginx-logs,
-│   │                             # 05-host-resources, 06-firewall-ufw
+│   │   └── dashboards/           # 01-security-overview, 03-waf-analytics,
+│   │                             # 04-nginx-logs, 05-host-resources, 06-firewall-ufw
+│   │                             # (log crudo ModSecurity → pestaña Log en /proxy/logs)
 │   ├── loki.yaml
 │   └── prometheus.yml
 │
@@ -262,15 +262,17 @@ UFW → kernel → /var/log/kern.log          ← Alloy lee aquí (fuente primar
 > En hosts ya inicializados con `logging low`, aplicar manualmente: `sudo ufw logging medium`
 
 ### WardNode OBS — Observabilidad
-Stack Grafana activado con `--profile obs`. 6 dashboards provisionados automáticamente:
+Stack Grafana activado con `--profile obs`. 5 dashboards provisionados automáticamente:
 
 | Dashboard | Datasource | Descripción |
 |---|---|---|
-| Security Overview | Loki | Resumen de eventos WAF en tiempo real |
-| ModSecurity WAF | Loki | Análisis de logs ModSecurity por patrón |
+| Security Overview | PostgreSQL + Loki | Resumen de eventos WAF y tendencia de tráfico HTTP |
 | WAF Analytics | **PostgreSQL** | KPIs, criticidad, top IPs/reglas desde `attack_event` |
 | Nginx Logs | Loki | Accesos y errores del proxy |
 | Host Resources | Prometheus | CPU, memoria, disco, red |
+| Firewall UFW | Loki | Eventos de bloqueo del firewall |
+
+> **Log crudo ModSecurity:** disponible en la consola en la pestaña **Log** (`/proxy/logs`). Polling en tiempo real, buscador por frase, detalle expandible y archivado cifrado opcional — sustituye al antiguo dashboard «WardNode – ModSecurity WAF».
 | Firewall UFW | Loki | Eventos `[UFW BLOCK]`/`[UFW ALLOW]`, top IPs y puertos |
 
 Grafana se sirve en `/obs/` con autenticación por proxy a la sesión Flask.

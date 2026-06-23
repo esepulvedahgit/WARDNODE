@@ -162,9 +162,10 @@ Fluent Bit has been removed; Alloy covers all log collection. `prometheus.export
 |-----------|-------------|------|
 | WAF Analytics (`03`) | PostgreSQL `attack_event` | Official WAF event counts — matches `/proxy/` exactly |
 | Security Overview (`01`) | PostgreSQL (WAF stat) + Loki (trends) | High-level security posture |
-| ModSecurity WAF (`02`) | Loki | Live log explorer and trend charts — **not** a count source |
 | NGINX Logs (`04`) | Loki | Authoritative HTTP 4xx/5xx, URIs, vhosts |
 | NGINX Metrics (`07`) | Loki | HTTP response code aggregates |
+
+> **Raw ModSecurity log** is now served by the console's **Log tab** (`/proxy/logs`) — live polling from PostgreSQL (`modsec_raw_log` table), phrase search, expandable detail, optional encrypted archive. Dashboard `02-modsecurity-waf.json` has been removed.
 
 Key invariant: **WAF event counts are always read from PostgreSQL** (`attack_event` table, 1 row = 1 deduplicated ModSecurity transaction). Loki counts raw log lines with best-effort retention (30 days) — the two numbers are not expected to match. Always refer users to WAF Analytics or `/proxy/` for official counts.
 

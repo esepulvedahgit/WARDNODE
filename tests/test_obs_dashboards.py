@@ -66,31 +66,6 @@ def test_waf_analytics_panel_types():
     assert types.count("table") == 3
 
 
-def test_existing_modsec_dashboard_structure():
-    """02-modsecurity-waf.json debe mantener uid original, tener tabla PostgreSQL y cola Loki."""
-    path = DASHBOARDS_DIR / "02-modsecurity-waf.json"
-    assert path.exists(), "Falta 02-modsecurity-waf.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["uid"] == "wardnode-modsecurity-waf"
-
-    # Recopila datasource uids usados en el dashboard
-    ds_uids = set()
-    for panel in data.get("panels", []):
-        for target in panel.get("targets", []):
-            ds = target.get("datasource", {})
-            uid = ds.get("uid")
-            if uid:
-                ds_uids.add(uid)
-
-    # El dashboard usa PostgreSQL (tabla forense) y Loki (cola raw en vivo)
-    assert "wardnode-postgres" in ds_uids, (
-        "El dashboard debe tener al menos un panel PostgreSQL (tabla forense)"
-    )
-    assert "wardnode-loki" in ds_uids, (
-        "El dashboard debe tener al menos un panel Loki (cola raw en vivo)"
-    )
-
-
 # ── Datasources ───────────────────────────────────────────────────────────────
 
 def test_all_datasource_yamls_are_valid():

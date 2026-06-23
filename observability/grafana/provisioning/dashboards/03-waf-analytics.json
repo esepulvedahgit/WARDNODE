@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Cifras oficiales de eventos WAF (PostgreSQL / attack_event). Los números coinciden exactamente con el panel /proxy/ de la consola WardNode, ya que ambos consultan la misma tabla. Para explorar logs crudos en vivo ver «WardNode – ModSecurity WAF» (Loki).",
+  "description": "Cifras oficiales de eventos WAF (PostgreSQL / attack_event). Los números coinciden exactamente con el panel /proxy/ de la consola WardNode, ya que ambos consultan la misma tabla. Para explorar logs crudos en vivo usa la pestaña Log de la consola (/proxy/logs).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
