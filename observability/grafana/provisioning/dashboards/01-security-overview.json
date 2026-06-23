@@ -1,6 +1,6 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
-  "description": "Vista general de seguridad. Eventos WAF: cifra oficial desde PostgreSQL (coincide con /proxy/). Para detalle de tráfico HTTP (4xx, 5xx, URIs) usa «WardNode – NGINX Logs». Para log crudo ModSecurity usa la pestaña Log de la consola (/proxy/logs).",
+  "description": "Postura de seguridad de alto nivel: salud del proxy WAF, incidentes SOC correlacionados y tendencia de eventos (PostgreSQL + Loki). Para conteos WAF detallados usa «WAF Analytics». Para tráfico HTTP usa «NGINX Logs». Para el log crudo ModSecurity usa la pestaña Log de la consola (/proxy/logs).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -19,22 +19,109 @@
   ],
   "panels": [
     {
+      "datasource": {"type": "prometheus", "uid": "wardnode-prometheus"},
+      "description": "Estado en tiempo real del proxy NGINX/ModSecurity (métrica nginx_up del exporter).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "index": 1, "text": "Caído"}, "1": {"color": "green", "index": 0, "text": "Activo"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 10,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "wardnode-prometheus"},
+          "expr": "nginx_up",
+          "instant": true,
+          "legendFormat": "Proxy WAF",
+          "refId": "A"
+        }
+      ],
+      "title": "Proxy WAF",
+      "type": "stat"
+    },
+    {
       "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
-      "description": "Total de transacciones WAF registradas en PostgreSQL (attack_event). Cifra oficial — coincide con /proxy/.",
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}, "overrides": []},
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "id": 1,
+      "description": "Incidentes SOC en estado «nuevo» (pendientes de revisión). Sin filtro temporal: todo lo pendiente cuenta.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 11,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [
         {
           "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
           "rawQuery": true,
-          "rawSql": "SELECT count(*) AS value FROM attack_event WHERE $__timeFilter(created_at)",
+          "rawSql": "SELECT count(*) AS value FROM soc_incident WHERE status = 'nuevo'",
           "format": "table",
           "refId": "A"
         }
       ],
-      "title": "Eventos WAF (último día)",
+      "title": "Incidentes abiertos",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "description": "Incidentes SOC de severidad critical o high con ventana de actividad en las últimas 24h.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 5}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 12,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM soc_incident WHERE $__timeFilter(window_end) AND severity IN ('critical','high')",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Críticos + High (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "description": "Incidentes SOC confirmados por un operador en las últimas 24h — indica actividad maliciosa real.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 13,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM soc_incident WHERE $__timeFilter(window_end) AND status = 'confirmado'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Confirmados (24h)",
       "type": "stat"
     },
     {
@@ -62,6 +149,44 @@
       ],
       "title": "Eventos de seguridad en el tiempo (WAF PostgreSQL + HTTP Loki)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+      "description": "Últimos 15 incidentes SOC correlacionados, ordenados por score de riesgo. Para detalle completo usa la consola (/soc/).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "window_end"}, "properties": [{"id": "displayName", "value": "Última actividad"}, {"id": "unit", "value": "dateTimeAsLocal"}, {"id": "custom.width", "value": 160}]},
+          {"matcher": {"id": "byName", "options": "source_ip"}, "properties": [{"id": "displayName", "value": "IP origen"}, {"id": "custom.width", "value": 130}]},
+          {"matcher": {"id": "byName", "options": "severity"}, "properties": [{"id": "displayName", "value": "Severidad"}, {"id": "custom.width", "value": 90}]},
+          {"matcher": {"id": "byName", "options": "score"}, "properties": [{"id": "displayName", "value": "Score"}, {"id": "unit", "value": "short"}, {"id": "custom.width", "value": 70}, {"id": "decimals", "value": 1}]},
+          {"matcher": {"id": "byName", "options": "status"}, "properties": [{"id": "displayName", "value": "Estado"}, {"id": "custom.width", "value": 100}]},
+          {"matcher": {"id": "byName", "options": "event_count"}, "properties": [{"id": "displayName", "value": "Eventos"}, {"id": "custom.width", "value": 70}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "id": 14,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Score"}]
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "wardnode-postgres"},
+          "rawQuery": true,
+          "rawSql": "SELECT window_end, source_ip, severity, score, status, event_count FROM soc_incident WHERE $__timeFilter(window_end) ORDER BY score DESC LIMIT 15",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "title": "Incidentes SOC recientes",
+      "type": "table"
     }
   ],
   "refresh": "30s",
@@ -73,5 +198,5 @@
   "timezone": "browser",
   "title": "WardNode – Security Overview",
   "uid": "wardnode-security-overview",
-  "version": 3
+  "version": 4
 }
