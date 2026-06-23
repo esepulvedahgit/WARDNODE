@@ -24,6 +24,7 @@ from app.models import (
     ROLE_READER,
     RuleCategory,
     Site,
+    WafRuleExclusion,
 )
 from app.proxy import bp
 from app.proxy.validators import is_valid_domain
@@ -49,7 +50,7 @@ from app.proxy.security_headers import (
     ensure_site_security_headers,
     validate_security_header,
 )
-from app.proxy.custom_rules import validate_custom_rule
+from app.proxy.custom_rules import validate_custom_rule, validate_rule_exclusion
 from app.proxy.geoip import download_geoip_db, geoip_db_status, get_country_code, read_maxmind_credentials
 from app.proxy.geoip_blocklist import write_blocklist_conf, reload_nginx, COUNTRY_NAMES
 from app.proxy.rawlog_service import (
@@ -1005,6 +1006,111 @@ def geo_blocklist_remove(site_id, code):
         flash(f"Nginx no recargado: {err or 'socket no disponible en modo local'}", "warning")
     flash(f"{name} eliminado de la lista de bloqueo.", "success")
     return redirect(url_for("proxy.site_detail", site_id=site_id))
+
+
+@bp.post("/sites/<int:site_id>/rule-exclusions")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def update_site_rule_exclusions(site_id):
+    """Añade una exclusión WAF por ID de regla CRS o actualiza el estado enabled de las existentes."""
+    site = Site.query.get_or_404(site_id)
+
+    # ── Actualizar estado enabled de exclusiones existentes ───────────────────
+    try:
+        enabled_ids = {int(v) for v in request.form.getlist("enabled_exclusion_ids")}
+        exclusion_ids = [int(v) for v in request.form.getlist("exclusion_ids")]
+    except ValueError:
+        flash("IDs de exclusiones inválidos.", "danger")
+        return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+    exclusions_by_id = {ex.id: ex for ex in site.rule_exclusions}
+    toggled = []
+    for ex_id in exclusion_ids:
+        ex = exclusions_by_id.get(ex_id)
+        if ex is None:
+            flash("Exclusión desconocida.", "danger")
+            return redirect(url_for("proxy.site_detail", site_id=site.id))
+        new_enabled = ex_id in enabled_ids
+        if ex.enabled != new_enabled:
+            ex.enabled = new_enabled
+            toggled.append(ex)
+
+    if toggled:
+        log_audit(
+            actor_email=current_user.email,
+            action="waf.rule_exclusion.toggle",
+            resource_type="site",
+            resource_name=site.domain,
+            severity="warning",
+            status="success",
+            detail=str({"toggled": [{"rule_id": e.rule_id, "enabled": e.enabled} for e in toggled]}),
+        )
+
+    # ── Alta de nueva exclusión ───────────────────────────────────────────────
+    new_id_raw = request.form.get("new_exclusion_rule_id", "").strip()
+    new_comment = request.form.get("new_exclusion_comment", "").strip()
+    if new_id_raw:
+        rule_id, errs = validate_rule_exclusion(new_id_raw, new_comment)
+        if errs:
+            for e in errs:
+                flash(e, "danger")
+            return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+        # Verificar duplicado antes de insertar (mensaje amigable antes del IntegrityError)
+        existing = WafRuleExclusion.query.filter_by(site_id=site.id, rule_id=rule_id).first()
+        if existing:
+            flash(
+                f"La regla {rule_id} ya tiene una excepción configurada para este sitio.",
+                "warning",
+            )
+            return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+        db.session.add(
+            WafRuleExclusion(
+                site=site,
+                rule_id=rule_id,
+                comment=new_comment[:200] if new_comment else None,
+                enabled=True,
+            )
+        )
+        log_audit(
+            actor_email=current_user.email,
+            action="waf.rule_exclusion.add",
+            resource_type="site",
+            resource_name=site.domain,
+            severity="warning",
+            status="success",
+            detail=str({"rule_id": rule_id, "comment": new_comment}),
+        )
+
+    db.session.commit()
+    _apply_nginx()
+    flash("Excepciones WAF actualizadas.", "success")
+    return redirect(url_for("proxy.site_detail", site_id=site.id))
+
+
+@bp.post("/sites/<int:site_id>/rule-exclusions/<int:exclusion_id>/remove")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("20 per minute")
+def remove_site_rule_exclusion(site_id, exclusion_id):
+    """Elimina una exclusión WAF por ID de regla CRS."""
+    site = Site.query.get_or_404(site_id)
+    ex = WafRuleExclusion.query.filter_by(id=exclusion_id, site_id=site.id).first_or_404()
+    rule_id = ex.rule_id
+    db.session.delete(ex)
+    db.session.commit()
+    _apply_nginx()
+    log_audit(
+        actor_email=current_user.email,
+        action="waf.rule_exclusion.remove",
+        resource_type="site",
+        resource_name=site.domain,
+        severity="warning",
+        status="success",
+        detail=str({"rule_id": rule_id}),
+    )
+    flash(f"Exclusión de la regla {rule_id} eliminada.", "success")
+    return redirect(url_for("proxy.site_detail", site_id=site.id))
 
 
 @bp.get("/settings")

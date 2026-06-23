@@ -10,6 +10,7 @@ from app.models import (
     RuleCategory,
     SecurityHeader,
     Site,
+    WafRuleExclusion,
 )
 from app.proxy.services import (
     clear_waf_events,
@@ -1719,3 +1720,189 @@ def test_save_console_site_edit_does_not_clear_events(client, login_as, app):
         assert AttackEvent.query.count() == 4, (
             "Editar el dominio de consola no debe borrar eventos existentes"
         )
+
+
+# ── Excepciones WAF por ID de regla CRS ───────────────────────────────────────
+
+
+def _create_site_for_exclusion(db, domain="exclusion.local"):
+    """Helper: crea un Site mínimo para tests de exclusión WAF."""
+    site = Site(
+        name="Exclusion Test",
+        domain=domain,
+        upstream_url="http://backend:8080",
+        waf_enabled=True,
+    )
+    db.session.add(site)
+    db.session.commit()
+    return site
+
+
+def test_waf_exclusion_renders_in_nginx_config(app, tmp_path):
+    """SecRuleRemoveById aparece en el .conf del sitio cuando hay una exclusión activa."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site = _create_site_for_exclusion(db)
+        ex = WafRuleExclusion(site=site, rule_id=942100, comment="falso positivo", enabled=True)
+        db.session.add(ex)
+        db.session.commit()
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    assert "SecRuleRemoveById 942100" in content
+
+
+def test_waf_exclusion_disabled_not_rendered(app, tmp_path):
+    """Una exclusión deshabilitada no aparece en el .conf."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site = _create_site_for_exclusion(db)
+        ex = WafRuleExclusion(site=site, rule_id=942100, comment="inactiva", enabled=False)
+        db.session.add(ex)
+        db.session.commit()
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    assert "SecRuleRemoveById 942100" not in content
+
+
+def test_waf_exclusion_isolated_per_site(app, tmp_path):
+    """La exclusión de un sitio NO aparece en el .conf de otro sitio."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site_a = _create_site_for_exclusion(db, domain="site-a.local")
+        site_b = _create_site_for_exclusion(db, domain="site-b.local")
+        ex = WafRuleExclusion(site=site_a, rule_id=942100, comment="solo A", enabled=True)
+        db.session.add(ex)
+        db.session.commit()
+
+        render_nginx_configs()
+
+    confs = sorted(tmp_path.glob("site-*.conf"))
+    assert len(confs) == 2
+    conf_a = next(c for c in confs if "site-a" in c.name).read_text(encoding="utf-8")
+    conf_b = next(c for c in confs if "site-b" in c.name).read_text(encoding="utf-8")
+    assert "SecRuleRemoveById 942100" in conf_a
+    assert "SecRuleRemoveById 942100" not in conf_b
+
+
+def test_waf_exclusion_add_via_http(client, login_as, app, tmp_path):
+    """Un operador puede añadir una exclusión WAF por ID vía POST."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+    login_as(ROLE_OPERATOR)
+
+    # Crear sitio
+    client.post(
+        "/proxy/sites",
+        data={"name": "Demo", "domain": "demo.local", "upstream_url": "http://demo:8080"},
+        follow_redirects=True,
+    )
+
+    resp = client.post(
+        "/proxy/sites/1/rule-exclusions",
+        data={"new_exclusion_rule_id": "942100", "new_exclusion_comment": "FP en token"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert "Excepciones WAF actualizadas" in resp.get_data(as_text=True)
+
+    with app.app_context():
+        ex = WafRuleExclusion.query.filter_by(site_id=1, rule_id=942100).first()
+        assert ex is not None
+        assert ex.enabled is True
+        assert ex.comment == "FP en token"
+
+
+def test_waf_exclusion_add_critical_rule_rejected(client, login_as):
+    """No se puede añadir una exclusión para una regla CRS crítica."""
+    login_as(ROLE_OPERATOR)
+    client.post(
+        "/proxy/sites",
+        data={"name": "Demo", "domain": "demo.local", "upstream_url": "http://demo:8080"},
+        follow_redirects=True,
+    )
+
+    resp = client.post(
+        "/proxy/sites/1/rule-exclusions",
+        data={"new_exclusion_rule_id": "949110", "new_exclusion_comment": ""},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert "crítica" in resp.get_data(as_text=True)
+
+    with client.application.app_context():
+        assert WafRuleExclusion.query.count() == 0
+
+
+def test_waf_exclusion_reader_cannot_add(client, login_as):
+    """Un reader recibe 403 al intentar añadir una exclusión WAF."""
+    login_as(ROLE_READER)
+    resp = client.post(
+        "/proxy/sites/1/rule-exclusions",
+        data={"new_exclusion_rule_id": "942100"},
+    )
+    assert resp.status_code == 403
+
+
+def test_waf_exclusion_remove_via_http(client, login_as, app, tmp_path):
+    """Un operador puede eliminar una exclusión existente."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+    login_as(ROLE_OPERATOR)
+
+    client.post(
+        "/proxy/sites",
+        data={"name": "Demo", "domain": "demo.local", "upstream_url": "http://demo:8080"},
+        follow_redirects=True,
+    )
+    # Añadir exclusión
+    client.post(
+        "/proxy/sites/1/rule-exclusions",
+        data={"new_exclusion_rule_id": "942100", "new_exclusion_comment": ""},
+        follow_redirects=True,
+    )
+    with app.app_context():
+        ex = WafRuleExclusion.query.first()
+        ex_id = ex.id
+
+    # Eliminar exclusión
+    resp = client.post(
+        f"/proxy/sites/1/rule-exclusions/{ex_id}/remove",
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert "eliminada" in resp.get_data(as_text=True)
+
+    with app.app_context():
+        assert WafRuleExclusion.query.count() == 0
+
+
+def test_waf_exclusion_duplicate_rejected(client, login_as, app, tmp_path):
+    """Añadir la misma regla dos veces muestra aviso sin duplicar."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+    login_as(ROLE_OPERATOR)
+
+    client.post(
+        "/proxy/sites",
+        data={"name": "Demo", "domain": "demo.local", "upstream_url": "http://demo:8080"},
+        follow_redirects=True,
+    )
+    for _ in range(2):
+        client.post(
+            "/proxy/sites/1/rule-exclusions",
+            data={"new_exclusion_rule_id": "942100", "new_exclusion_comment": ""},
+            follow_redirects=True,
+        )
+
+    with app.app_context():
+        assert WafRuleExclusion.query.count() == 1

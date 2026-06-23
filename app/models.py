@@ -154,6 +154,12 @@ class Site(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="GeoBlocklistEntry.country_name",
     )
+    rule_exclusions = db.relationship(
+        "WafRuleExclusion",
+        back_populates="site",
+        cascade="all, delete-orphan",
+        order_by="WafRuleExclusion.rule_id",
+    )
 
 
 class TrafficPolicy(db.Model, TimestampMixin):
@@ -239,6 +245,22 @@ class BotProtectionConfig(db.Model, TimestampMixin):
     enabled = db.Column(db.Boolean, default=False, nullable=False)
 
     site = db.relationship("Site", back_populates="bot_protection")
+
+
+class WafRuleExclusion(db.Model, TimestampMixin):
+    """Excepción WAF por ID de regla CRS. Genera SecRuleRemoveById dentro del server{} del sitio."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    site_id = db.Column(db.Integer, db.ForeignKey("site.id"), nullable=False)
+    rule_id = db.Column(db.Integer, nullable=False)
+    comment = db.Column(db.String(200), nullable=True)
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
+
+    site = db.relationship("Site", back_populates="rule_exclusions")
+
+    __table_args__ = (
+        db.UniqueConstraint("site_id", "rule_id", name="uq_site_rule_exclusion"),
+    )
 
 
 class AttackEvent(db.Model, TimestampMixin):

@@ -213,6 +213,81 @@ def test_proxy_pass_blocked_in_location_snippet():
     assert any("proxy_pass" in e for e in errors)
 
 
+# ── #9: Excepciones WAF por ID de regla CRS ──────────────────────────────────
+
+from app.proxy.custom_rules import validate_rule_exclusion
+
+
+def test_rule_exclusion_valid_crs_id():
+    rule_id, errors = validate_rule_exclusion("942100", "Falso positivo en token")
+    assert errors == []
+    assert rule_id == 942100
+
+
+def test_rule_exclusion_empty_id_rejected():
+    rule_id, errors = validate_rule_exclusion("", "")
+    assert rule_id is None
+    assert any("obligatorio" in e for e in errors)
+
+
+def test_rule_exclusion_non_integer_rejected():
+    rule_id, errors = validate_rule_exclusion("abc", "")
+    assert rule_id is None
+    assert any("entero" in e for e in errors)
+
+
+def test_rule_exclusion_non_integer_with_spaces_rejected():
+    rule_id, errors = validate_rule_exclusion("942100; rm -rf /", "")
+    assert rule_id is None
+    assert any("entero" in e for e in errors)
+
+
+def test_rule_exclusion_own_rule_range_rejected():
+    """IDs del rango 1M+ son reglas propias, no reglas CRS."""
+    rule_id, errors = validate_rule_exclusion("1000001", "")
+    assert rule_id is None
+    assert any("personalizadas" in e for e in errors)
+
+
+def test_rule_exclusion_below_crs_range_rejected():
+    rule_id, errors = validate_rule_exclusion("123", "")
+    assert rule_id is None
+    assert any("900000" in e for e in errors)
+
+
+def test_rule_exclusion_above_all_ranges_rejected():
+    rule_id, errors = validate_rule_exclusion("8000000", "")
+    assert rule_id is None
+    assert any("900000" in e or "1000000" in e for e in errors)
+
+
+def test_rule_exclusion_critical_rule_rejected():
+    """Las reglas de scoring/bloqueo no pueden excluirse."""
+    rule_id, errors = validate_rule_exclusion("949110", "")
+    assert rule_id is None
+    assert any("crítica" in e for e in errors)
+
+
+def test_rule_exclusion_critical_outbound_rejected():
+    rule_id, errors = validate_rule_exclusion("959100", "")
+    assert rule_id is None
+    assert any("crítica" in e for e in errors)
+
+
+def test_rule_exclusion_comment_too_long_rejected():
+    comment = "x" * 201
+    rule_id, errors = validate_rule_exclusion("942100", comment)
+    assert rule_id is None
+    assert any("200" in e for e in errors)
+
+
+def test_rule_exclusion_comment_max_length_accepted():
+    comment = "x" * 200
+    rule_id, errors = validate_rule_exclusion("942100", comment)
+    assert errors == []
+    assert rule_id == 942100
+
+
 def test_return_blocked_in_nginx_extra():
     errors = validate_nginx_extra_config("return 301 https://evil.com;", "")
     assert any("return" in e for e in errors)

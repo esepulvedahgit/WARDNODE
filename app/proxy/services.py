@@ -217,6 +217,7 @@ def _render_site_config(site: Site) -> str:
     disabled_rules = "\n".join(
         f'        SecRuleRemoveByTag "{tag}"' for tag in disabled_tags
     )
+    rule_exclusions = _render_rule_exclusions(site)
     custom_rules = _render_custom_rules(site)
 
     waf_state = "On" if site.waf_enabled else "DetectionOnly"
@@ -246,6 +247,7 @@ def _render_site_config(site: Site) -> str:
     modsecurity_rules '
         SecRuleEngine {waf_state}
 {disabled_rules}
+{rule_exclusions}
 {custom_rules}
     ';
 
@@ -307,6 +309,7 @@ def _render_site_config(site: Site) -> str:
     modsecurity_rules '
         SecRuleEngine {waf_state}
 {disabled_rules}
+{rule_exclusions}
 {custom_rules}
     ';
 
@@ -465,6 +468,16 @@ def _render_security_headers(site: Site) -> str:
         lines.append(
             f'    add_header {header.name} "{_escape_nginx_header_value(header.value)}"{always};'
         )
+    return "\n".join(lines)
+
+
+def _render_rule_exclusions(site: Site) -> str:
+    """Genera directivas SecRuleRemoveById para las exclusiones WAF activas del sitio."""
+    lines = []
+    for ex in site.rule_exclusions:
+        if not ex.enabled:
+            continue
+        lines.append(f"        SecRuleRemoveById {ex.rule_id}")
     return "\n".join(lines)
 
 
