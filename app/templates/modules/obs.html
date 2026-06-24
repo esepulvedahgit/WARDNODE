@@ -189,21 +189,21 @@
                 <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
                 <div>
                   <p style="font-size:12px;font-weight:600;margin:0">nginx / proxy</p>
-                  <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Fluent Bit → Loki</p>
+                  <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Alloy → Loki</p>
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
                 <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
                 <div>
                   <p style="font-size:12px;font-weight:600;margin:0">ModSecurity audit</p>
-                  <p style="font-size:11px;color:var(--text-muted);margin:0">JSON en volumen <code>modsecurity_logs</code> → Loki</p>
+                  <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Alloy → Loki (+ PostgreSQL vía ingest)</p>
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">
                 <i class="bi bi-check-circle-fill" style="color:#16a34a;flex-shrink:0"></i>
                 <div>
                   <p style="font-size:12px;font-weight:600;margin:0">Flask / consola</p>
-                  <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Fluent Bit → Loki</p>
+                  <p style="font-size:11px;color:var(--text-muted);margin:0">stdout Docker → Alloy → Loki</p>
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-subtle);border-radius:6px">

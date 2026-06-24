@@ -317,21 +317,23 @@
           {% endif %}
         </div>
 
-        {# Fluent-bit Syslog #}
+        {# Reenvío Syslog — reenviador DB nativo, solo visible si está habilitado #}
+        {% if service_states['syslog_enabled'] %}
         <div class="module-item">
           <div class="module-icon" style="background:#f0f9ff;color:#0369a1">
             <i class="bi bi-send-fill"></i>
           </div>
           <div class="module-info">
-            <span class="module-name">Fluent-bit Syslog</span>
-            <span class="module-version">wardnode-fluent-bit</span>
+            <span class="module-name">Reenvío Syslog</span>
+            <span class="module-version">WAF + Auditoría → RFC5424</span>
           </div>
-          {% if service_states['fluent-bit'] %}
-            <span class="badge-running">running</span>
+          {% if service_states['syslog_forwarder'] %}
+            <span class="badge-running">activo</span>
           {% else %}
-            <span class="badge-offline">offline</span>
+            <span class="badge-offline">en espera</span>
           {% endif %}
         </div>
+        {% endif %}
 
         {# CrowdSec — siempre visible; el badge indica running/offline #}
         <div class="module-item">

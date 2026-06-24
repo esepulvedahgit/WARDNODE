@@ -88,11 +88,11 @@ def _get_service_states() -> dict:
         "grafana":          "wardnode-grafana"             in running,
         "alloy":            "wardnode-alloy"               in running,
         "prometheus":       "wardnode-prometheus"          in running,
-        "fluent-bit":       "wardnode-fluent-bit"          in running,
         "nginx-exporter":   "wardnode-nginx-exporter"      in running,
         "crowdsec":         "wardnode-crowdsec"            in running,
         "crowdsec-bouncer": "wardnode-crowdsec-bouncer"    in running,
         "syslog_enabled":   AppConfig.get("syslog_enabled") == "1",
+        "syslog_forwarder": _syslog_forwarder_status(),
     }
 
 
@@ -1164,8 +1164,8 @@ def settings():
     syslog_port     = AppConfig.get("syslog_port") or "514"
     syslog_protocol = AppConfig.get("syslog_protocol") or "udp"
     syslog_facility = AppConfig.get("syslog_facility") or "local7"
-    syslog_sources  = (AppConfig.get("syslog_sources") or "nginx_access,modsecurity").split(",")
-    syslog_running  = _fluent_bit_status()
+    syslog_sources  = (AppConfig.get("syslog_sources") or "modsecurity,audit").split(",")
+    syslog_running  = _syslog_forwarder_status()
 
     # GeoIP: DB status + enrichment coverage (last 24h)
     db_path_str = current_app.config.get("GEOIP_DB_PATH", "")
@@ -1478,23 +1478,34 @@ def settings_save_syslog():
         flash("Puerto syslog inválido.", "danger")
         return redirect(url_for("proxy.settings"))
 
+    # Filtrar fuentes válidas (solo modsecurity y audit en el reenviador DB-based)
+    _VALID_SOURCES = {"modsecurity", "audit"}
+    filtered_sources = ",".join(s for s in sources.split(",") if s in _VALID_SOURCES)
+
     AppConfig.set("syslog_enabled",  enabled)
     AppConfig.set("syslog_host",     host)
     AppConfig.set("syslog_port",     port)
     AppConfig.set("syslog_protocol", protocol)
     AppConfig.set("syslog_facility", facility)
-    AppConfig.set("syslog_sources",  sources or "nginx_access,modsecurity")
+    AppConfig.set("syslog_sources",  filtered_sources or "modsecurity,audit")
 
-    if enabled == "1":
-        ok, err = _apply_syslog_config()
-        if not ok:
-            flash(f"Configuración guardada, pero error al aplicar en Fluent-bit: {err}", "warning")
-            return redirect(url_for("proxy.settings"))
-    else:
-        # Escribir config vacía y reiniciar — el contenedor sigue corriendo pero no reenvía nada
-        _write_fluent_bit_conf_and_restart(_FLUENT_BIT_CONF_NOOP)
+    from app.audit.helpers import log_audit
+    log_audit(
+        "settings.syslog_save",
+        resource_type="config",
+        resource_name="syslog",
+        severity="info" if enabled == "0" else "warning",
+        detail=__import__("json").dumps({
+            "enabled":  enabled,
+            "host":     host,
+            "port":     port,
+            "protocol": protocol,
+            "facility": facility,
+            "sources":  filtered_sources,
+        }),
+    )
 
-    flash("Configuración de syslog guardada.", "success")
+    flash("Configuración de syslog guardada. El reenviador aplicará los cambios en el próximo tick.", "success")
     return redirect(url_for("proxy.settings"))
 
 
@@ -1538,16 +1549,10 @@ def settings_syslog_test():
         return jsonify({"ok": False, "error": f"No se pudo resolver el host: {host}"})
 
     try:
-        t0 = time.monotonic()
-        if protocol == "tcp":
-            with socket.create_connection((host, port), timeout=3):
-                pass
-        else:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(2)
-            sock.sendto(b"<14>1 - wardnode - - - - WardNode connectivity test\n", (host, port))
-            sock.close()
-        ms = round((time.monotonic() - t0) * 1000)
+        from app.proxy.syslog_forwarder import SyslogSender
+        sender = SyslogSender(host, port, protocol)
+        ms = sender.send_test()
+        sender.close()
         return jsonify({"ok": True, "latency_ms": ms})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)})
@@ -1619,114 +1624,23 @@ def _apply_nginx() -> None:
         pass
 
 
-# ── Syslog / Fluent-bit helpers ──────────────────────────────────────────────
+# ── Syslog forwarder helpers ──────────────────────────────────────────────────
 
-from pathlib import Path as _Path
-_FLUENT_BIT_CONF_PATH = _Path("/app/generated/fluent-bit/fluent-bit.conf")
+def _syslog_forwarder_status() -> bool:
+    """Devuelve True si el reenviador syslog está habilitado y activo.
 
-_SYSLOG_SOURCE_INPUTS = {
-    "nginx_access": (
-        "[INPUT]\n"
-        "    Name              tail\n"
-        "    Path              /var/log/nginx/access.json\n"
-        "    Parser            json\n"
-        "    Tag               nginx.access\n"
-        "    DB                /tmp/fb_nginx_access.db\n"
-        "    Mem_Buf_Limit     5MB\n"
-        "    Refresh_Interval  5\n"
-    ),
-    "nginx_error": (
-        "[INPUT]\n"
-        "    Name              tail\n"
-        "    Path              /var/log/nginx/error.log\n"
-        "    Tag               nginx.error\n"
-        "    DB                /tmp/fb_nginx_error.db\n"
-        "    Mem_Buf_Limit     2MB\n"
-        "    Refresh_Interval  5\n"
-    ),
-    "modsecurity": (
-        "[INPUT]\n"
-        "    Name              tail\n"
-        "    Path              /var/log/modsec/modsec_audit.log\n"
-        "    Parser            json\n"
-        "    Tag               modsec.audit\n"
-        "    DB                /tmp/fb_modsec_audit.db\n"
-        "    Mem_Buf_Limit     5MB\n"
-        "    Skip_Long_Lines   On\n"
-        "    Refresh_Interval  5\n"
-    ),
-}
-
-
-def _generate_fluent_bit_conf(host: str, port: str, protocol: str, facility: str, sources: list[str]) -> str:
-    parts = [
-        "[SERVICE]\n"
-        "    Flush         5\n"
-        "    Daemon        Off\n"
-        "    Log_Level     warn\n",
-    ]
-    for src in sources:
-        block = _SYSLOG_SOURCE_INPUTS.get(src)
-        if block:
-            parts.append(block)
-    parts.append(
-        "[OUTPUT]\n"
-        "    Name             syslog\n"
-        f"    Host             {host}\n"
-        f"    Port             {port}\n"
-        f"    Mode             {protocol}\n"
-        "    Match            *\n"
-        "    Syslog_Format    rfc5424\n"
-        f"    Syslog_Facility  {facility}\n"
-        "    Syslog_Appname   wardnode\n"
-    )
-    return "\n".join(parts)
-
-
-def _fluent_bit_status() -> bool:
-    try:
-        import docker as docker_sdk
-        client = docker_sdk.from_env()
-        c = client.containers.get("wardnode-fluent-bit")
-        return c.status == "running"
-    except Exception:
-        return False
-
-
-_FLUENT_BIT_CONF_NOOP = "[SERVICE]\n    Flush 60\n    Daemon Off\n    Log_Level warn\n"
-
-
-def _apply_syslog_config() -> tuple[bool, str]:
+    'Activo' significa: enabled=1, host configurado, y el último envío
+    fue exitoso (syslog_last_error vacío y syslog_last_sent_at presente).
+    """
     from app.models import AppConfig
-
-    host     = AppConfig.get("syslog_host") or ""
-    port     = AppConfig.get("syslog_port") or "514"
-    protocol = AppConfig.get("syslog_protocol") or "udp"
-    facility = AppConfig.get("syslog_facility") or "local7"
-    sources  = (AppConfig.get("syslog_sources") or "nginx_access,modsecurity").split(",")
-
-    conf = _generate_fluent_bit_conf(host, port, protocol, facility, sources)
-    return _write_fluent_bit_conf_and_restart(conf)
-
-
-def _write_fluent_bit_conf_and_restart(conf: str) -> tuple[bool, str]:
-    try:
-        _FLUENT_BIT_CONF_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _FLUENT_BIT_CONF_PATH.write_text(conf)
-    except OSError as exc:
-        return False, f"No se pudo escribir la configuración de Fluent-bit: {exc}"
-
-    try:
-        import docker as docker_sdk
-        client = docker_sdk.from_env()
-        container = client.containers.get("wardnode-fluent-bit")
-        if container.status == "running":
-            container.restart(timeout=15)
-        else:
-            container.start()
-        return True, ""
-    except Exception as exc:
-        return False, str(exc)
+    if AppConfig.get("syslog_enabled") != "1":
+        return False
+    if not (AppConfig.get("syslog_host") or "").strip():
+        return False
+    # Si hay un error reciente el forwarder está configurado pero con fallos
+    last_error = (AppConfig.get("syslog_last_error") or "").strip()
+    last_sent  = (AppConfig.get("syslog_last_sent_at") or "").strip()
+    return bool(last_sent) and not last_error
 
 
 def _bounded_int(field_name: str, minimum: int, maximum: int) -> int | None:

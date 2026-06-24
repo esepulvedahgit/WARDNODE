@@ -97,9 +97,32 @@
     {% for svc in obs_services %}{{ svc_card(svc) }}{% endfor %}
     {% endif %}{# module_obs_enabled #}
 
-    {# Fluent-bit Syslog: solo visible cuando el reenvío syslog está activado #}
-    {% if syslog_enabled %}
-    {{ svc_card({ "key": "fluent-bit", "label": "Fluent-bit Syslog", "sub": "wardnode-fluent-bit", "icon": "bi-send-fill", "bg": "#f0f9ff", "color": "#0369a1" }) }}
+    {# Reenvío Syslog: indicador del forwarder DB-based (no es un contenedor Docker) #}
+    {% if states.syslog_enabled %}
+    <div class="col-sm-6 col-lg-4">
+      <div class="card-panel h-100">
+        <div class="card-panel-body" style="padding:20px">
+          <div style="display:flex;align-items:flex-start;gap:14px">
+            <div style="width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                        display:flex;align-items:center;justify-content:center;
+                        background:#f0f9ff;color:#0369a1">
+              <i class="bi bi-send-fill" style="font-size:18px"></i>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px">
+                <p style="font-size:14px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Reenvío Syslog</p>
+                {% if states.syslog_forwarder %}
+                  <span class="badge-running">activo</span>
+                {% else %}
+                  <span class="badge-offline">en espera</span>
+                {% endif %}
+              </div>
+              <p style="font-size:11px;color:var(--text-muted);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">reenviador DB nativo (WAF + auditoría)</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     {% endif %}{# syslog_enabled #}
 
     {# ── Módulo DDoS: tarjetas CrowdSec — solo si el módulo está activo ── #}

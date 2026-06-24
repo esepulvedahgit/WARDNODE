@@ -279,9 +279,10 @@
         {% endif %}
       </div>
       <p class="text-secondary mb-4" style="font-size:.85rem">
-        Reenvía logs de nginx y ModSecurity a un servidor syslog externo (SIEM, rsyslog, etc.).
-        Los logs se envían en formato rfc5424 con el cuerpo en JSON estructurado.
-        Funciona de forma independiente al módulo OBS.
+        Reenvía eventos WAF (ModSecurity) y de auditoría desde la base de datos a un servidor
+        syslog externo (SIEM, rsyslog, Wazuh, Graylog…) en formato RFC5424 con cuerpo JSON.
+        No requiere contenedores adicionales. Los logs de acceso/error nginx están disponibles
+        en el módulo OBS (Grafana/Loki).
       </p>
 
       <form method="post" action="{{ url_for('proxy.settings_save_syslog') }}" x-data="{s:false}" @submit="s=true">
@@ -321,30 +322,28 @@
           <label class="form-label fw-medium">Fuentes de logs</label>
           <div class="d-flex flex-wrap gap-3">
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="src_nginx_access"
-                     name="syslog_sources" value="nginx_access"
-                     {% if 'nginx_access' in syslog_sources %}checked{% endif %}>
-              <label class="form-check-label" for="src_nginx_access">
-                <i class="bi bi-arrow-left-right me-1 text-secondary"></i>Nginx Access Logs <span class="text-secondary" style="font-size:.8rem">(JSON)</span>
-              </label>
-            </div>
-            <div class="form-check">
               <input class="form-check-input" type="checkbox" id="src_modsecurity"
                      name="syslog_sources" value="modsecurity"
                      {% if 'modsecurity' in syslog_sources %}checked{% endif %}>
               <label class="form-check-label" for="src_modsecurity">
-                <i class="bi bi-shield-fill-exclamation me-1 text-secondary"></i>ModSecurity WAF Events <span class="text-secondary" style="font-size:.8rem">(JSON)</span>
+                <i class="bi bi-shield-fill-exclamation me-1 text-secondary"></i>Eventos WAF
+                <span class="text-secondary" style="font-size:.8rem">(modsec_raw_log — JSON crudo ModSecurity)</span>
               </label>
             </div>
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="src_nginx_error"
-                     name="syslog_sources" value="nginx_error"
-                     {% if 'nginx_error' in syslog_sources %}checked{% endif %}>
-              <label class="form-check-label" for="src_nginx_error">
-                <i class="bi bi-exclamation-triangle me-1 text-secondary"></i>Nginx Error Log
+              <input class="form-check-input" type="checkbox" id="src_audit"
+                     name="syslog_sources" value="audit"
+                     {% if 'audit' in syslog_sources %}checked{% endif %}>
+              <label class="form-check-label" for="src_audit">
+                <i class="bi bi-journal-text me-1 text-secondary"></i>Auditoría
+                <span class="text-secondary" style="font-size:.8rem">(audit_log — acciones de admin y sistema)</span>
               </label>
             </div>
           </div>
+          <p class="text-secondary mt-2 mb-0" style="font-size:.8rem">
+            <i class="bi bi-info-circle me-1"></i>
+            Los logs de acceso/error de nginx están disponibles en el módulo OBS (Grafana/Loki).
+          </p>
         </div>
 
         <div class="form-check form-switch mb-4">
@@ -361,7 +360,7 @@
           <button type="submit" class="btn btn-sm btn-primary" :disabled="s">
             <span x-show="s" class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
             <i x-show="!s" class="bi bi-floppy-fill me-1"></i>
-            <span x-text="s ? 'Guardando…' : 'Guardar y aplicar'"></span>
+            <span x-text="s ? 'Guardando…' : 'Guardar configuración'"></span>
           </button>
 
           <div x-show="enabled" x-cloak style="display:contents">
