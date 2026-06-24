@@ -66,6 +66,41 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# Verificar que las variables obligatorias están definidas y no vacías en el env file.
+# Esto evita arrancar el stack con secretos en blanco o valores de ejemplo.
+_check_env_var() {
+  local var="$1"
+  local val
+  val=$(grep -E "^${var}=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"' ')
+  if [ -z "$val" ] || echo "$val" | grep -qiE "^(CAMBIAR|change-me|placeholder|YOUR_|TU_|<|>)"; then
+    echo "ERROR: '$var' no está definida o sigue con valor de ejemplo en '$ENV_FILE'." >&2
+    echo "       Edita el archivo antes de desplegar." >&2
+    return 1
+  fi
+}
+
+required_vars=(
+  SECRET_KEY
+  WARDNODE_SECRET_KEY
+  DATABASE_URL
+  POSTGRES_PASSWORD
+  GRAFANA_ADMIN_PASSWORD
+  GRAFANA_DB_USER
+  GRAFANA_DB_PASSWORD
+)
+
+echo "==> Verificando variables obligatorias en $ENV_FILE..."
+all_ok=true
+for var in "${required_vars[@]}"; do
+  if ! _check_env_var "$var"; then
+    all_ok=false
+  fi
+done
+if [ "$all_ok" != "true" ]; then
+  exit 1
+fi
+echo "    OK — todas las variables obligatorias están definidas."
+
 # ── [1/3] Cargar imágenes propias ─────────────────────────────────────────────
 echo "==> [1/3] Cargando imágenes propias desde tarballs (si están presentes)..."
 loaded=0
@@ -97,6 +132,8 @@ echo "  Consola: http://<ip-del-vps>:5000"
 echo "  Primera visita → /auth/setup para crear el administrador inicial."
 echo ""
 echo "  Alloy + Loki + Prometheus ya están corriendo (capturan logs desde ahora)."
+echo "  El console ejecuta automáticamente 'flask grafana-provision-ro' en cada"
+echo "  arranque — crea el rol PostgreSQL de solo-lectura para Grafana."
 echo "  Módulo OBS (Grafana): activar desde el panel cuando sea necesario."
 echo "  Módulo DDoS (CrowdSec): activar desde el panel cuando sea necesario."
 echo "  Las imágenes ya están en disco para activar módulos sin descargas."

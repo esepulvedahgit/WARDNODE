@@ -143,10 +143,11 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
       GF_AUTH_PROXY_WHITELIST: "172.30.0.10/32"
-      # Credenciales DB para el datasource PostgreSQL de Grafana
-      POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      # Credenciales DB para el datasource PostgreSQL de Grafana (rol read-only grafana_ro)
+      # En dev se usa el mismo rol 'app' como fallback — en prod apunta a grafana_ro
       POSTGRES_DB: ${POSTGRES_DB:-app}
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER:-app}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-app}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
