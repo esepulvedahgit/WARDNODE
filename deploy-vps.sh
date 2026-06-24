@@ -101,6 +101,13 @@ if [ "$all_ok" != "true" ]; then
 fi
 echo "    OK — todas las variables obligatorias están definidas."
 
+# Symlink .env → .env.prod para que cualquier `docker compose` manual en el VPS
+# funcione sin --env-file. (.env está en .gitignore — no se commitea.)
+if [ "$ENV_FILE" = ".env.prod" ] && [ ! -L ".env" ]; then
+  ln -sf .env.prod .env
+  echo "    Creado .env → .env.prod (alias para comandos manuales de docker compose)."
+fi
+
 # ── [1/3] Cargar imágenes propias ─────────────────────────────────────────────
 echo "==> [1/3] Cargando imágenes propias desde tarballs (si están presentes)..."
 loaded=0
