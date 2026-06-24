@@ -80,12 +80,16 @@ def test_modsec_raw_log_dedup_by_transaction_id(app):
 
 
 def test_store_raw_log_persists(app):
-    """_store_raw_log persiste una línea JSON cruda."""
+    """_store_raw_log persiste una línea JSON cruda (estructura real: messages
+    bajo transaction)."""
     from app.proxy.ingest import _store_raw_log
 
     raw = {
-        "transaction": {"id": "abc123", "client_ip": "1.2.3.4"},
-        "messages": [{"details": {"ruleId": "941100"}}],
+        "transaction": {
+            "id": "abc123",
+            "client_ip": "1.2.3.4",
+            "messages": [{"details": {"ruleId": "941100"}}],
+        },
     }
     _store_raw_log(app, raw)
 
@@ -94,6 +98,41 @@ def test_store_raw_log_persists(app):
         assert saved is not None
         assert saved.source_ip == "1.2.3.4"
         assert saved.rule_id == "941100"
+
+
+def test_store_raw_log_accepts_unique_id(app):
+    """ModSecurity v3 emite el id como transaction.unique_id — debe persistirse."""
+    from app.proxy.ingest import _store_raw_log
+
+    raw = {
+        "transaction": {
+            "unique_id": "178231723537.013651",
+            "client_ip": "176.65.139.237",
+            "messages": [{"details": {"ruleId": "930120"}}],
+        },
+    }
+    _store_raw_log(app, raw)
+
+    with app.app_context():
+        saved = ModSecRawLog.query.filter_by(
+            transaction_id="178231723537.013651"
+        ).first()
+        assert saved is not None
+        assert saved.source_ip == "176.65.139.237"
+        assert saved.rule_id == "930120"
+
+
+def test_store_raw_log_without_id_still_persists(app):
+    """Una línea sin id no debe descartarse (transaction_id es nullable)."""
+    from app.proxy.ingest import _store_raw_log
+
+    raw = {"transaction": {"client_ip": "9.9.9.9", "messages": []}}
+    _store_raw_log(app, raw)
+
+    with app.app_context():
+        saved = ModSecRawLog.query.filter_by(source_ip="9.9.9.9").first()
+        assert saved is not None
+        assert saved.transaction_id is None
 
 
 def test_store_raw_log_dedup_silent(app):

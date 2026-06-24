@@ -168,7 +168,7 @@ def _parse_line(line_or_dict: str | dict) -> dict | None:
     rule_id = str(rule_id) if rule_id is not None else None
 
     return {
-        "transaction_id": txn.get("id"),
+        "transaction_id": txn.get("id") or txn.get("unique_id"),
         "domain":         domain,
         "source_ip":      req.get("remote_address") or txn.get("client_ip") or txn.get("clientIp") or "",
         "method":         req.get("method", "GET"),
@@ -238,13 +238,18 @@ def _store_raw_log(app, raw_dict: dict) -> None:
         from app.extensions import db
         from app.models import ModSecRawLog
 
-        transaction_id = raw_dict.get("transaction", {}).get("id")
-        source_ip = raw_dict.get("transaction", {}).get("client_ip")
-        rule_id = raw_dict.get("messages", [{}])[0].get("details", {}).get("ruleId")
+        txn = raw_dict.get("transaction", {})
+        # ModSecurity v3 emite el identificador como "unique_id"; algunos
+        # formatos/tests usan "id". Aceptar ambos. Los mensajes (y por tanto
+        # el ruleId) cuelgan de transaction.messages, no de la raíz.
+        transaction_id = txn.get("id") or txn.get("unique_id")
+        source_ip = txn.get("client_ip")
+        messages = txn.get("messages") or raw_dict.get("messages") or [{}]
+        rule_id = messages[0].get("details", {}).get("ruleId")
 
-        # P1: sin transaction_id no podemos deduplicar — descartar silenciosamente
-        if transaction_id is None:
-            return
+        # Sin id no podemos deduplicar, pero igualmente persistimos el crudo
+        # (transaction_id es nullable). Descartarlo dejaría /proxy/logs vacío
+        # cuando el id llega bajo otra clave, como ocurrió con unique_id.
 
         # P7: cap raw_json a 64 KB para evitar acumulación de payloads enormes.
         # Truncamos por bytes reales (no por campos) para garantizar el tope
