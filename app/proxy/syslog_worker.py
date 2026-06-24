@@ -25,6 +25,7 @@ from app.proxy.syslog_forwarder import (
     build_rfc5424,
     format_audit_message,
     format_modsec_message,
+    is_safe_syslog_target,
     severity_from_audit,
     severity_from_modsec,
 )
@@ -49,7 +50,7 @@ def _get_cursor(key: str) -> int:
     try:
         return int(raw)
     except (ValueError, TypeError):
-        return 0
+        return -1  # corrupto → tratado como no-inicializado → bootstrap a MAX(id)
 
 
 def _set_cursor(key: str, value: int) -> None:
@@ -211,6 +212,16 @@ def _run_locked_body(app) -> None:
 
     host = (AppConfig.get("syslog_host") or "").strip()
     if not host:
+        return
+
+    safe, reason = is_safe_syslog_target(host)
+    if not safe:
+        log.warning("syslog-forwarder: destino no permitido (%s), tick omitido. Razón: %s", host, reason)
+        try:
+            AppConfig.set("syslog_last_error", f"Destino no permitido: {reason}")
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         return
 
     try:

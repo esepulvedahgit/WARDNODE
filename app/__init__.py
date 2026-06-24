@@ -102,6 +102,50 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
             upgrade()
             print("Migraciones aplicadas.")
 
+    @app.cli.command("grafana-provision-ro")
+    def grafana_provision_ro_command():
+        """Crea el rol grafana_ro (read-only) en PostgreSQL para el datasource de Grafana.
+
+        Idempotente: si el rol ya existe no falla. Solo aplica en PostgreSQL.
+        Requiere GRAFANA_DB_USER y GRAFANA_DB_PASSWORD en el entorno.
+        """
+        import os
+        from sqlalchemy import text as _text
+
+        if db.engine.dialect.name != "postgresql":
+            print("Advertencia: grafana-provision-ro solo aplica en PostgreSQL. Sin acción.")
+            return
+
+        gf_user = os.environ.get("GRAFANA_DB_USER", "").strip()
+        gf_pass = os.environ.get("GRAFANA_DB_PASSWORD", "").strip()
+        if not gf_user or not gf_pass:
+            print("Advertencia: GRAFANA_DB_USER / GRAFANA_DB_PASSWORD no configurados. Sin acción.")
+            return
+
+        with db.engine.connect() as conn:
+            with conn.begin():
+                exists = conn.execute(
+                    _text("SELECT 1 FROM pg_roles WHERE rolname = :r"),
+                    {"r": gf_user},
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        _text(f"CREATE ROLE {gf_user} LOGIN PASSWORD :pw"),  # noqa: S608
+                        {"pw": gf_pass},
+                    )
+                    print(f"Rol '{gf_user}' creado.")
+                else:
+                    conn.execute(
+                        _text(f"ALTER ROLE {gf_user} WITH PASSWORD :pw"),  # noqa: S608
+                        {"pw": gf_pass},
+                    )
+                    print(f"Rol '{gf_user}' ya existía — contraseña sincronizada.")
+                db_name = db.engine.url.database
+                conn.execute(_text(f"GRANT CONNECT ON DATABASE {db_name} TO {gf_user}"))  # noqa: S608
+                conn.execute(_text(f"GRANT USAGE ON SCHEMA public TO {gf_user}"))  # noqa: S608
+                conn.execute(_text(f"GRANT SELECT ON attack_event, soc_incident TO {gf_user}"))  # noqa: S608
+        print(f"Rol read-only '{gf_user}' provisionado correctamente (SELECT en attack_event, soc_incident).")
+
     @app.cli.command("ensure-geoip")
     def ensure_geoip_command():
         """Download GeoLite2-Country DB into the volume if not already present."""

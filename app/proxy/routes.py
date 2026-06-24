@@ -1466,6 +1466,14 @@ def settings_save_syslog():
     if host and not _re.fullmatch(r"[A-Za-z0-9.\-_:\[\]]{1,253}", host):
         flash("Host syslog inválido. Use un hostname o dirección IP válida.", "danger")
         return redirect(url_for("proxy.settings"))
+
+    if enabled == "1" and host:
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        _safe, _reason = is_safe_syslog_target(host)
+        if not _safe:
+            flash(f"Host syslog no permitido: {_reason}", "danger")
+            return redirect(url_for("proxy.settings"))
+
     if protocol not in ("udp", "tcp"):
         protocol = "udp"
     _VALID_FACILITIES = {
@@ -1513,10 +1521,7 @@ def settings_save_syslog():
 @roles_required(ROLE_ADMIN)
 @limiter.limit("10 per minute")
 def settings_syslog_test():
-    import ipaddress
     import re as _re
-    import socket
-    import time
 
     data     = request.get_json(silent=True) or {}
     host     = data.get("host", "").strip()
@@ -1537,19 +1542,13 @@ def settings_syslog_test():
     except (ValueError, TypeError):
         return jsonify({"ok": False, "error": "Puerto inválido"})
 
-    # Resolve and block loopback / cloud-metadata targets
-    try:
-        resolved = socket.getaddrinfo(host, port)
-        for *_, sockaddr in resolved:
-            ip_str = sockaddr[0]
-            addr = ipaddress.ip_address(ip_str)
-            if addr.is_loopback or addr.is_link_local:
-                return jsonify({"ok": False, "error": "Host no permitido"})
-    except (socket.gaierror, ValueError):
-        return jsonify({"ok": False, "error": f"No se pudo resolver el host: {host}"})
+    # Guard SSRF: bloquea loopback/metadata/reservadas/multicast (permite RFC1918)
+    from app.proxy.syslog_forwarder import SyslogSender, is_safe_syslog_target
+    _safe, _reason = is_safe_syslog_target(host)
+    if not _safe:
+        return jsonify({"ok": False, "error": _reason})
 
     try:
-        from app.proxy.syslog_forwarder import SyslogSender
         sender = SyslogSender(host, port, protocol)
         ms = sender.send_test()
         sender.close()
@@ -1669,9 +1668,10 @@ def _logs_search_filter(q, frase: str):
 
 
 @bp.get("/logs")
-@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+@limiter.limit("30 per minute")
 def logs_list():
-    q_param = request.args.get("q", "").strip()
+    q_param = request.args.get("q", "").strip()[:128]
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):

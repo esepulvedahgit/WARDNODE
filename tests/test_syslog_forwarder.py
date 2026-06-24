@@ -250,11 +250,14 @@ class TestCursors:
         with app.app_context():
             from app.extensions import db
 
-            # Resetear cursores a 0 para que el worker envíe todas las filas
+            # Resetear cursores a 0 para que el worker envíe todas las filas.
+            # Usamos una IP RFC1918 (permitida por el guard SSRF) como host;
+            # el tick fallará con OSError de red pero eso es esperado — solo
+            # verificamos que el guard deja pasar el host.
             AppConfig.set("syslog_cursor_modsec_id", "0")
             AppConfig.set("syslog_cursor_audit_id", "0")
             AppConfig.set("syslog_enabled", "1")
-            AppConfig.set("syslog_host", "127.0.0.1")
+            AppConfig.set("syslog_host", "10.0.0.1")
             AppConfig.set("syslog_port", "19514")
             AppConfig.set("syslog_protocol", "udp")
             AppConfig.set("syslog_facility", "local7")
@@ -291,8 +294,12 @@ class TestCursors:
 # ── 5. Entrega end-to-end UDP ─────────────────────────────────────────────────
 
 class TestEndToEndUdp:
-    def test_modsec_row_sent_as_rfc5424(self, app):
+    def test_modsec_row_sent_as_rfc5424(self, app, monkeypatch):
         """Inserta fila en modsec_raw_log, ejecuta tick, verifica frame en UDP."""
+        import app.proxy.syslog_worker as _worker
+        # En tests enviamos a 127.0.0.1 — permitido explícitamente con monkeypatch
+        monkeypatch.setattr(_worker, "is_safe_syslog_target", lambda h: (True, ""))
+
         from app.models import AppConfig, ModSecRawLog
 
         with app.app_context():
@@ -357,8 +364,11 @@ class TestEndToEndUdp:
             cursor_after = int(AppConfig.get("syslog_cursor_modsec_id") or "0")
             assert cursor_after == max_id
 
-    def test_audit_row_sent_as_rfc5424(self, app):
+    def test_audit_row_sent_as_rfc5424(self, app, monkeypatch):
         """Inserta fila en audit_log, ejecuta tick, verifica frame UDP."""
+        import app.proxy.syslog_worker as _worker
+        monkeypatch.setattr(_worker, "is_safe_syslog_target", lambda h: (True, ""))
+
         from app.models import AppConfig, AuditLog
 
         with app.app_context():
@@ -464,6 +474,181 @@ class TestSyslogSettingsNoDocker:
         # Verificar que no hay página de error 500 (el "500" en fonts/port es normal)
         assert "<title>500" not in body
         assert "Internal Server Error" not in body
+
+
+# ── 7. Guard SSRF (is_safe_syslog_target) ────────────────────────────────────
+
+class TestSsrfGuard:
+    def test_loopback_blocked(self):
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        safe, _ = is_safe_syslog_target("127.0.0.1")
+        assert not safe
+
+    def test_link_local_metadata_blocked(self):
+        """169.254.x (cloud metadata) debe ser bloqueada."""
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        safe, _ = is_safe_syslog_target("169.254.169.254")
+        assert not safe
+
+    def test_multicast_blocked(self):
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        safe, _ = is_safe_syslog_target("224.0.0.1")
+        assert not safe
+
+    def test_rfc1918_private_allowed(self):
+        """Rangos privados RFC1918 (SIEM en LAN) deben pasar."""
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        for host in ("10.0.0.5", "192.168.1.100", "172.16.0.1"):
+            safe, reason = is_safe_syslog_target(host)
+            assert safe, f"{host} debería ser permitido pero fue bloqueado: {reason}"
+
+    def test_public_ip_allowed(self):
+        from app.proxy.syslog_forwarder import is_safe_syslog_target
+        safe, _ = is_safe_syslog_target("8.8.8.8")
+        assert safe
+
+    def test_loopback_blocked_at_save(self, client, login_as):
+        """POST guardado con syslog_host=127.0.0.1 → rechazado."""
+        login_as(ROLE_ADMIN)
+        resp = client.post(
+            "/proxy/settings/syslog",
+            data={
+                "syslog_enabled":  "on",
+                "syslog_host":     "127.0.0.1",
+                "syslog_port":     "514",
+                "syslog_protocol": "udp",
+                "syslog_facility": "local7",
+                "syslog_sources":  "modsecurity",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "no permitido" in body.lower() or "not allowed" in body.lower()
+
+
+# ── 8. Saneo de frames RFC5424 (SYS-02 CR/LF + SYS-04 tope) ─────────────────
+
+class TestFrameHardening:
+    def test_crlf_in_message_replaced_with_space(self):
+        """CR y LF en el cuerpo del mensaje se reemplazan por espacio (CWE-117)."""
+        from app.proxy.syslog_forwarder import build_rfc5424
+
+        msg = 'line1\nFAKE-SYSLOG-ENTRY\rline3'
+        frame = build_rfc5424(23, 6, _ts(), "h", "app", "-", "T", msg)
+        assert "\n" not in frame
+        assert "\r" not in frame
+        # El contenido sigue siendo legible (con espacios)
+        assert "FAKE-SYSLOG-ENTRY" in frame
+
+    def test_nul_byte_removed(self):
+        from app.proxy.syslog_forwarder import build_rfc5424
+
+        msg = "before\x00after"
+        frame = build_rfc5424(23, 6, _ts(), "h", "app", "-", "T", msg)
+        assert "\x00" not in frame
+
+    def test_message_truncated_at_8192_bytes(self):
+        """Mensajes >8192 bytes se truncan con marcador '[truncated]'."""
+        from app.proxy.syslog_forwarder import build_rfc5424, _MAX_MSG_BYTES
+
+        big_msg = "X" * (_MAX_MSG_BYTES + 1000)
+        frame = build_rfc5424(23, 6, _ts(), "h", "app", "-", "T", big_msg)
+        # El frame completo debe ser razonable (cabecera + 8 KB aprox.)
+        parts = frame.split(" ", 7)
+        body = parts[7]
+        assert "[truncated]" in body
+        assert len(body.encode("utf-8")) <= _MAX_MSG_BYTES + len(" [truncated]")
+
+
+# ── 9. Redacción de headers sensibles (SYS-03) ───────────────────────────────
+
+class TestHeaderRedaction:
+    def test_authorization_header_redacted(self):
+        from app.proxy.syslog_forwarder import format_modsec_message
+
+        raw = json.dumps({
+            "transaction": {
+                "id": "tx-redact",
+                "request": {
+                    "headers": {
+                        "Authorization": "Bearer super-secret-token",
+                        "Host": "example.com",
+                    }
+                }
+            }
+        })
+        result = format_modsec_message(raw)
+        assert "super-secret-token" not in result
+        assert "[REDACTED]" in result
+        # Host sigue presente
+        assert "example.com" in result
+
+    def test_cookie_header_redacted(self):
+        from app.proxy.syslog_forwarder import format_modsec_message
+
+        raw = json.dumps({
+            "transaction": {"request": {"headers": {"Cookie": "session=abc123"}}}
+        })
+        result = format_modsec_message(raw)
+        assert "abc123" not in result
+
+    def test_non_sensitive_headers_preserved(self):
+        from app.proxy.syslog_forwarder import format_modsec_message
+
+        raw = json.dumps({
+            "transaction": {"request": {"headers": {"User-Agent": "TestAgent/1.0", "Content-Type": "application/json"}}}
+        })
+        result = format_modsec_message(raw)
+        assert "TestAgent/1.0" in result
+        assert "application/json" in result
+
+    def test_set_cookie_in_response_redacted(self):
+        from app.proxy.syslog_forwarder import format_modsec_message
+
+        raw = json.dumps({
+            "transaction": {"response": {"headers": {"Set-Cookie": "sid=xyz; HttpOnly"}}}
+        })
+        result = format_modsec_message(raw)
+        assert "xyz" not in result
+
+
+# ── 10. Cursor corrupto → bootstrap (SYS-05) ─────────────────────────────────
+
+class TestCorruptCursor:
+    def test_corrupt_cursor_returns_minus_one(self, app):
+        """_get_cursor devuelve -1 ante un valor corrupto (nunca 0)."""
+        from app.models import AppConfig
+        from app.proxy.syslog_worker import _get_cursor
+
+        with app.app_context():
+            key = "syslog_cursor_test_corrupt"
+            AppConfig.set(key, "not-an-int")
+            from app.extensions import db
+            db.session.commit()
+
+            result = _get_cursor(key)
+            assert result == -1, f"Esperado -1 (bootstrap), obtenido: {result}"
+
+
+# ── 11. Validación de exclusión WAF — Unicode (WN-03) ────────────────────────
+
+class TestRuleExclusionUnicode:
+    def test_unicode_digit_rejected(self):
+        """Dígito Unicode (superíndice) no pasa la validación — evita ValueError en int()."""
+        from app.proxy.custom_rules import validate_rule_exclusion
+
+        rule_id, errors = validate_rule_exclusion("¹²³⁴⁵⁶⁷", "")
+        assert rule_id is None
+        assert errors
+
+    def test_ascii_decimal_accepted(self):
+        """ID CRS válido en ASCII pasa la validación."""
+        from app.proxy.custom_rules import validate_rule_exclusion
+
+        rule_id, errors = validate_rule_exclusion("942100", "")
+        assert rule_id == 942100
+        assert not errors
 
 
 # Import necesario para el test de cursor

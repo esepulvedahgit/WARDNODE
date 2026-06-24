@@ -6,6 +6,7 @@ funciones de este módulo desde su hilo daemon.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import socket
@@ -75,8 +76,9 @@ _WAF_SEVERITY: dict[str, int] = {
 
 # ── Construcción de frames RFC5424 ────────────────────────────────────────────
 
-_NILVALUE = "-"
-_VERSION  = "1"
+_NILVALUE    = "-"
+_VERSION     = "1"
+_MAX_MSG_BYTES = 8192  # tope syslog compatible con UDP MTU; previene HOL blocking (SYS-04)
 
 
 def build_rfc5424(
@@ -102,7 +104,12 @@ def build_rfc5424(
     app   = (appname  or _NILVALUE).replace(" ", "_")[:48]
     proc  = (procid   or _NILVALUE).replace(" ", "_")[:128]
     mid   = (msgid    or _NILVALUE).replace(" ", "_")[:32]
-    return f"<{pri}>{_VERSION} {ts} {host} {app} {proc} {mid} {_NILVALUE} {message}"
+    # Sanear CR/LF/NUL del cuerpo (CWE-117 log forging) y acotar tamaño (SYS-02/04)
+    safe = message.translate({0x00: None, 0x0d: 0x20, 0x0a: 0x20})
+    enc = safe.encode("utf-8")
+    if len(enc) > _MAX_MSG_BYTES:
+        safe = enc[:_MAX_MSG_BYTES].decode("utf-8", "ignore") + " [truncated]"
+    return f"<{pri}>{_VERSION} {ts} {host} {app} {proc} {mid} {_NILVALUE} {safe}"
 
 
 def severity_from_modsec(raw_dict: dict) -> int:
@@ -131,14 +138,37 @@ def severity_from_audit(severity_str: str) -> int:
     return _AUDIT_SEVERITY.get((severity_str or "info").lower(), 6)
 
 
+_SENSITIVE_HEADERS: frozenset[str] = frozenset({
+    "authorization", "proxy-authorization", "cookie", "set-cookie",
+    "x-api-key", "x-auth-token",
+})
+
+
+def _redact_headers(node: object) -> object:
+    """Recorre recursivamente un dict/list y redacta headers HTTP sensibles."""
+    if isinstance(node, dict):
+        return {
+            k: ("[REDACTED]" if k.lower() in _SENSITIVE_HEADERS else _redact_headers(v))
+            for k, v in node.items()
+        }
+    if isinstance(node, list):
+        return [_redact_headers(x) for x in node]
+    return node
+
+
 def format_modsec_message(raw_json: str) -> str:
     """Formatea el JSON crudo de modsec_raw_log como cuerpo del mensaje syslog.
 
-    Devuelve el JSON en una sola línea (ya normalizado). Si el JSON no parsea
-    lo devuelve tal cual.
+    Redacta headers sensibles (Authorization, Cookie, etc.) antes de enviar
+    al SIEM externo. El evento, IP, URI y regla siguen presentes.
+    Si el JSON no parsea lo devuelve tal cual.
     """
     try:
-        return json.dumps(json.loads(raw_json), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            _redact_headers(json.loads(raw_json)),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     except Exception:
         return raw_json
 
@@ -160,6 +190,32 @@ def format_audit_message(row: "AuditLog") -> str:
         except Exception:
             payload["detail"] = row.detail
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+# ── Guard anti-SSRF ──────────────────────────────────────────────────────────
+
+def is_safe_syslog_target(host: str) -> tuple[bool, str]:
+    """True si el host resuelve a un destino permitido para reenvío syslog.
+
+    Bloquea: loopback, link-local (incl. 169.254.x metadata), reservadas,
+    no-especificadas y multicast.
+    PERMITE rangos privados RFC1918 (10.x/172.16-31/192.168.x) para SIEM en LAN.
+    """
+    try:
+        resolved = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return False, f"No se pudo resolver el host: {host}"
+    if not resolved:
+        return False, "El host no resolvió a ninguna dirección"
+    for *_, sockaddr in resolved:
+        try:
+            addr = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if (addr.is_loopback or addr.is_link_local or addr.is_reserved
+                or addr.is_unspecified or addr.is_multicast):
+            return False, "Host no permitido (loopback/metadata/reservada/multicast)"
+    return True, ""
 
 
 # ── Socket sender ─────────────────────────────────────────────────────────────

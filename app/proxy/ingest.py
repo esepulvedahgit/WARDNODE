@@ -246,22 +246,19 @@ def _store_raw_log(app, raw_dict: dict) -> None:
         if transaction_id is None:
             return
 
-        # P7: cap raw_json a 64 KB para evitar acumulación de payloads enormes
+        # P7: cap raw_json a 64 KB para evitar acumulación de payloads enormes.
+        # Truncamos por bytes reales (no por campos) para garantizar el tope
+        # independientemente del tamaño del bloque transaction/body.
         raw_json_str = json.dumps(raw_dict, ensure_ascii=False)
         if len(raw_json_str.encode("utf-8")) > _RAW_JSON_MAX_BYTES:
             log.debug(
-                "ingest: raw log truncated (>%d bytes), storing header only",
+                "ingest: raw log truncated (>%d bytes)",
                 _RAW_JSON_MAX_BYTES,
             )
-            raw_json_str = json.dumps(
-                {
-                    "transaction": raw_dict.get("transaction", {}),
-                    "client_ip": raw_dict.get("client_ip"),
-                    "messages": raw_dict.get("messages", [])[:1],
-                    "_truncated": True,
-                },
-                ensure_ascii=False,
+            head = raw_json_str.encode("utf-8")[: _RAW_JSON_MAX_BYTES - 64].decode(
+                "utf-8", "ignore"
             )
+            raw_json_str = json.dumps({"_truncated": True, "_head": head}, ensure_ascii=False)
 
         entry = ModSecRawLog(
             transaction_id=transaction_id,

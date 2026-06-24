@@ -13,7 +13,7 @@
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" [$__range]))", "instant": true, "legendFormat": "Total", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} [$__range]))", "instant": true, "legendFormat": "Total", "queryType": "instant", "refId": "A"}],
       "title": "Total requests",
       "type": "stat"
     },
@@ -23,7 +23,7 @@
       "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
       "id": 2,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 400 and status < 500 [$__range]))", "instant": true, "legendFormat": "4xx", "queryType": "instant", "refId": "A"}],
       "title": "HTTP 4xx",
       "type": "stat"
     },
@@ -33,7 +33,7 @@
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
       "id": 3,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 500 [$__range]))", "instant": true, "legendFormat": "5xx", "queryType": "instant", "refId": "A"}],
       "title": "HTTP 5xx",
       "type": "stat"
     },
@@ -54,10 +54,10 @@
       "id": 5,
       "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" [$__interval]))", "legendFormat": "Total requests", "queryType": "range", "refId": "A"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 200 and status < 300 [$__interval]))", "legendFormat": "2xx", "queryType": "range", "refId": "B"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 400 and status < 500 [$__interval]))", "legendFormat": "4xx", "queryType": "range", "refId": "C"},
-        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 500 [$__interval]))", "legendFormat": "5xx", "queryType": "range", "refId": "D"}
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} [$__interval]))", "legendFormat": "Total requests", "queryType": "range", "refId": "A"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 200 and status < 300 [$__interval]))", "legendFormat": "2xx", "queryType": "range", "refId": "B"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 400 and status < 500 [$__interval]))", "legendFormat": "4xx", "queryType": "range", "refId": "C"},
+        {"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum(count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 500 [$__interval]))", "legendFormat": "5xx", "queryType": "range", "refId": "D"}
       ],
       "title": "Requests y status codes",
       "type": "timeseries"
@@ -68,7 +68,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
       "id": 6,
       "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (host) (count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{host}}", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (host) (count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{host}}", "queryType": "instant", "refId": "A"}],
       "title": "Top vhosts",
       "type": "table",
       "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
@@ -79,7 +79,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
       "id": 7,
       "options": {"displayMode": "table", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (uri) (count_over_time({job=\"nginx_access\"} |= \"$filter\" | json | status >= 400 | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{uri}}", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "sum by (uri) (count_over_time({job=\"nginx_access\"} |= ${filter:doublequote} | json | status >= 400 | __error__=\"\" [$__range]))", "instant": true, "legendFormat": "{{uri}}", "queryType": "instant", "refId": "A"}],
       "title": "Top URIs con error (4xx/5xx)",
       "type": "table",
       "transformations": [{"id": "sortBy", "options": {"fields": [{"desc": true, "displayName": "Value"}]}}]
@@ -89,7 +89,7 @@
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20},
       "id": 8,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_access\"} |= \"$filter\"", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_access\"} |= ${filter:doublequote}", "legendFormat": "", "queryType": "range", "refId": "A"}],
       "title": "NGINX Access Log",
       "type": "logs"
     },
@@ -98,7 +98,7 @@
       "gridPos": {"h": 6, "w": 24, "x": 0, "y": 30},
       "id": 9,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_error\"} |= \"$filter\"", "legendFormat": "", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "wardnode-loki"}, "expr": "{job=\"nginx_error\"} |= ${filter:doublequote}", "legendFormat": "", "queryType": "range", "refId": "A"}],
       "title": "NGINX Error Log",
       "type": "logs"
     }

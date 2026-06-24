@@ -5,7 +5,7 @@ datasources:
     type: postgres
     uid: wardnode-postgres
     url: db:5432
-    user: ${POSTGRES_USER}
+    user: ${GRAFANA_DB_USER}
     access: proxy
     isDefault: false
     editable: false
@@ -15,4 +15,4 @@ datasources:
       postgresVersion: 1600
       timescaledb: false
     secureJsonData:
-      password: ${POSTGRES_PASSWORD}
+      password: ${GRAFANA_DB_PASSWORD}

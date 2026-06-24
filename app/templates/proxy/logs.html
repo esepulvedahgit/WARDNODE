@@ -67,6 +67,19 @@
     </div>
   </div>
 
+  {# ── Aviso footgun: retención inactiva por falta de contraseña de respaldo #}
+  {% if config_data.backup_before_prune == "1" and not config_data.zip_password_set %}
+  <div class="alert alert-warning d-flex gap-2 align-items-start mt-3 mb-0" role="alert">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+    <div>
+      <strong>Retención inactiva.</strong>
+      La opción "Archivar antes de podar" está activa pero no se ha definido la contraseña
+      del archivo cifrado. El prune automático queda cancelado hasta que configures la contraseña
+      en el panel de abajo.
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Panel de Retención y respaldo ──────────────────────────────────── #}
   <div class="card mt-4">
     <div class="card-header d-flex align-items-center gap-2">

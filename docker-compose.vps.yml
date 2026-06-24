@@ -46,7 +46,7 @@ services:
         cp /app/observability/loki.yaml /tmp/obs/loki/config.yaml &&
         cp /app/observability/prometheus.yml /tmp/obs/prometheus/prometheus.yml &&
         cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
-        flask db-setup && flask ensure-geoip &&
+        flask db-setup && flask ensure-geoip && flask grafana-provision-ro &&
         gunicorn -c gunicorn.conf.py wsgi:app
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/status')"]
@@ -174,9 +174,10 @@ services:
     restart: unless-stopped
     profiles:
       - obs
-    env_file: .env.prod        # carga GF_SECURITY_ADMIN_PASSWORD directamente, sin interpolación
+    env_file: .env.prod        # GRAFANA_ADMIN_PASSWORD (.env.prod) → GF_SECURITY_ADMIN_PASSWORD, con guard fail-fast
     environment:
       GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Define GRAFANA_ADMIN_PASSWORD en .env.prod}"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/obs/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
@@ -189,10 +190,10 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_AUTH_PROXY_HEADERS: "Role:X-WEBAUTH-ROLE"
       GF_AUTH_PROXY_WHITELIST: "172.30.0.1/32"
-      # Credenciales DB para el datasource PostgreSQL de Grafana
-      POSTGRES_USER: ${POSTGRES_USER:-app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      # Credenciales DB para el datasource PostgreSQL de Grafana (rol read-only grafana_ro)
       POSTGRES_DB: ${POSTGRES_DB:-app}
+      GRAFANA_DB_USER: ${GRAFANA_DB_USER:?Define GRAFANA_DB_USER en .env.prod}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?Define GRAFANA_DB_PASSWORD en .env.prod}
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

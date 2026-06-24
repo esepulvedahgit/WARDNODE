@@ -264,9 +264,16 @@ def test_logs_list_requires_login(client):
     assert "login" in resp.headers.get("Location", "")
 
 
-def test_logs_list_reader_can_access(client, login_as):
-    """ROLE_READER puede ver el log (solo lectura)."""
+def test_logs_list_reader_forbidden(client, login_as):
+    """ROLE_READER no puede ver el log crudo (contiene payloads/credenciales íntegros)."""
     login_as(role=ROLE_READER)
+    resp = client.get("/proxy/logs")
+    assert resp.status_code == 403
+
+
+def test_logs_list_operator_can_access(client, login_as):
+    """ROLE_OPERATOR puede ver el log crudo."""
+    login_as(role=ROLE_OPERATOR)
     resp = client.get("/proxy/logs")
     assert resp.status_code == 200
 
@@ -312,3 +319,40 @@ def test_logs_list_htmx_partial(client, login_as):
     resp = client.get("/proxy/logs", headers={"HX-Request": "true"})
     assert resp.status_code == 200
     assert b"</html>" not in resp.data
+
+
+# ---------------------------------------------------------------------------
+# Grupo 8: Tope de longitud de búsqueda (H2) y truncación de 64 KB (H4)
+# ---------------------------------------------------------------------------
+
+
+def test_logs_search_term_truncated_to_128(client, login_as):
+    """Término de búsqueda >128 chars se recorta: la ruta responde 200 sin error."""
+    login_as(role=ROLE_ADMIN)
+    long_q = "A" * 300
+    resp = client.get(f"/proxy/logs?q={long_q}")
+    assert resp.status_code == 200
+
+
+def test_store_raw_log_truncation_respects_64kb(app):
+    """raw_json almacenado nunca supera _RAW_JSON_MAX_BYTES (64 KB) tras truncar."""
+    from app.proxy.ingest import _RAW_JSON_MAX_BYTES, _store_raw_log
+
+    with app.app_context():
+        big_body = "X" * 200_000
+        raw_dict = {
+            "transaction": {
+                "id": "txn-trunc-test",
+                "client_ip": "1.2.3.4",
+                "request": {"body": big_body},
+            },
+            "messages": [{"details": {"ruleId": "941100"}}],
+        }
+        _store_raw_log(app, raw_dict)
+
+        saved = ModSecRawLog.query.filter_by(transaction_id="txn-trunc-test").first()
+        assert saved is not None
+        assert len(saved.raw_json.encode("utf-8")) <= _RAW_JSON_MAX_BYTES
+        import json as _json
+        parsed = _json.loads(saved.raw_json)
+        assert parsed.get("_truncated") is True

@@ -100,9 +100,9 @@ def validate_rule_exclusion(rule_id_raw: str, comment: str) -> tuple[int | None,
         errors.append("El ID de regla es obligatorio.")
         return None, errors
 
-    if not raw.isdigit():
+    if not (raw.isascii() and raw.isdecimal()):
         errors.append(
-            f"El ID de regla debe ser un número entero (recibido: {raw!r})."
+            f"El ID de regla debe ser un número entero ASCII (recibido: {raw!r})."
         )
         return None, errors
 
