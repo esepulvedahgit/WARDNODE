@@ -177,6 +177,14 @@ def dashboard():
         except Exception:
             pass  # tabla puede no existir en dev sin migración aplicada
 
+    # Oferta de reseteo del overview cuando hay eventos previos al primer setup.
+    waf_reset_offer = AppConfig.get("waf_reset_offer_pending") == "1"
+    waf_reset_offer_count = AttackEvent.query.count() if waf_reset_offer else 0
+    # Si alguien borró los eventos por otra vía, cancelar la oferta.
+    if waf_reset_offer and waf_reset_offer_count == 0:
+        AppConfig.set("waf_reset_offer_pending", "0")
+        waf_reset_offer = False
+
     return render_template(
         "proxy/dashboard.html",
         sites=sites,
@@ -199,6 +207,8 @@ def dashboard():
         ddos_tl_counts=ddos_tl_counts,
         ddos_cat_labels=ddos_cat_labels,
         ddos_cat_values=ddos_cat_values,
+        waf_reset_offer=waf_reset_offer,
+        waf_reset_offer_count=waf_reset_offer_count,
     )
 
 
@@ -1248,6 +1258,34 @@ def settings_clear_waf_events():
     return redirect(url_for("proxy.settings"))
 
 
+@bp.post("/waf-reset-offer/accept")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("3 per minute")
+def waf_reset_offer_accept():
+    """El operador eligió reiniciar el overview tras el primer setup."""
+    n = clear_waf_events()
+    AppConfig.set("waf_reset_offer_pending", "0")
+    log_audit(
+        "console.waf_reset_offer_accept",
+        resource_type="attack_events",
+        severity="warning",
+        status="success",
+        detail={"deleted": n},
+    )
+    flash(f"Overview WAF reiniciado: se borraron {n} evento(s).", "success")
+    return redirect(url_for("proxy.dashboard"))
+
+
+@bp.post("/waf-reset-offer/dismiss")
+@roles_required(ROLE_ADMIN)
+@limiter.limit("3 per minute")
+def waf_reset_offer_dismiss():
+    """El operador eligió mantener los eventos WAF previos al primer setup."""
+    AppConfig.set("waf_reset_offer_pending", "0")
+    flash("Se mantuvieron los eventos WAF previos al setup.", "info")
+    return redirect(url_for("proxy.dashboard"))
+
+
 @bp.post("/dismiss-setup-prompt")
 @roles_required(ROLE_ADMIN)
 def dismiss_setup_prompt():
@@ -1297,17 +1335,13 @@ def save_console_site():
 
     AppConfig.set("console_site_id", str(site.id))
 
-    # Limpiar eventos WAF acumulados antes de la puesta en marcha real.
-    # Solo se dispara la primera vez; editar el dominio después no borra datos.
-    if is_first_setup:
-        n = clear_waf_events()
-        log_audit(
-            "console.first_setup_waf_reset",
-            resource_type="attack_events",
-            severity="info",
-            status="success",
-            detail={"deleted": n},
-        )
+    # Si es la primera configuración y ya hay eventos WAF, ofrecer al operador
+    # la opción de resetear el overview — sin borrar nada automáticamente.
+    # El borrado silencioso previo era un vestigio de cuando Grafana leía de Loki
+    # y el proxy podía levantar antes que la consola.  Hoy Grafana lee de
+    # PostgreSQL, así que el reseteo automático solo generaba discrepancias.
+    if is_first_setup and AttackEvent.query.count() > 0:
+        AppConfig.set("waf_reset_offer_pending", "1")
 
     # Si WF está activo bloquear el puerto 5000 de forma diferida para que este
     # redirect llegue al cliente antes de que iptables corte TCP:5000.

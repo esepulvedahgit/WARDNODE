@@ -18,6 +18,38 @@
 
 {% block content %}
 
+{# ── Oferta de reseteo tras primer setup ─────────────────────────── #}
+{% if waf_reset_offer and waf_reset_offer_count > 0 %}
+<div class="alert alert-warning d-flex flex-wrap gap-2 align-items-center justify-content-between mb-3"
+     role="alert">
+  <div class="d-flex gap-2 align-items-start">
+    <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+    <div>
+      <strong>Hay {{ "{:,}".format(waf_reset_offer_count) }} evento(s) WAF previos a la puesta en marcha.</strong>
+      ¿Reiniciar el overview para empezar limpio?
+      El log crudo (<a href="{{ url_for('proxy.logs_list') }}" class="alert-link">/proxy/logs</a>)
+      no se ve afectado.
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-shrink-0">
+    <form method="post" action="{{ url_for('proxy.waf_reset_offer_accept') }}"
+          x-data="{l:false}"
+          @submit.prevent="if(confirm('¿Borrar TODOS los eventos del overview WAF?\nEsta acción no se puede deshacer.')){l=true; $el.submit()}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-danger" :disabled="l">
+        <i class="bi bi-shield-x me-1"></i>Reiniciar overview
+      </button>
+    </form>
+    <form method="post" action="{{ url_for('proxy.waf_reset_offer_dismiss') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-check2 me-1"></i>Mantener
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {# ── KPI cards ─────────────────────────────────────────────────────── #}
 <div class="kpi-grid">
 

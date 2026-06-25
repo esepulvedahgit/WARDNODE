@@ -4,7 +4,7 @@
 <div id="logs-results"
      {% if not q and page == 1 %}
      hx-get="{{ url_for('proxy.logs_list') }}"
-     hx-trigger="every 2s"
+     hx-trigger="every 2s [wnLogsCanPoll()]"
      hx-target="#logs-results"
      hx-swap="outerHTML"
      {% endif %}>
@@ -19,9 +19,11 @@
         &nbsp;·&nbsp;buscando <code>{{ q | e }}</code>
       {% endif %}
       {% if not q and page == 1 %}
-        <span class="badge bg-success ms-2">
-          <i class="bi bi-circle-fill" style="font-size:0.55em;vertical-align:middle"></i>
-          EN VIVO
+        <span x-data class="badge ms-2"
+              :class="$store.logsLive && $store.logsLive.open > 0 ? 'bg-warning text-dark' : 'bg-success'">
+          <i :class="$store.logsLive && $store.logsLive.open > 0 ? 'bi bi-pause-fill' : 'bi bi-circle-fill'"
+             style="font-size:0.55em;vertical-align:middle"></i>
+          <span x-text="$store.logsLive && $store.logsLive.open > 0 ? 'PAUSADO' : 'EN VIVO'">EN VIVO</span>
         </span>
       {% endif %}
     </span>
@@ -46,7 +48,7 @@
         </thead>
         <tbody>
           {% for row in rows %}
-          <tr x-data="{ open: false }">
+          <tr x-data="logRow()">
             <td class="text-nowrap t-mono t-dim">
               {{ row.created_at.strftime('%Y-%m-%d') }}<br>
               <span style="font-size:11px">{{ row.created_at.strftime('%H:%M:%S') }}</span>
@@ -59,16 +61,42 @@
               </div>
               <pre x-show="open"
                    x-cloak
+                   x-ref="json"
+                   @click="selectAll()"
                    class="mb-0 small bg-dark text-light p-2 rounded"
-                   style="white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto">{{ row.raw_json | e }}</pre>
+                   style="white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto;cursor:text"
+                   title="Clic para seleccionar todo el texto">{{ row.raw_json | e }}</pre>
             </td>
-            <td>
+            <td class="text-nowrap" style="vertical-align:top;padding-top:6px">
+              {# Botón toggle chevron #}
               <button class="btn btn-sm btn-outline-secondary py-0 px-1"
-                      @click="open = !open"
+                      @click="toggle()"
                       :title="open ? 'Colapsar' : 'Expandir JSON completo'"
                       type="button">
                 <i :class="open ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"></i>
               </button>
+              {# Controles adicionales — visibles solo con el detalle abierto #}
+              <div x-show="open" x-cloak class="d-flex flex-column gap-1 mt-1">
+                <button class="btn btn-sm py-0 px-1"
+                        :class="copied ? 'btn-success' : 'btn-outline-info'"
+                        @click.stop="copy()"
+                        type="button"
+                        title="Copiar JSON al portapapeles">
+                  <i :class="copied ? 'bi bi-clipboard-check' : 'bi bi-clipboard'"></i>
+                  <span x-text="copied ? '¡Copiado!' : 'Copiar'"
+                        class="ms-1" style="font-size:10px"></span>
+                </button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                        @click.stop="close()"
+                        type="button"
+                        title="Cerrar detalle">
+                  <i class="bi bi-x-lg"></i>
+                  <span class="ms-1" style="font-size:10px">Cerrar</span>
+                </button>
+                <small class="text-center text-muted"
+                       style="font-size:10px"
+                       x-text="remaining + 's'"></small>
+              </div>
             </td>
           </tr>
           {% endfor %}

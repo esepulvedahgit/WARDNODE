@@ -197,3 +197,116 @@
 
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Log ModSecurity: detalle persistente + copia ────────────────────────
+   Pausa el polling HTMX mientras algún detalle esté abierto.
+   Cierre automático a los 15 s o manual con el botón Cerrar.
+   Copia al portapapeles + selección con un clic en el bloque <pre>.
+   ─────────────────────────────────────────────────────────────────────── */
+
+/* Registro del store en Alpine (debe correr antes de que Alpine arranque) */
+document.addEventListener('alpine:init', function () {
+  Alpine.store('logsLive', { open: 0 });
+});
+
+/* Guardia para el trigger HTMX: "every 2s [wnLogsCanPoll()]"
+   Devuelve false mientras haya alguna fila expandida → HTMX no dispara la petición */
+window.wnLogsCanPoll = function () {
+  if (!window.Alpine) return true;
+  var store = Alpine.store('logsLive');
+  return !store || store.open === 0;
+};
+
+/* Resetea el contador cuando HTMX hace swap del contenedor de resultados
+   (ej: búsqueda, paginación con un detalle abierto) */
+document.body.addEventListener('htmx:afterSwap', function (e) {
+  if (e.target && e.target.id === 'logs-results' && window.Alpine) {
+    var store = Alpine.store('logsLive');
+    if (store) store.open = 0;
+  }
+});
+
+/* Componente Alpine de cada fila de log */
+window.logRow = function () {
+  return {
+    open: false,
+    remaining: 15,
+    copied: false,
+    _cd: null,
+
+    /* Alterna entre abrir y cerrar */
+    toggle: function () {
+      if (this.open) { this.close(); } else { this.openDetail(); }
+    },
+
+    /* Abre el detalle, incrementa el contador global y arranca el countdown */
+    openDetail: function () {
+      if (this.open) return;
+      this.open = true;
+      this.remaining = 15;
+      var store = window.Alpine ? Alpine.store('logsLive') : null;
+      if (store) store.open++;
+
+      var self = this;
+      this._cd = setInterval(function () {
+        self.remaining--;
+        if (self.remaining <= 0) { self.close(); }
+      }, 1000);
+    },
+
+    /* Cierra el detalle, decrementa el contador y cancela el timer */
+    close: function () {
+      if (!this.open) return;
+      this.open = false;
+      if (this._cd) { clearInterval(this._cd); this._cd = null; }
+      var store = window.Alpine ? Alpine.store('logsLive') : null;
+      if (store && store.open > 0) store.open--;
+    },
+
+    /* Copia el JSON íntegro al portapapeles */
+    copy: function () {
+      var el = this.$refs.json;
+      if (!el) return;
+      var text = el.textContent;
+      var self = this;
+      var done = function () {
+        self.copied = true;
+        setTimeout(function () { self.copied = false; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { self._copyFallback(el, done); });
+      } else {
+        this._copyFallback(el, done);
+      }
+    },
+
+    /* Fallback para contextos sin Clipboard API (http no-localhost) */
+    _copyFallback: function (el, done) {
+      try {
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('copy');
+        sel.removeAllRanges();
+        if (done) done();
+      } catch (err) { /* sin feedback si falla el fallback */ }
+    },
+
+    /* Selecciona todo el texto del <pre> con un clic */
+    selectAll: function () {
+      var el = this.$refs.json;
+      if (!el) return;
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+};
+</script>
+{% endblock %}

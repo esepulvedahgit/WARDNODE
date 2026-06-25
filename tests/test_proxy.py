@@ -1669,11 +1669,14 @@ def test_settings_clear_waf_events_reader_rejected(client, login_as):
 
 
 def test_save_console_site_first_setup_clears_events(client, login_as, app):
-    """Al crear el console_site por primera vez se borran los eventos WAF acumulados."""
+    """Al crear el console_site por primera vez NO se borran los eventos;
+    en su lugar se activa la oferta de reseteo (waf_reset_offer_pending=1)
+    para que el operador decida de forma explícita."""
     login_as(ROLE_ADMIN)
     with app.app_context():
         # Asegurarse de que no existe console_site previo
         AppConfig.set("console_site_id", "")
+        AppConfig.set("waf_reset_offer_pending", "0")
         _seed_waf_events(6)
         assert AttackEvent.query.count() == 6
 
@@ -1685,8 +1688,13 @@ def test_save_console_site_first_setup_clears_events(client, login_as, app):
     assert resp.status_code == 200
 
     with app.app_context():
-        assert AttackEvent.query.count() == 0, (
-            "El auto-reset debe borrar los eventos en la primera configuración del console_site"
+        # Los eventos NO deben borrarse — el operador decide luego.
+        assert AttackEvent.query.count() == 6, (
+            "El primer setup ya NO debe borrar eventos automáticamente"
+        )
+        # La bandera de oferta debe estar activa.
+        assert AppConfig.get("waf_reset_offer_pending") == "1", (
+            "Debe activarse waf_reset_offer_pending para mostrar el banner al operador"
         )
 
 
