@@ -204,6 +204,7 @@ Jinja2 templates + **HTMX** for partial page updates + **Alpine.js** for local s
 | `WARDNODE_PROXY_CONTAINER` | `wardnode-proxy` | Docker container name to stream ModSecurity logs from |
 | `WARDNODE_BACKUP_DIR` | `/app/data/backups` | Where encrypted backup zips are stored (named volume `backups`) |
 | `WARDNODE_DB_CONTAINER` | `wardnode-db` | Container name for pg_dump/pg_restore via Docker SDK |
+| `WARDNODE_CROWDSEC_CONTAINER` | `wardnode-crowdsec` | Container name for `cscli` calls (ban/unban via Docker SDK) |
 
 Copy `.env.example` to `.env` before first run.
 

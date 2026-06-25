@@ -23,9 +23,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+import ipaddress
+
 from app.audit.helpers import log_audit
 from app.extensions import db
-from app.models import AppConfig, SocIncident
+from app.models import AppConfig, AuditLog, SocIncident
 from app.soc.detect import _SEV_ORDER
 from app.soc.enrich import is_public_ip
 
@@ -41,11 +43,48 @@ _DURATION_RE = re.compile(r"^\d+[smhd]$")
 _REASON_RE = re.compile(r"^[\w\-]{1,64}$")
 
 
+def _recent_admin_login_ips(now: datetime, hours: int = 24) -> set[str]:
+    """Retorna el conjunto de IPs que han iniciado sesión como admin en las últimas `hours` horas.
+
+    Consulta AuditLog (action='auth.login', status='success'). Normaliza las IPs
+    con ipaddress para evitar bypass por forma equivalente. Descarta valores no
+    parseables. Best-effort: retorna set vacío ante cualquier excepción.
+
+    Nota operacional: log_audit() registra request.remote_addr. Detrás de un
+    reverse proxy sin ProxyFix, esa IP será la interna del proxy (ya protegida por
+    is_ban_safe Guardia 2). La guarda aporta valor pleno cuando el admin accede
+    directamente o cuando ProxyFix está activo.
+    """
+    try:
+        threshold = now - timedelta(hours=hours)
+        rows = (
+            AuditLog.query
+            .filter(
+                AuditLog.action == "auth.login",
+                AuditLog.status == "success",
+                AuditLog.ip_address.isnot(None),
+                AuditLog.created_at >= threshold,
+            )
+            .with_entities(AuditLog.ip_address)
+            .all()
+        )
+        result: set[str] = set()
+        for (ip_raw,) in rows:
+            try:
+                result.add(str(ipaddress.ip_address(ip_raw.strip())))
+            except ValueError:
+                pass
+        return result
+    except Exception:
+        log.exception("soar: error obteniendo IPs de login admin — guarda 3b inactiva")
+        return set()
+
+
 def maybe_block_incidents(created: list[SocIncident]) -> None:
     """Evalúa y bloquea las IPs de incidentes nuevos elegibles. Nunca lanza.
 
     Guards: soc_soar_enabled, método disponible, severidad, IP pública,
-    is_ban_safe, anti-repetición.
+    is_ban_safe, anti-repetición, IP de login admin reciente.
     """
     if not created:
         return
@@ -84,9 +123,16 @@ def maybe_block_incidents(created: list[SocIncident]) -> None:
 
     now = datetime.now(timezone.utc)
 
+    # R1: calcular una sola vez las IPs de logins admin recientes (Guarda 3b)
+    recent_admin_ips = _recent_admin_login_ips(now)
+    if recent_admin_ips:
+        log.debug("soar: %d IP(s) de login admin protegidas de bloqueo automático",
+                  len(recent_admin_ips))
+
     for incident in created:
         try:
-            _evaluate_and_block(incident, method, min_severity, duration, now)
+            _evaluate_and_block(incident, method, min_severity, duration, now,
+                                recent_admin_ips)
         except Exception:
             log.exception(
                 "soar: error inesperado evaluando incidente %s — se continúa con el siguiente",
@@ -104,6 +150,7 @@ def _evaluate_and_block(
     min_severity: str,
     duration: str,
     now: datetime,
+    recent_admin_ips: set[str] | None = None,
 ) -> None:
     """Evalúa un incidente y ejecuta el bloqueo si aplica."""
     ip = incident.source_ip
@@ -122,6 +169,21 @@ def _evaluate_and_block(
     safe, motivo = is_ban_safe(ip, request_ip="")
     if not safe:
         log.info("soar: %s rechazada por is_ban_safe: %s", ip, motivo)
+        return
+
+    # ── Guard 3b: IP de login de admin reciente (R1 — anti-lockout) ───────
+    # Protege IPs públicas desde las que el admin haya iniciado sesión en las
+    # últimas 24 h. Complementa ddos_safe_ips sin requerir configuración manual.
+    try:
+        norm_ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        norm_ip = ip
+    if recent_admin_ips and norm_ip in recent_admin_ips:
+        log.warning(
+            "soar: %s es IP de login admin reciente — skip para evitar auto-lockout "
+            "(añádela a ddos_safe_ips si el patrón es continuo)",
+            ip,
+        )
         return
 
     # ── Guard 4: anti-repetición — misma IP ya bloqueada por SOAR en la ventana

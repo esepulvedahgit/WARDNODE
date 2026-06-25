@@ -1,9 +1,12 @@
 import io
 import json
+import logging
 import os
 import re
 import threading
 import time
+
+log = logging.getLogger(__name__)
 
 from flask import jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -1702,7 +1705,9 @@ def ddos_ban():
     from app.ddos.control import ban_ip
     ok, error_msg = ban_ip(ip, duration=duration, reason=reason)
     if not ok:
-        return jsonify({"ok": False, "error": f"cscli error: {error_msg}"}), 500
+        # R2: loggear el detalle internamente; no exponer info de infraestructura al cliente
+        log.warning("ddos.ban: cscli falló para %s: %s", ip, error_msg)
+        return jsonify({"ok": False, "error": "No se pudo aplicar el ban (ver logs del servidor)"}), 500
     log_audit("ddos.ban", resource_type="ip", resource_name=ip,
               detail={"duration": duration, "reason": reason})
     return jsonify({"ok": True})
@@ -1722,7 +1727,9 @@ def ddos_unban():
     from app.ddos.control import unban_ip
     ok, error_msg = unban_ip(ip)
     if not ok:
-        return jsonify({"ok": False, "error": f"cscli error: {error_msg}"}), 500
+        # R2: loggear el detalle internamente; no exponer info de infraestructura al cliente
+        log.warning("ddos.unban: cscli falló para %s: %s", ip, error_msg)
+        return jsonify({"ok": False, "error": "No se pudo aplicar el unban (ver logs del servidor)"}), 500
     log_audit("ddos.unban", resource_type="ip", resource_name=ip)
     return jsonify({"ok": True})
 

@@ -487,7 +487,8 @@ def send_block_notification(incident: SocIncident) -> None:
     if incident.domain:
         telegram_html += f"\nDominio: <code>{_html.escape(incident.domain)}</code>"
     if base_url:
-        telegram_html += f'\n<a href="{base_url}/soc/incidente/{incident.id}">Ver detalle</a>'
+        # R4: escapar base_url aunque sea config de admin (robustez frente a comillas/caracteres especiales)
+        telegram_html += f'\n<a href="{_html.escape(base_url)}/soc/incidente/{incident.id}">Ver detalle</a>'
 
     sent: list[str] = []
 
@@ -517,12 +518,14 @@ def send_block_notification(incident: SocIncident) -> None:
             chat_id = (AppConfig.get("soc_alert_telegram_chat_id") or "").strip()
             if token and _CHAT_ID_RE.match(chat_id):
                 import httpx
-                httpx.post(
+                # R3: capturar respuesta y verificar status code (igual que _send_telegram_alert)
+                resp = httpx.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
                     json={"chat_id": chat_id, "text": telegram_html,
                           "parse_mode": "HTML", "disable_web_page_preview": True},
                     timeout=_TELEGRAM_TIMEOUT,
                 )
+                resp.raise_for_status()
                 sent.append("telegram")
         except Exception as exc:
             log.warning("soar/notify: telegram de bloqueo falló para incidente %s: %s",

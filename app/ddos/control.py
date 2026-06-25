@@ -4,16 +4,19 @@ Extraído de app/modules/routes.py para ser invocado tanto por las rutas del
 módulo DDoS como por el motor SOAR (app/soc/soar.py). La capa de validación
 (is_ban_safe) sigue siendo responsabilidad del caller.
 
-El nombre del contenedor CrowdSec puede configurarse a futuro via env; por ahora
-está hardcodeado al mismo valor que usa la UI: "wardnode-crowdsec".
+El nombre del contenedor CrowdSec se lee de la variable de entorno
+WARDNODE_CROWDSEC_CONTAINER (default "wardnode-crowdsec"), coherente con
+WARDNODE_PROXY_CONTAINER y WARDNODE_DB_CONTAINER.
 """
 from __future__ import annotations
 
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
-_CROWDSEC_CONTAINER = "wardnode-crowdsec"
+# R6: configurable via env para coherencia con WARDNODE_PROXY_CONTAINER et al.
+_CROWDSEC_CONTAINER = os.environ.get("WARDNODE_CROWDSEC_CONTAINER", "wardnode-crowdsec")
 
 
 def ban_ip(ip: str, duration: str = "24h", reason: str = "manual-ban") -> tuple[bool, str]:
@@ -33,13 +36,14 @@ def ban_ip(ip: str, duration: str = "24h", reason: str = "manual-ban") -> tuple[
 
         client = docker_sdk.from_env()
         crowdsec_c = client.containers.get(_CROWDSEC_CONTAINER)
+        # R5: forma --flag=value elimina ambigüedad de parseo en cobra/pflag (Go)
         exit_code, output = crowdsec_c.exec_run(
             [
                 "cscli", "decisions", "add",
-                "--ip", ip,
-                "--duration", duration,
-                "--reason", reason,
-                "--type", "ban",
+                f"--ip={ip}",
+                f"--duration={duration}",
+                f"--reason={reason}",
+                "--type=ban",
             ],
             user="root",
         )
@@ -66,8 +70,9 @@ def unban_ip(ip: str) -> tuple[bool, str]:
 
         client = docker_sdk.from_env()
         crowdsec_c = client.containers.get(_CROWDSEC_CONTAINER)
+        # R5: forma --flag=value (consistente con ban_ip)
         exit_code, output = crowdsec_c.exec_run(
-            ["cscli", "decisions", "delete", "--ip", ip],
+            ["cscli", "decisions", "delete", f"--ip={ip}"],
             user="root",
         )
         raw = output.decode("utf-8", errors="replace").strip()

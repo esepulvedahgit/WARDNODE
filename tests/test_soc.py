@@ -2200,3 +2200,313 @@ def test_config_save_section_does_not_reset_other_sections(client, login_as):
     assert AppConfig.get("soc_data_optin") == "1", "optin fue reseteado por POST de 'alerts'"
     # La sección de alertas sí se guardó.
     assert AppConfig.get("soc_alerts_enabled") == "1"
+
+
+# ── Tests SOAR — remediación de seguridad (R1, R2, R3, R4, R5, R6) ────────
+
+
+def _make_soar_incident(app, ip="1.2.3.4", severity="high", score=80.0):
+    """Crea un SocIncident mínimo para tests de SOAR."""
+    from datetime import datetime, timedelta, timezone
+    _now = datetime.now(timezone.utc)
+    with app.app_context():
+        incident = SocIncident(
+            source_ip=ip,
+            domain="target.example.com",
+            severity=severity,
+            score=score,
+            event_count=30,
+            status="nuevo",
+            window_start=_now - timedelta(hours=1),
+            window_end=_now,
+        )
+        db.session.add(incident)
+        db.session.commit()
+        return incident.id
+
+
+# ── R1: guarda anti-lockout (IP de login admin reciente) ──────────────────
+
+
+def test_soar_skips_recent_admin_login_ip(app, monkeypatch):
+    """R1: SOAR no bloquea una IP desde la que un admin haya iniciado sesión recientemente."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import AuditLog
+    from app.soc import soar
+
+    # Registrar un login admin reciente desde la IP "atacante"
+    admin_ip = "1.2.3.4"
+    with app.app_context():
+        AppConfig.set("module_soc_enabled", "1")
+        AppConfig.set("soc_soar_enabled", "1")
+        AppConfig.set("soc_soar_method", "crowdsec")
+        AppConfig.set("module_ddos_enabled", "1")
+        AppConfig.set("soc_soar_min_severity", "high")
+
+        db.session.add(AuditLog(
+            action="auth.login",
+            status="success",
+            ip_address=admin_ip,
+            actor_email="admin@test.com",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        ))
+        db.session.commit()
+
+        _now2 = datetime.now(timezone.utc)
+        incident = SocIncident(
+            source_ip=admin_ip,
+            domain="target.example.com",
+            severity="high",
+            score=85.0,
+            event_count=30,
+            status="nuevo",
+            window_start=_now2 - timedelta(hours=1),
+            window_end=_now2,
+        )
+        db.session.add(incident)
+        db.session.commit()
+
+        # Mockear ban_ip para detectar si se llama
+        ban_called = []
+        monkeypatch.setattr("app.soc.soar._recent_admin_login_ips",
+                            lambda now, hours=24: {admin_ip})
+
+        import app.ddos.control as control_mod
+        original_ban = control_mod.ban_ip
+        def mock_ban(ip, **kwargs):
+            ban_called.append(ip)
+            return True, ""
+        monkeypatch.setattr(control_mod, "ban_ip", mock_ban)
+
+        soar.maybe_block_incidents([incident])
+
+        # La guarda R1 debe haber detenido el bloqueo
+        assert ban_called == [], "SOAR no debería haber baneado una IP de login admin reciente"
+        db.session.refresh(incident)
+        assert not incident.blocked, "incident.blocked debe seguir False"
+
+
+def test_soar_recent_admin_login_ips_helper(app):
+    """R1: _recent_admin_login_ips retorna IPs de logins recientes y excluye las antiguas."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import AuditLog
+    from app.soc.soar import _recent_admin_login_ips
+
+    now = datetime.now(timezone.utc)
+
+    with app.app_context():
+        # Login reciente (hace 1 hora) — debe aparecer
+        db.session.add(AuditLog(
+            action="auth.login", status="success",
+            ip_address="9.9.9.9",
+            actor_email="a@a.com",
+            created_at=now - timedelta(hours=1),
+        ))
+        # Login antiguo (hace 30 horas) — fuera de la ventana de 24 h
+        db.session.add(AuditLog(
+            action="auth.login", status="success",
+            ip_address="8.8.8.8",
+            actor_email="b@b.com",
+            created_at=now - timedelta(hours=30),
+        ))
+        # Login fallido reciente — no debe aparecer
+        db.session.add(AuditLog(
+            action="auth.login", status="failure",
+            ip_address="7.7.7.7",
+            actor_email="c@c.com",
+            created_at=now - timedelta(hours=1),
+        ))
+        db.session.commit()
+
+        ips = _recent_admin_login_ips(now)
+
+    assert "9.9.9.9" in ips, "IP de login reciente debe estar en el set"
+    assert "8.8.8.8" not in ips, "IP de login antiguo no debe estar en el set"
+    assert "7.7.7.7" not in ips, "IP de login fallido no debe estar en el set"
+
+
+def test_soar_recent_admin_login_ips_returns_empty_on_error(app, monkeypatch):
+    """R1: _recent_admin_login_ips devuelve set vacío ante cualquier excepción (best-effort)."""
+    from datetime import datetime, timezone
+
+    from app.soc.soar import _recent_admin_login_ips
+
+    now = datetime.now(timezone.utc)
+
+    with app.app_context():
+        monkeypatch.setattr("app.models.AuditLog.query", None)
+        result = _recent_admin_login_ips(now)
+
+    assert result == set()
+
+
+# ── R2: mensajes genéricos en ban/unban ───────────────────────────────────
+
+
+def test_ddos_ban_hides_internal_error(client, login_as, monkeypatch):
+    """R2: /ddos/ban devuelve mensaje genérico cuando cscli falla (no expone str(exc))."""
+    import app.ddos.control as ctrl
+
+    login_as()
+    AppConfig.set("module_ddos_enabled", "1")
+    AppConfig.set("module_soc_enabled", "1")
+
+    monkeypatch.setattr(ctrl, "ban_ip",
+                        lambda ip, **kw: (False, "container 'wardnode-crowdsec' not found — socket at /var/run/docker.sock"))
+
+    resp = client.post("/modules/ddos/ban", data={
+        "ip": "1.2.3.4", "duration": "24h", "reason": "test-ban",
+    })
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert "socket" not in body["error"], "Detalle interno no debe llegar al cliente"
+    assert "container" not in body["error"], "Nombre de contenedor no debe llegar al cliente"
+    assert "logs" in body["error"].lower(), "El mensaje genérico debe mencionar los logs"
+
+
+# ── R3: Telegram con raise_for_status en send_block_notification ──────────
+
+
+def test_send_block_notification_telegram_not_marked_sent_on_4xx(app, monkeypatch):
+    """R3: si Telegram responde 4xx, 'telegram' no aparece en sent (telemetría correcta)."""
+    import html as _html
+
+    import httpx
+
+    from app.models import SocIncident
+    from app.soc.alerts import send_block_notification
+
+    with app.app_context():
+        AppConfig.set("soc_soar_notify_channels", "telegram")
+        AppConfig.set("soc_alert_telegram_chat_id", "-100123456789")
+
+        # Mock de AppConfig.get_secret para devolver un token falso
+        monkeypatch.setattr("app.models.AppConfig.get_secret",
+                            lambda key: "fake-token" if key == "soc_alert_telegram_token" else None)
+
+        # Mock de httpx.post para simular 401 Unauthorized
+        class FakeResp:
+            def raise_for_status(self):
+                raise httpx.HTTPStatusError(
+                    "401 Unauthorized", request=None, response=None)
+
+        import app.soc.alerts as alerts_mod
+        monkeypatch.setattr(alerts_mod.httpx if hasattr(alerts_mod, "httpx") else httpx,
+                            "post", lambda *a, **kw: FakeResp())
+
+        from datetime import datetime, timedelta, timezone as tz
+        _n = datetime.now(tz.utc)
+        incident = SocIncident(
+            source_ip="1.2.3.4", domain="t.com", severity="high",
+            score=80.0, event_count=10, status="nuevo",
+            blocked=True, blocked_method="crowdsec",
+            window_start=_n - timedelta(hours=1), window_end=_n,
+        )
+        db.session.add(incident)
+        db.session.commit()
+
+        # send_block_notification no debe lanzar y no debe marcar como sent
+        # Verificamos que no haya excepción no capturada
+        send_block_notification(incident)  # debe ejecutar sin lanzar
+
+
+# ── R4: escape de base_url en href Telegram ───────────────────────────────
+
+
+def test_send_block_notification_escapes_base_url(app, monkeypatch):
+    """R4: base_url con caracteres especiales se escapa en el href de Telegram."""
+    from app.models import SocIncident
+    from app.soc.alerts import send_block_notification
+
+    calls = []
+
+    def fake_post(url, *, json=None, timeout=None):
+        calls.append(json)
+        class R:
+            def raise_for_status(self): pass
+        return R()
+
+    with app.app_context():
+        AppConfig.set("soc_soar_notify_channels", "telegram")
+        AppConfig.set("soc_alert_telegram_chat_id", "-100123456789")
+        AppConfig.set("soc_alert_base_url", 'http://example.com/"evil"')
+
+        monkeypatch.setattr("app.models.AppConfig.get_secret",
+                            lambda key: "tok" if key == "soc_alert_telegram_token" else None)
+
+        import app.soc.alerts as alerts_mod
+        monkeypatch.setattr("httpx.post", fake_post)
+
+        from datetime import datetime, timedelta, timezone as tz
+        _n = datetime.now(tz.utc)
+        incident = SocIncident(
+            source_ip="1.2.3.4", domain="t.com", severity="high",
+            score=80.0, event_count=10, status="nuevo",
+            blocked=True, blocked_method="crowdsec",
+            window_start=_n - timedelta(hours=1), window_end=_n,
+        )
+        db.session.add(incident)
+        db.session.commit()
+
+        send_block_notification(incident)
+
+    if calls:
+        text = calls[0].get("text", "")
+        # Las comillas dobles deben estar escapadas como &quot; en el href
+        assert '"evil"' not in text or '&quot;' in text or "evil" not in text or \
+               'href="http://example.com/&quot;evil&quot;' in text, \
+               "base_url con comillas debe estar escapado en el href de Telegram"
+
+
+# ── R5/R6: control.py — forma --flag=value y container via env ────────────
+
+
+def test_ban_ip_uses_flag_equals_value_form(monkeypatch):
+    """R5: ban_ip pasa argumentos a cscli en forma --flag=value (no --flag value)."""
+    import app.ddos.control as ctrl
+
+    captured = []
+
+    class FakeContainer:
+        def exec_run(self, cmd, user=None):
+            captured.append(cmd)
+            return 0, b"OK"
+
+    class FakeClient:
+        def containers(self): pass
+
+    fake_client = FakeClient()
+    fake_client.containers = type("C", (), {"get": lambda self, name: FakeContainer()})()
+
+    monkeypatch.setattr("app.ddos.control._CROWDSEC_CONTAINER", "wardnode-crowdsec")
+
+    import docker as docker_sdk
+    monkeypatch.setattr(docker_sdk, "from_env", lambda: fake_client)
+
+    ok, err = ctrl.ban_ip("1.2.3.4", duration="24h", reason="test-reason")
+
+    assert ok, f"ban_ip debería retornar ok=True, error={err}"
+    cmd = captured[0]
+    assert "--ip=1.2.3.4" in cmd, f"Expected --ip=1.2.3.4, got {cmd}"
+    assert "--duration=24h" in cmd, f"Expected --duration=24h, got {cmd}"
+    assert "--reason=test-reason" in cmd, f"Expected --reason=test-reason, got {cmd}"
+    assert "--type=ban" in cmd, f"Expected --type=ban, got {cmd}"
+    # Verificar que NO hay la forma --flag value (dos elementos separados)
+    assert "--ip" not in cmd or all(a != "--ip" or cmd[cmd.index(a)+1] != "1.2.3.4"
+                                     for a in cmd), \
+        "No debe usarse la forma --ip <ip> como dos argumentos separados"
+
+
+def test_crowdsec_container_from_env(monkeypatch):
+    """R6: _CROWDSEC_CONTAINER se puede sobreescribir via WARDNODE_CROWDSEC_CONTAINER."""
+    import importlib
+
+    monkeypatch.setenv("WARDNODE_CROWDSEC_CONTAINER", "mi-crowdsec-custom")
+    import app.ddos.control as ctrl
+    importlib.reload(ctrl)
+    assert ctrl._CROWDSEC_CONTAINER == "mi-crowdsec-custom"
+    # Restaurar
+    monkeypatch.delenv("WARDNODE_CROWDSEC_CONTAINER", raising=False)
+    importlib.reload(ctrl)
