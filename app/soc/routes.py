@@ -283,6 +283,49 @@ def _save_daily_report(changed: list[str]) -> bool:
     return True
 
 
+_SOAR_METHODS = ("crowdsec", "ufw")
+_SOAR_CHANNELS = frozenset(("email", "telegram"))
+_SOAR_DURATION_RE = re.compile(r"^\d+[smhd]$")
+
+
+def _save_soar(changed: list[str]) -> bool:
+    soar_enabled = "1" if request.form.get("soar_enabled") else "0"
+    if soar_enabled != (AppConfig.get("soc_soar_enabled") or "0"):
+        AppConfig.set("soc_soar_enabled", soar_enabled)
+        changed.append("soar_enabled")
+
+    method = request.form.get("soar_method", "crowdsec").strip()
+    if method in _SOAR_METHODS and method != (AppConfig.get("soc_soar_method") or "crowdsec"):
+        AppConfig.set("soc_soar_method", method)
+        changed.append("soar_method")
+
+    min_severity = request.form.get("soar_min_severity", "")
+    if min_severity in _SEVERITIES and min_severity != (
+        AppConfig.get("soc_soar_min_severity") or "high"
+    ):
+        AppConfig.set("soc_soar_min_severity", min_severity)
+        changed.append("soar_min_severity")
+
+    duration = (request.form.get("soar_duration") or "24h").strip()
+    if _SOAR_DURATION_RE.match(duration) and duration != (
+        AppConfig.get("soc_soar_duration") or "24h"
+    ):
+        AppConfig.set("soc_soar_duration", duration)
+        changed.append("soar_duration")
+
+    # Canales de notificación: checkboxes (email / telegram)
+    selected_channels = [
+        c for c in ("email", "telegram")
+        if request.form.get(f"soar_notify_{c}")
+    ]
+    notify_channels = ",".join(selected_channels) if selected_channels else "email,telegram"
+    if notify_channels != (AppConfig.get("soc_soar_notify_channels") or "email,telegram"):
+        AppConfig.set("soc_soar_notify_channels", notify_channels)
+        changed.append("soar_notify_channels")
+
+    return True
+
+
 _SAVE_HANDLERS = {
     "llm": _save_llm,
     "threat_intel": _save_threat_intel,
@@ -290,6 +333,7 @@ _SAVE_HANDLERS = {
     "detection": _save_detection,
     "ml_tuning": _save_ml_tuning,
     "daily_report": _save_daily_report,
+    "soar": _save_soar,
 }
 
 # Secciones cuyo formulario vive en una pestaña con id distinto al `section`.
@@ -712,6 +756,14 @@ def config():
         daily_report_enabled=AppConfig.get("soc_daily_report_enabled") == "1",
         daily_report_email_to=AppConfig.get("soc_daily_report_email_to") or "",
         daily_report_hour=AppConfig.get("soc_daily_report_hour") or "8",
+        # SOAR
+        soar_enabled=AppConfig.get("soc_soar_enabled") == "1",
+        soar_method=AppConfig.get("soc_soar_method") or "crowdsec",
+        soar_min_severity=AppConfig.get("soc_soar_min_severity") or "high",
+        soar_duration=AppConfig.get("soc_soar_duration") or "24h",
+        soar_notify_channels=set(
+            (AppConfig.get("soc_soar_notify_channels") or "email,telegram").split(",")
+        ),
         active_tab=request.args.get("tab") or "ia",
     )
 

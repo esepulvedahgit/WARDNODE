@@ -68,6 +68,7 @@
           <th style="width:95px">Severidad</th>
           <th style="width:100px">Estado</th>
           <th style="width:80px">Abuse</th>
+          <th style="width:70px">SOAR</th>
           <th style="width:160px">Acciones</th>
         </tr>
       </thead>
@@ -93,6 +94,14 @@
             {% endif %}
           </td>
           <td class="t-mono t-dim">{{ i.abuse_score if i.abuse_score is not none else '—' }}</td>
+          <td>
+            {% if i.blocked %}
+            <span title="Bloqueado por SOAR vía {{ i.blocked_method | upper }} el {{ i.blocked_at.strftime('%Y-%m-%d %H:%M') if i.blocked_at else '?' }}"
+                  style="background:#fef2f2;color:#b91c1c;border-radius:4px;padding:1px 7px;font-size:10px;font-weight:600;white-space:nowrap">
+              <i class="bi bi-robot me-1"></i>SOAR
+            </span>
+            {% else %}—{% endif %}
+          </td>
           <td>
             <div style="display:flex;gap:4px">
               {% if i.status == 'nuevo' %}

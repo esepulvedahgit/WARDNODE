@@ -20,13 +20,13 @@ _MAX_ABUSE_RESPONSE_BYTES = 256 * 1024  # 256 KB — AbuseIPDB devuelve JSON com
 DEFAULT_CACHE_TTL_HOURS = 24
 
 
-def _is_public_ip(ip: str) -> bool:
+def is_public_ip(ip: str) -> bool:
     """Verifica que ip es una dirección IP válida y enrutable públicamente.
 
     Descarta IPs privadas, loopback, link-local, multicast, reservadas y
-    cadenas no parseables. Llamar antes de cualquier egress a AbuseIPDB para
-    evitar enviar basura atacante-controlada a un tercero o agotar cuota con
-    no-IPs.
+    cadenas no parseables. Llamar antes de cualquier egress a AbuseIPDB o
+    antes de aplicar un bloqueo automático SOAR, para evitar banear rangos
+    internos o enviar basura atacante-controlada a un tercero.
     """
     try:
         obj = ipaddress.ip_address(ip)
@@ -40,6 +40,10 @@ def _is_public_ip(ip: str) -> bool:
         or obj.is_multicast
         or obj.is_unspecified
     )
+
+
+# Alias privado por compatibilidad con usos internos existentes
+_is_public_ip = is_public_ip
 
 # Mapeo estático categoría de AttackEvent (valores de _TAG_TO_CATEGORY en
 # proxy/ingest.py) → técnicas MITRE ATT&CK.

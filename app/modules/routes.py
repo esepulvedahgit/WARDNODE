@@ -222,7 +222,16 @@ def _wf_required():
 def wf_index():
     if (r := _wf_required()):
         return r
-    return render_template("modules/wf.html", socket_path=SOCKET_PATH)
+    from app.models import SocIncident
+    soar_blocks = (
+        SocIncident.query.filter(SocIncident.blocked.is_(True))
+        .order_by(SocIncident.blocked_at.desc())
+        .limit(50)
+        .all()
+        if AppConfig.get("soc_soar_enabled") == "1"
+        else []
+    )
+    return render_template("modules/wf.html", socket_path=SOCKET_PATH, soar_blocks=soar_blocks)
 
 
 _SSH_USER_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,64}$")
@@ -1690,23 +1699,13 @@ def ddos_ban():
     if not safe:
         return jsonify({"ok": False, "error": motivo}), 400
 
-    try:
-        import docker as docker_sdk
-        client = docker_sdk.from_env()
-        crowdsec_c = client.containers.get("wardnode-crowdsec")
-        exit_code, output = crowdsec_c.exec_run(
-            ["cscli", "decisions", "add", "--ip", ip,
-             "--duration", duration, "--reason", reason, "--type", "ban"],
-            user="root",
-        )
-        raw = output.decode("utf-8", errors="replace").strip()
-        if exit_code != 0:
-            return jsonify({"ok": False, "error": f"cscli error: {raw[:300]}"}), 500
-        log_audit("ddos.ban", resource_type="ip", resource_name=ip,
-                  detail={"duration": duration, "reason": reason})
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    from app.ddos.control import ban_ip
+    ok, error_msg = ban_ip(ip, duration=duration, reason=reason)
+    if not ok:
+        return jsonify({"ok": False, "error": f"cscli error: {error_msg}"}), 500
+    log_audit("ddos.ban", resource_type="ip", resource_name=ip,
+              detail={"duration": duration, "reason": reason})
+    return jsonify({"ok": True})
 
 
 @bp.post("/ddos/unban")
@@ -1720,21 +1719,12 @@ def ddos_unban():
     if not ip or not _DDOS_IP_RE.match(ip):
         return jsonify({"ok": False, "error": "IP inválida"}), 400
 
-    try:
-        import docker as docker_sdk
-        client = docker_sdk.from_env()
-        crowdsec_c = client.containers.get("wardnode-crowdsec")
-        exit_code, output = crowdsec_c.exec_run(
-            ["cscli", "decisions", "delete", "--ip", ip],
-            user="root",
-        )
-        raw = output.decode("utf-8", errors="replace").strip()
-        if exit_code != 0:
-            return jsonify({"ok": False, "error": f"cscli error: {raw[:300]}"}), 500
-        log_audit("ddos.unban", resource_type="ip", resource_name=ip)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    from app.ddos.control import unban_ip
+    ok, error_msg = unban_ip(ip)
+    if not ok:
+        return jsonify({"ok": False, "error": f"cscli error: {error_msg}"}), 500
+    log_audit("ddos.unban", resource_type="ip", resource_name=ip)
+    return jsonify({"ok": True})
 
 
 @bp.post("/ddos/safe-ips")

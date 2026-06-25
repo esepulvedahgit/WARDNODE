@@ -440,3 +440,93 @@ def notify_incidents(incidents: list[SocIncident]) -> None:
             log.warning("soc/alerts: fallo inesperado alertando incidente %s: %s",
                         incident.id, type(exc).__name__)
             db.session.rollback()
+
+
+def send_block_notification(incident: SocIncident) -> None:
+    """Notifica que el SOAR bloqueó la IP de un incidente. Nunca lanza.
+
+    Reutiliza los canales de alerta configurados en la pestaña Alertas del SOC
+    (email/Telegram) según la selección en soc_soar_notify_channels (CSV).
+    Si el canal seleccionado no está configurado, soft-skip silencioso.
+    """
+    channels_raw = AppConfig.get("soc_soar_notify_channels") or "email,telegram"
+    channels_cfg = {c.strip() for c in channels_raw.split(",") if c.strip()}
+
+    method = incident.blocked_method or "?"
+    blocked_until_str = (
+        incident.blocked_until.strftime("%Y-%m-%d %H:%M UTC")
+        if incident.blocked_until
+        else "permanente"
+    )
+
+    # ── Texto plano (email y fallback Telegram) ───────────────────────────
+    lines = [
+        f"🚫 SOAR bloqueó {incident.source_ip}",
+        "",
+        f"Incidente: #{incident.id}",
+        f"Severidad: {incident.severity.upper()}  ·  Score: {incident.score:.0f}/100",
+        f"Método de bloqueo: {method.upper()}",
+        f"Expira: {blocked_until_str}",
+    ]
+    if incident.domain:
+        lines.append(f"Dominio objetivo: {incident.domain}")
+    if incident.abuse_score is not None:
+        lines.append(f"AbuseIPDB: {incident.abuse_score}/100")
+    base_url = (AppConfig.get("soc_alert_base_url") or "").rstrip("/")
+    if base_url:
+        lines.append(f"\nDetalle: {base_url}/soc/incidente/{incident.id}")
+    plain_body = "\n".join(lines)
+
+    # ── HTML compacto para Telegram ───────────────────────────────────────
+    telegram_html = (
+        f"🚫 <b>SOAR bloqueó</b> <code>{_html.escape(incident.source_ip)}</code>\n"
+        f"Incidente <b>#{incident.id}</b> · Severidad <b>{incident.severity.upper()}</b> "
+        f"({incident.score:.0f}/100)\n"
+        f"Método: <b>{method.upper()}</b> · Expira: <code>{_html.escape(blocked_until_str)}</code>"
+    )
+    if incident.domain:
+        telegram_html += f"\nDominio: <code>{_html.escape(incident.domain)}</code>"
+    if base_url:
+        telegram_html += f'\n<a href="{base_url}/soc/incidente/{incident.id}">Ver detalle</a>'
+
+    sent: list[str] = []
+
+    if "email" in channels_cfg:
+        try:
+            from app.email import send_soc_alert_email, smtp_configured
+            if smtp_configured():
+                recipients = _alert_recipients()
+                if recipients:
+                    send_soc_alert_email(
+                        recipients,
+                        f"[WardNode SOAR] IP bloqueada #{incident.id} — {incident.source_ip}",
+                        plain_body,
+                    )
+                    sent.append("email")
+        except Exception as exc:
+            log.warning("soar/notify: email de bloqueo falló para incidente %s: %s",
+                        incident.id, type(exc).__name__)
+
+    if "telegram" in channels_cfg:
+        try:
+            from app.encryption import EncryptionNotConfigured
+            try:
+                token = AppConfig.get_secret("soc_alert_telegram_token")
+            except EncryptionNotConfigured:
+                token = None
+            chat_id = (AppConfig.get("soc_alert_telegram_chat_id") or "").strip()
+            if token and _CHAT_ID_RE.match(chat_id):
+                import httpx
+                httpx.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": telegram_html,
+                          "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=_TELEGRAM_TIMEOUT,
+                )
+                sent.append("telegram")
+        except Exception as exc:
+            log.warning("soar/notify: telegram de bloqueo falló para incidente %s: %s",
+                        incident.id, type(exc).__name__)
+
+    if sent:
+        log.info("soar/notify: bloqueo de %s notificado via %s", incident.source_ip, sent)

@@ -710,6 +710,67 @@
     </div>
   </div>
 
+  {# ── Panel SOAR: IPs bloqueadas automáticamente por el SOC ── #}
+  {% if soar_blocks %}
+  <div class="row g-4 mt-0">
+    <div class="col-12">
+      <div class="card-panel">
+        <div class="card-panel-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i class="bi bi-robot" style="color:#b91c1c"></i>
+            <h2 class="card-panel-title">IPs bloqueadas por SOAR</h2>
+          </div>
+          <span class="badge" style="background:#b91c1c;font-size:10px">{{ soar_blocks | length }} bloqueo(s)</span>
+        </div>
+        <div class="card-panel-body" style="padding-top:8px">
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+            Bloqueos ejecutados automáticamente por el motor SOAR del SOC. Para desbloquear una IP, usa
+            el panel correspondiente (CrowdSec → Decisiones / WF → Bloquear).
+          </p>
+          <div class="table-responsive">
+            <table class="data-table" style="margin:0;font-size:12px">
+              <thead>
+                <tr>
+                  <th>IP bloqueada</th>
+                  <th>Método</th>
+                  <th>Incidente</th>
+                  <th>Bloqueado el</th>
+                  <th>Expira</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for b in soar_blocks %}
+                <tr>
+                  <td class="t-mono">{{ b.source_ip }}</td>
+                  <td>
+                    <span class="badge {% if b.blocked_method == 'crowdsec' %}bg-success{% else %}bg-secondary{% endif %}"
+                          style="font-size:10px">
+                      {{ b.blocked_method | upper if b.blocked_method else '?' }}
+                    </span>
+                  </td>
+                  <td class="t-mono t-dim">
+                    <a href="{{ url_for('soc.detalle', incident_id=b.id) }}">#{{ b.id }}</a>
+                    <span class="sev-badge sev-badge-{{ b.severity }}" style="font-size:9px">{{ b.severity }}</span>
+                  </td>
+                  <td class="t-mono t-dim" style="white-space:nowrap">
+                    {{ b.blocked_at.strftime('%Y-%m-%d %H:%M') if b.blocked_at else '—' }}
+                  </td>
+                  <td class="t-mono t-dim" style="white-space:nowrap">
+                    {% if b.blocked_until %}{{ b.blocked_until.strftime('%Y-%m-%d %H:%M') }}
+                    {% elif b.blocked_method == 'ufw' %}<span class="text-muted">permanente</span>
+                    {% else %}—{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 {% endblock %}
 

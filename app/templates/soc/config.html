@@ -191,6 +191,15 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_tab == 'soar' %}active{% endif %}"
+              id="tab-soar-btn" data-bs-toggle="pill" data-bs-target="#tab-soar"
+              type="button" role="tab" aria-controls="tab-soar"
+              aria-selected="{{ 'true' if active_tab == 'soar' else 'false' }}">
+        <i class="bi bi-robot me-1"></i>SOAR
+        {% if soar_enabled %}<span class="badge bg-success ms-1" style="font-size:9px">ON</span>{% endif %}
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link {% if active_tab == 'mantenimiento' %}active{% endif %}"
               id="tab-maint-btn" data-bs-toggle="pill" data-bs-target="#tab-maint"
               type="button" role="tab" aria-controls="tab-maint"
@@ -769,6 +778,191 @@
                   role="status" aria-hidden="true"></span>
             <i class="bi bi-check2 me-1" x-show="!s"></i>
             <span x-text="s ? 'Guardando…' : 'Guardar reporte'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    {# ══════════════════════════════════════════════════════════════════ #}
+    {# PESTAÑA SOAR — Respuesta automática a incidentes                  #}
+    {# ══════════════════════════════════════════════════════════════════ #}
+    <div class="tab-pane fade {% if active_tab == 'soar' %}show active{% endif %}"
+         id="tab-soar" role="tabpanel" aria-labelledby="tab-soar-btn">
+
+      {# — Explicación del módulo — #}
+      <div class="alert alert-info d-flex gap-2 align-items-start mb-4" role="alert">
+        <i class="bi bi-info-circle-fill flex-shrink-0 mt-1"></i>
+        <div>
+          <strong>¿Qué es SOAR?</strong>
+          El módulo SOAR (<em>Security Orchestration, Automation &amp; Response</em>) cierra el lazo
+          <strong>detección → respuesta</strong> automáticamente: cuando el SOC crea un incidente
+          que supera el umbral de severidad, la IP del atacante es <strong>bloqueada sin intervención
+          manual</strong> mediante el método seleccionado. El bloqueo queda registrado en el incidente
+          y se notifica por los canales de alerta configurados.
+          <ul class="mb-0 mt-1 small">
+            <li>Sólo bloquea IPs <strong>públicas</strong> que superen el umbral de severidad.</li>
+            <li>Nunca banea tu propia IP, rangos privados, red Docker ni el host SSH de gestión.</li>
+            <li>Respeta la allowlist de IPs protegidas del módulo CrowdSec.</li>
+            <li>Anti-repetición: no re-banea la misma IP en las últimas 6 h.</li>
+          </ul>
+        </div>
+      </div>
+
+      <form method="post" action="{{ url_for('soc.config_save') }}"
+            x-data="{s:false, method:'{{ soar_method }}'}" @submit="s=true">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="section" value="soar">
+
+        {# — Activar SOAR — #}
+        <div class="card-panel mb-3">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-robot me-2" style="color:var(--accent)"></i>Bloqueo automático
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch"
+                     id="soar_enabled" name="soar_enabled"
+                     {% if soar_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="soar_enabled">
+                Activar bloqueo automático SOAR
+              </label>
+              <div class="form-text">
+                Si está desactivado, el SOC sigue operando exactamente igual que antes —
+                sin ningún bloqueo automático.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# — Método de bloqueo — #}
+        <div class="card-panel mb-3">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-shield-lock me-2" style="color:var(--accent)"></i>Método de bloqueo
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="card border h-100 p-3 cursor-pointer"
+                       :class="method === 'crowdsec' ? 'border-primary bg-primary bg-opacity-10' : ''">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <input type="radio" name="soar_method" value="crowdsec"
+                           x-model="method" class="form-check-input mt-0">
+                    <span class="fw-semibold">CrowdSec <span class="badge bg-success ms-1">Recomendado</span></span>
+                  </div>
+                  <ul class="small text-secondary mb-0">
+                    <li>Ban <strong>temporal</strong> con expiración configurable</li>
+                    <li>Aparece en el panel de decisiones de CrowdSec</li>
+                    <li>Bloqueo via <code>nftables</code> (aislado de UFW)</li>
+                    <li>Requiere módulo CrowdSec activo</li>
+                  </ul>
+                </label>
+              </div>
+              <div class="col-md-6">
+                <label class="card border h-100 p-3 cursor-pointer"
+                       :class="method === 'ufw' ? 'border-warning bg-warning bg-opacity-10' : ''">
+                  <div class="d-flex align-items-center gap-2 mb-2">
+                    <input type="radio" name="soar_method" value="ufw"
+                           x-model="method" class="form-check-input mt-0">
+                    <span class="fw-semibold">UFW <span class="badge bg-secondary ms-1">Avanzado</span></span>
+                  </div>
+                  <ul class="small text-secondary mb-0">
+                    <li>Regla <code>deny from &lt;IP&gt;</code> en UFW</li>
+                    <li>Bloqueo <strong>permanente</strong> (sin expiración)</li>
+                    <li>Visible en el panel WF → UFW status</li>
+                    <li>Requiere módulo WardNode WF activo</li>
+                  </ul>
+                </label>
+              </div>
+            </div>
+
+            {# Duración solo aplica a CrowdSec #}
+            <div class="mt-3" x-show="method === 'crowdsec'" x-cloak>
+              <label class="form-label" for="soar_duration">
+                Duración del ban (solo CrowdSec)
+              </label>
+              <input type="text" id="soar_duration" name="soar_duration"
+                     value="{{ soar_duration }}"
+                     class="form-control" style="max-width:140px"
+                     placeholder="24h"
+                     pattern="^\d+[smhd]$"
+                     title="Formato: número + s/m/h/d (ej: 48h, 7d, 30m)">
+              <div class="form-text">Formato: número + s/m/h/d — ej. <code>24h</code>, <code>7d</code>, <code>30m</code>.</div>
+            </div>
+          </div>
+        </div>
+
+        {# — Umbrales de activación — #}
+        <div class="card-panel mb-3">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-sliders me-2" style="color:var(--accent)"></i>Umbrales de activación
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <div class="mb-3">
+              <label class="form-label" for="soar_min_severity">
+                Severidad mínima para bloquear
+              </label>
+              <select id="soar_min_severity" name="soar_min_severity" class="form-select"
+                      style="max-width:200px">
+                {% for sev in ("low", "medium", "high", "critical") %}
+                <option value="{{ sev }}" {% if soar_min_severity == sev %}selected{% endif %}>
+                  {{ sev.capitalize() }}
+                  {% if sev == "high" %} (recomendado){% endif %}
+                </option>
+                {% endfor %}
+              </select>
+              <div class="form-text">
+                Solo se bloquean incidentes con severidad igual o superior. Default: <code>High</code>.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# — Canales de notificación del bloqueo — #}
+        <div class="card-panel mb-3">
+          <div class="card-panel-header">
+            <h2 class="card-panel-title">
+              <i class="bi bi-bell me-2" style="color:var(--accent)"></i>Notificación del bloqueo
+            </h2>
+          </div>
+          <div class="card-panel-body">
+            <p class="text-secondary small mb-3">
+              Cuando SOAR bloquea una IP, notifica por los canales seleccionados usando
+              <strong>los mismos destinos</strong> configurados en la pestaña
+              <strong>Alertas</strong> (email y/o Telegram).
+            </p>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="soar_notify_email"
+                     name="soar_notify_email"
+                     {% if 'email' in soar_notify_channels %}checked{% endif %}>
+              <label class="form-check-label" for="soar_notify_email">
+                <i class="bi bi-envelope me-1"></i>Email
+                <span class="text-muted small">(usa destinos de Alertas → Email)</span>
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="soar_notify_telegram"
+                     name="soar_notify_telegram"
+                     {% if 'telegram' in soar_notify_channels %}checked{% endif %}>
+              <label class="form-check-label" for="soar_notify_telegram">
+                <i class="bi bi-telegram me-1"></i>Telegram
+                <span class="text-muted small">(usa el bot configurado en Alertas → Telegram)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-sm" :disabled="s">
+            <span x-show="s" class="spinner-border spinner-border-sm me-1"
+                  role="status" aria-hidden="true"></span>
+            <i class="bi bi-check2 me-1" x-show="!s"></i>
+            <span x-text="s ? 'Guardando…' : 'Guardar SOAR'"></span>
           </button>
         </div>
       </form>

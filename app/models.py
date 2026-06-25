@@ -423,6 +423,16 @@ class SocIncident(db.Model, TimestampMixin):
     alerted_at = db.Column(db.DateTime, nullable=True)
     # cuándo se envió la alerta (email/Telegram) — base del cooldown anti-spam
 
+    # ── SOAR: bloqueo automático ──────────────────────────────────────────
+    blocked = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    # True cuando el módulo SOAR ejecutó un bloqueo para este incidente
+    blocked_at = db.Column(db.DateTime, nullable=True)
+    # timestamp UTC del momento del bloqueo
+    blocked_method = db.Column(db.String(20), nullable=True)
+    # "crowdsec" | "ufw"
+    blocked_until = db.Column(db.DateTime, nullable=True)
+    # expiración informativa del ban (solo CrowdSec); None para UFW (permanente)
+
     __table_args__ = (
         db.Index("ix_soc_incident_ip_status", "source_ip", "status"),
     )

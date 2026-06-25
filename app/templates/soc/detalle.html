@@ -105,6 +105,25 @@
       </div>
     </div>
   </div>
+  {% if incident.blocked %}
+  <hr class="my-3" style="border-color:var(--border-color)">
+  <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size:13px">
+    <span class="badge" style="background:#b91c1c;font-size:12px;padding:4px 10px">
+      <i class="bi bi-robot me-1"></i>Bloqueado por SOAR
+    </span>
+    <span class="text-muted">
+      vía <strong>{{ incident.blocked_method | upper if incident.blocked_method else '?' }}</strong>
+      {% if incident.blocked_at %}
+        · {{ incident.blocked_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      {% endif %}
+      {% if incident.blocked_until %}
+        · expira {{ incident.blocked_until.strftime('%Y-%m-%d %H:%M UTC') }}
+      {% else %}
+        {% if incident.blocked_method == 'ufw' %}· bloqueo permanente{% endif %}
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
   {% if mitre %}
   <hr class="my-3" style="border-color:var(--border-color)">
   <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;margin-bottom:6px">Técnicas MITRE ATT&CK (mapeo CRS)</div>

@@ -148,6 +148,16 @@ def run_detection_cycle() -> int:
         log.exception("soc: fallo inesperado en notificación de alertas")
         db.session.rollback()
 
+    # SOAR (Fase 6): bloqueo automático de IPs elegibles. Opt-in.
+    # Best-effort: un fallo nunca rompe el ciclo ni revierte las alertas.
+    try:
+        from app.soc import soar
+
+        soar.maybe_block_incidents(created)
+    except Exception:
+        log.exception("soc: fallo inesperado en el motor SOAR")
+        db.session.rollback()
+
     return len(created)
 
 
