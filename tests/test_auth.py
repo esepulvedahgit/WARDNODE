@@ -312,3 +312,49 @@ class TestPasswordPolicyRoutes:
 
         assert response.status_code == 200
         assert User.query.filter_by(email="strong@example.com").first() is not None
+
+
+# ── Rate limit del login ──────────────────────────────────────────────────────
+
+def test_login_ratelimit_default_is_10_per_hour(app):
+    """LOGIN_RATELIMIT debe ser '10 per hour' por defecto (sin var de entorno)."""
+    assert app.config["LOGIN_RATELIMIT"] == "10 per hour"
+
+
+def test_login_rate_limit_returns_429_when_exceeded():
+    """El POST /login devuelve 429 real al superar LOGIN_RATELIMIT.
+
+    TestConfig desactiva el limiter (RATELIMIT_ENABLED=False) y flask-limiter
+    no registra el hook before_request cuando está deshabilitado en init_app.
+    Por eso se crea una app separada con RATELIMIT_ENABLED=True para que el
+    bloqueo se dispare de verdad.
+    """
+    from app import create_app
+    from app.config import TestConfig
+    from app.extensions import db
+    from app.models import User, ROLE_ADMIN, AppConfig
+
+    class RLConfig(TestConfig):
+        RATELIMIT_ENABLED = True
+        RATELIMIT_STORAGE_URI = "memory://"
+        LOGIN_RATELIMIT = "3 per hour"
+
+    rl_app = create_app(RLConfig)
+    with rl_app.app_context():
+        db.create_all()
+        AppConfig.set("console_site_id", "9999")
+        u = User(email="admin@example.com", name="admin", role=ROLE_ADMIN)
+        u.set_password("ChangeMe12345!")
+        db.session.add(u)
+        db.session.commit()
+
+        c = rl_app.test_client()
+        codes = [
+            c.post("/auth/login",
+                   data={"email": "x@x.com", "password": "bad"}).status_code
+            for _ in range(4)
+        ]
+        db.drop_all()
+
+    assert codes[:3] == [302, 302, 302]
+    assert codes[3] == 429

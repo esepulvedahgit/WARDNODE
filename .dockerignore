@@ -1,5 +1,6 @@
-# Exported images
+# Exported images (tarballs para deploy — NO incluir en contexto)
 export/
+dist/
 
 # Secrets y claves SSH
 esepulvedah@*

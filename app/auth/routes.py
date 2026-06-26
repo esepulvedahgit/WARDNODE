@@ -80,7 +80,7 @@ def login():
 
 
 @bp.post("/login")
-@limiter.limit("5 per minute")
+@limiter.limit(lambda: current_app.config["LOGIN_RATELIMIT"])
 def login_post():
     if not admin_exists():
         return redirect(url_for("auth.setup_admin"))
