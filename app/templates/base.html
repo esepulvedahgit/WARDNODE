@@ -31,7 +31,7 @@
            href="{{ url_for('proxy.dashboard') }}">
           <i class="bi bi-grid-1x2-fill"></i><span>Overview</span>
         </a>
-        <a class="nav-link-item {% if request.endpoint in ('proxy.sites_list', 'proxy.site_detail') %}active{% endif %}"
+        <a class="nav-link-item {% if request.endpoint in ('proxy.sites_list', 'proxy.site_detail', 'proxy.docs') %}active{% endif %}"
            href="{{ url_for('proxy.sites_list') }}">
           <i class="bi bi-shield-shaded"></i><span>Proxy &amp; WAF</span>
         </a>

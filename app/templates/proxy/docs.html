@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Proxy & WAF | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('proxy.sites_list') }}" class="bc-link">Proxy &amp; WAF</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('proxy.sites_list') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-shield-shaded me-1"></i>Proxy &amp; WAF
+</a>
+{% endblock %}
+
+{% block head %}
+<style>
+  .proxy-docs h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; scroll-margin-top: 80px; }
+  .proxy-docs h3 { font-size: 14px; font-weight: 700; margin: 18px 0 8px; color: var(--text-primary); }
+  .proxy-docs p, .proxy-docs li { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+  .proxy-docs pre { background: var(--bg-secondary, #f8fafc); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow-x: auto; margin: 10px 0; }
+  .proxy-docs table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+  .proxy-docs table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); padding: 6px 10px; }
+  .proxy-docs table td { border-bottom: 1px solid var(--border-color); padding: 6px 10px; color: var(--text-secondary); vertical-align: top; }
+  .proxy-docs code { font-size: 12px; }
+  .proxy-docs .doc-note { border-left: 3px solid var(--accent); background: var(--bg-secondary, #f8fafc); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 12.5px; margin: 12px 0; }
+  .proxy-docs .doc-warn { border-left-color: #f59e0b; }
+  .proxy-toc { position: sticky; top: 80px; }
+  .proxy-toc a { display: block; font-size: 12.5px; padding: 4px 10px; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+  .proxy-toc a:hover { color: var(--accent); background: var(--bg-secondary, #f8fafc); border-left-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Proxy &amp; WAF
+    </h1>
+    <p class="text-secondary mb-0 small">Nginx + ModSecurity — arquitectura, configuración y despliegue.</p>
+  </div>
+</div>
+
+<div class="row g-4 proxy-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel proxy-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#vps-lan">2 · VPS público → servidores LAN</a>
+      <a href="#referencia">3 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general del plano de proxy</h2>
+      <p>WardNode separa completamente el <strong>plano de gestión</strong> del <strong>plano de tráfico</strong>. La consola Flask (puerto 5000) nunca maneja tráfico de usuarios finales: solo genera archivos de configuración Nginx que el contenedor proxy lee y aplica.</p>
+<pre>Tráfico externo (internet)
+      │  80 / 443
+      ▼
+┌──────────────────────────────────────────┐
+│  Contenedor proxy                        │
+│  Nginx + ModSecurity (OWASP CRS)         │
+│                                          │
+│  Lee: /etc/nginx/generated/*.conf        │  ◄── generados por la consola
+│  Aplica: WAF, TLS, rate limit, headers   │
+└──────────────────────┬───────────────────┘
+                       │  proxy_pass http://upstream:puerto
+                       ▼
+              Aplicación protegida
+              (contenedor, VM, host, LAN…)
+
+┌──────────────────────────────────────────┐
+│  Consola Flask  (puerto 5000)            │
+│  Solo plano de gestión                   │
+│  Escribe  →  generated/nginx/*.conf      │
+│  Recarga  →  docker exec nginx -s reload │
+└──────────────────────────────────────────┘</pre>
+
+      <h3>Cómo se define el destino de cada sitio</h3>
+      <p>Cada sitio registrado tiene un campo <code>upstream_url</code> (por ejemplo <code>http://app:8080</code> o <code>https://192.168.1.50:443</code>). La consola lo parsea con <code>urlparse</code> y genera directamente:</p>
+<pre>proxy_pass http://&lt;host&gt;:&lt;puerto&gt;;
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;</pre>
+      <p>El valor se inyecta tal cual en el <code>.conf</code> — no se usa un bloque <code>upstream {}</code> nombrado. Cualquier host resoluble o IP alcanzable por el contenedor proxy es un upstream válido.</p>
+
+      <div class="doc-note">
+        <strong>Nota:</strong> el módulo WF (WardNode Firewall) solo aplica para upstreams <em>loopback</em> exactos
+        (<code>127.0.0.1</code>, <code>localhost</code>, <code>host.docker.internal</code>) del propio host.
+        Las IPs de red privada (LAN) no pasan por ese flujo — se tratan como cualquier otro upstream remoto.
+      </div>
+    </div>
+
+    {# ── 2. VPS público → servidores LAN ─────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vps-lan">
+      <h2><i class="bi bi-router" style="color:var(--accent)"></i>2 · VPS público → servidores en la LAN</h2>
+      <p>Un despliegue habitual es instalar WardNode en un VPS con IP pública y usar su proxy para exponer aplicaciones que corren en una red local (casa, oficina, datacenter privado). Este escenario está completamente soportado sin ninguna adaptación de código.</p>
+
+      <h3>2.1 El modelo de upstream</h3>
+      <p>El campo <code>upstream_url</code> acepta cualquier URL con IP o hostname. <strong>No existe validación que bloquee rangos RFC 1918</strong> (<code>192.168.x.x</code>, <code>10.x.x.x</code>, <code>172.16–31.x.x</code>):</p>
+      <table>
+        <thead><tr><th>Upstream</th><th>¿Permitido?</th><th>Observación</th></tr></thead>
+        <tbody>
+          <tr><td><code>http://192.168.1.50:8080</code></td><td>✅ Sí</td><td>IP LAN privada — se trata como upstream remoto normal</td></tr>
+          <tr><td><code>http://10.0.0.20:3000</code></td><td>✅ Sí</td><td>Idem — cualquier RFC 1918</td></tr>
+          <tr><td><code>https://192.168.1.100:443</code></td><td>✅ Sí</td><td>TLS hacia servidor LAN</td></tr>
+          <tr><td><code>http://127.0.0.1:8080</code></td><td>⚠️ Con restricción</td><td>Loopback local — requiere módulo WF y puerto no reservado</td></tr>
+          <tr><td><code>http://127.0.0.1:80</code></td><td>❌ No</td><td>Loopback + puerto reservado (80/443/22/5000)</td></tr>
+        </tbody>
+      </table>
+      <p>Al registrar el sitio con <code>upstream_url = http://192.168.1.50:8080</code>, la consola genera y el proxy aplica inmediatamente <code>proxy_pass http://192.168.1.50:8080;</code>. No hay paso adicional en WardNode.</p>
+
+      <h3>2.2 El requisito real: conectividad de red</h3>
+      <p>El contenedor proxy usa <code>network_mode: host</code> en producción (<code>docker-compose.vps.yml</code>): comparte directamente la pila de red del VPS. Esto significa que puede alcanzar <strong>cualquier red que el VPS pueda rutear</strong>. El problema es que un VPS público <strong>no tiene ruta a tu LAN</strong> sin un túnel — esas IPs privadas viven detrás del NAT de tu red local.</p>
+
+      <div class="doc-warn doc-note">
+        <strong>Lo que <code>network_mode: host</code> no resuelve:</strong> que el paquete llegue físicamente a <code>192.168.1.50</code>. Sin un túnel configurado en el VPS, el proxy intentará enviar tráfico a esa IP y no encontrará ruta.
+      </div>
+
+      <h3>2.3 Opciones de túnel (de más a menos recomendable)</h3>
+      <table>
+        <thead><tr><th>Opción</th><th>Cómo funciona</th><th>Cuándo usarla</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>WireGuard site-to-site</strong></td>
+            <td>Interfaz <code>wg0</code> en el VPS y en un nodo LAN. El VPS gana ruta estática a <code>192.168.x.x/24</code> vía la interfaz WireGuard.</td>
+            <td>Producción. Ligero, rápido, sin overhead de gestión de nube.</td>
+          </tr>
+          <tr>
+            <td><strong>Tailscale / Headscale</strong></td>
+            <td>Instalar el agente en el VPS y en el nodo LAN. Publicar la subred con <code>--advertise-routes=192.168.1.0/24</code> desde el nodo LAN.</td>
+            <td>La opción más rápida de montar. Ideal para equipos pequeños.</td>
+          </tr>
+          <tr>
+            <td><strong>Túnel SSH inverso</strong></td>
+            <td>El nodo LAN abre <code>ssh -R 8080:servidor-local:8080 usuario@vps</code>. El upstream del sitio apunta a <code>http://127.0.0.1:8080</code> (loopback del VPS).</td>
+            <td>Pruebas o acceso puntual. Frágil para producción — no sobrevive reinicios.</td>
+          </tr>
+          <tr>
+            <td><strong>Cloudflare Tunnel / ngrok</strong></td>
+            <td>El servicio LAN inicia una conexión saliente hacia la nube. Cambia el modelo: no proxeas tú la IP, Cloudflare/ngrok lo hacen.</td>
+            <td>Cuando no controlas el firewall ni el router de la LAN.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2.4 Ejemplo mínimo con WireGuard</h3>
+      <p>Con WireGuard activo, el proxy ve la LAN como una red local más. El flujo completo:</p>
+<pre># En el VPS — instalar y configurar WireGuard
+apt install wireguard
+# /etc/wireguard/wg0.conf (VPS)
+[Interface]
+Address = 10.10.0.1/24
+ListenPort = 51820
+PrivateKey = &lt;clave-privada-vps&gt;
+
+[Peer]
+PublicKey = &lt;clave-publica-nodo-lan&gt;
+AllowedIPs = 10.10.0.2/32, 192.168.1.0/24   # ← subred LAN completa
+Endpoint = &lt;IP-nodo-lan&gt;:51820
+
+# Levantar
+wg-quick up wg0
+
+# En el nodo LAN (el que tiene acceso a 192.168.1.0/24)
+# /etc/wireguard/wg0.conf (nodo LAN)
+[Interface]
+Address = 10.10.0.2/24
+PrivateKey = &lt;clave-privada-nodo-lan&gt;
+
+[Peer]
+PublicKey = &lt;clave-publica-vps&gt;
+AllowedIPs = 0.0.0.0/0
+Endpoint = &lt;IP-publica-vps&gt;:51820
+PersistentKeepalive = 25
+
+wg-quick up wg0</pre>
+      <p>Una vez el túnel está activo, desde el VPS puedes hacer <code>ping 192.168.1.50</code> sin problema. Luego en WardNode, registra el sitio con <code>upstream_url = http://192.168.1.50:8080</code> y ya.</p>
+
+      <h3>2.5 Host header — apps que validan el dominio</h3>
+      <p>WardNode envía siempre <code>proxy_set_header Host $host;</code>, donde <code>$host</code> es el dominio público (p. ej. <code>mi-app.ejemplo.com</code>). Si la aplicación LAN valida que el <code>Host</code> header coincida con su nombre interno, puede rechazar las peticiones.</p>
+      <div class="doc-note">
+        <strong>Solución:</strong> en la vista de detalle del sitio, ve a <em>Configuración extra de Nginx</em> y añade un bloque de tipo <code>location</code> o <code>server</code> con:
+<pre>proxy_set_header Host app-interna.lan;</pre>
+        Este override se valida y se incluye en el <code>.conf</code> generado, sobreescribiendo el header por defecto solo para ese sitio.
+      </div>
+
+      <div class="doc-warn doc-note">
+        <strong>Nota de seguridad (SSRF):</strong> como el campo <code>upstream_url</code> de un sitio no valida rangos de IP, un operador con permisos podría configurar el upstream apuntando a servicios internos del propio VPS (metadatos de nube, APIs internas, etc.). En instalaciones con múltiples operadores, evalúa restringir quién puede crear o modificar sitios.
+      </div>
+    </div>
+
+    {# ── 3. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>3 · Referencia rápida</h2>
+
+      <h3>Upstreams y restricciones</h3>
+      <table>
+        <thead><tr><th>Tipo de upstream</th><th>Estado</th><th>Requisito adicional</th></tr></thead>
+        <tbody>
+          <tr><td>IP pública o dominio externo</td><td>✅ Libre</td><td>Ninguno</td></tr>
+          <tr><td>IP LAN privada (RFC 1918)</td><td>✅ Libre</td><td>Conectividad de red (túnel) entre VPS y LAN</td></tr>
+          <tr><td>Loopback (<code>127.0.0.1</code>, <code>localhost</code>, <code>host.docker.internal</code>)</td><td>⚠️ Restringido</td><td>Módulo WF activo + puerto no reservado</td></tr>
+          <tr><td>Loopback + puerto 22, 80, 443 ó 5000</td><td>❌ Bloqueado</td><td>—</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Opciones de túnel para acceso a LAN</h3>
+      <table>
+        <thead><tr><th>Solución</th><th>Dificultad</th><th>Producción</th></tr></thead>
+        <tbody>
+          <tr><td>WireGuard site-to-site</td><td>Media</td><td>✅ Recomendada</td></tr>
+          <tr><td>Tailscale / Headscale</td><td>Baja</td><td>✅ Adecuada</td></tr>
+          <tr><td>Túnel SSH inverso</td><td>Baja</td><td>⚠️ Solo pruebas</td></tr>
+          <tr><td>Cloudflare Tunnel / ngrok</td><td>Baja</td><td>⚠️ Delega el proxy a terceros</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Comandos útiles en el VPS tras configurar WireGuard</h3>
+<pre># Verificar que el túnel esté activo
+wg show
+
+# Comprobar conectividad desde el VPS al servidor LAN
+ping 192.168.1.50
+curl -I http://192.168.1.50:8080
+
+# Ver la ruta hacia la LAN
+ip route show | grep 192.168</pre>
+
+      <h3>Pasos para registrar un sitio LAN en WardNode</h3>
+      <ol style="font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>Asegúrate de que el túnel está activo y el VPS puede hacer <code>ping</code> a la IP del servidor LAN.</li>
+        <li>En <a href="{{ url_for('proxy.sites_list') }}">Proxy &amp; WAF → Sitios</a>, haz clic en <strong>Nuevo sitio</strong>.</li>
+        <li>Introduce el dominio público (p. ej. <code>app.ejemplo.com</code>) y la URL del upstream LAN (p. ej. <code>http://192.168.1.50:8080</code>).</li>
+        <li>Guarda — la consola regenera los <code>.conf</code> de Nginx y recarga el proxy automáticamente.</li>
+        <li>Apunta el registro DNS del dominio a la IP pública del VPS.</li>
+        <li>Opcionalmente, activa TLS con Let's Encrypt desde la vista de detalle del sitio.</li>
+      </ol>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

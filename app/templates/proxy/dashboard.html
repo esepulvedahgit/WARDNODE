@@ -8,6 +8,9 @@
 {% endblock %}
 
 {% block page_actions %}
+  <a href="{{ url_for('proxy.docs') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-book-half me-1"></i>Documentación
+  </a>
   {% if not current_user.has_role('reader') %}
   <button class="btn btn-sm btn-primary" type="button"
           data-bs-toggle="offcanvas" data-bs-target="#newSiteCanvas">

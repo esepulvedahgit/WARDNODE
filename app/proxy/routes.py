@@ -393,6 +393,13 @@ def events_export():
     )
 
 
+@bp.get("/docs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def docs():
+    """Documentación oficial de Proxy & WAF (Nginx + ModSecurity) — estática."""
+    return render_template("proxy/docs.html")
+
+
 @bp.get("/sites")
 @roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
 def sites_list():
