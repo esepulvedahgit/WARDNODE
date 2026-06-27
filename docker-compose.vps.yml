@@ -367,4 +367,3 @@ networks:
           gateway: 172.30.0.1
   redis_net:
     driver: bridge
-    internal: true
