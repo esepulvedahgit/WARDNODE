@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Ajustes | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('proxy.settings') }}" class="bc-link">Ajustes</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('proxy.settings') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-gear-fill me-1"></i>Ajustes
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Ajustes
+    </h1>
+    <p class="text-secondary mb-0 small">Configuración global de WardNode — SMTP, Syslog, GeoIP, acceso al panel y secretos.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#smtp">2 · SMTP — correo saliente</a>
+      <a href="#syslog">3 · Syslog RFC5424 — SIEM</a>
+      <a href="#geoip">4 · GeoIP — MaxMind</a>
+      <a href="#console-site">5 · Acceso al panel</a>
+      <a href="#secretos">6 · Reset de secretos cifrados</a>
+      <a href="#limpiar-eventos">7 · Limpiar eventos WAF</a>
+      <a href="#referencia">8 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-gear" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>La pantalla de Ajustes concentra la configuración global de la consola: comunicaciones salientes (SMTP, syslog), datos de geolocalización, dominio de acceso y seguridad de secretos.</p>
+      <p>Solo accesible para administradores. Los cambios aquí afectan a toda la instancia de WardNode, no a un sitio concreto.</p>
+    </div>
+
+    {# ── 2. SMTP ─────────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="smtp">
+      <h2><i class="bi bi-envelope-fill" style="color:var(--accent)"></i>2 · SMTP — correo saliente</h2>
+      <p>WardNode usa un servidor SMTP para enviar: alertas SOC, notificaciones de backup y resets de contraseña.</p>
+
+      <h3>Campos de configuración</h3>
+      <table>
+        <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Servidor SMTP</strong></td><td>Hostname o IP del servidor de correo saliente.</td></tr>
+          <tr><td><strong>Puerto</strong></td><td>Puerto del servidor (25, 465, 587, etc.).</td></tr>
+          <tr><td><strong>Usuario</strong></td><td>Cuenta de autenticación SMTP.</td></tr>
+          <tr><td><strong>Contraseña</strong></td><td>Cifrada en reposo con <code>WARDNODE_SECRET_KEY</code>.</td></tr>
+          <tr><td><strong>Dirección remitente</strong></td><td>Dirección <em>From:</em> que aparece en los correos enviados.</td></tr>
+          <tr><td><strong>TLS</strong></td><td>Activar si el servidor requiere STARTTLS o SSL/TLS.</td></tr>
+        </tbody>
+      </table>
+
+      <p>El botón <strong>"Enviar correo de prueba"</strong> verifica la configuración enviando un mensaje al email del administrador.</p>
+
+      <div class="doc-note">
+        <strong>Sin SMTP configurado</strong>, los resets de contraseña por email y las notificaciones de backup no funcionarán. Los alertas SOC por correo tampoco estarán disponibles.
+      </div>
+    </div>
+
+    {# ── 3. Syslog ───────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="syslog">
+      <h2><i class="bi bi-send-fill" style="color:var(--accent)"></i>3 · Syslog RFC5424 — reenvío a SIEM</h2>
+      <p>WardNode puede reenviar eventos WAF y entradas del audit log a un servidor syslog externo (SIEM, Splunk, ELK, etc.).</p>
+
+      <h3>Protocolo de transporte</h3>
+      <p>Soporta UDP y TCP. TCP soporta <strong>RFC6587 octet-counting</strong>, que permite mensajes de cualquier longitud sin ambigüedad de delimitación.</p>
+
+      <h3>Campos de configuración</h3>
+      <table>
+        <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Servidor</strong></td><td>Hostname o IP del servidor syslog destino.</td></tr>
+          <tr><td><strong>Puerto</strong></td><td>Puerto UDP/TCP del servidor (por defecto 514).</td></tr>
+          <tr><td><strong>Protocolo</strong></td><td>UDP o TCP.</td></tr>
+          <tr><td><strong>Facilidad syslog</strong></td><td>Facility RFC5424 (local0–local7, etc.).</td></tr>
+        </tbody>
+      </table>
+
+      <p>El botón <strong>"Probar syslog"</strong> envía un mensaje de prueba al servidor configurado para verificar la conectividad.</p>
+
+      <h3>Cómo funciona internamente</h3>
+      <p>Un thread daemon (<code>syslog-forwarder</code>) revisa cada 10 segundos las nuevas entradas en <code>modsec_raw_log</code> y <code>audit_log</code>, las serializa como mensajes RFC5424 con cuerpo JSON y las envía al servidor configurado.</p>
+      <p><strong>Semántica at-least-once:</strong> si el servidor no está disponible, los cursores no avanzan y los eventos se reenvían al recuperarse. No hay pérdida de datos por indisponibilidad temporal.</p>
+
+      <div class="doc-note">
+        El reenvío syslog <strong>no incluye logs de acceso HTTP de Nginx</strong> — esos van a Loki vía Alloy (módulo OBS). Solo se reenvían eventos WAF (<code>modsec_raw_log</code>) y acciones de auditoría (<code>audit_log</code>).
+      </div>
+    </div>
+
+    {# ── 4. GeoIP ────────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="geoip">
+      <h2><i class="bi bi-globe" style="color:var(--accent)"></i>4 · GeoIP — base de datos de geolocalización</h2>
+      <p>WardNode usa la base de datos <strong>GeoLite2-Country</strong> de MaxMind para el bloqueo por país (GeoIP) en el WAF.</p>
+
+      <h3>Requisitos</h3>
+      <ul>
+        <li>Cuenta gratuita en <a href="https://www.maxmind.com/" target="_blank" rel="noopener">MaxMind</a>.</li>
+        <li>Credenciales <code>MAXMIND_ACCOUNT_ID</code> y <code>MAXMIND_LICENSE_KEY</code> configuradas en Ajustes.</li>
+      </ul>
+
+      <p>El botón <strong>"Descargar base GeoIP"</strong> descarga o actualiza el archivo <code>GeoLite2-Country.mmdb</code> dentro del contenedor de la consola.</p>
+
+      <p>Sin la base descargada, el bloqueo por país no funciona aunque haya países en la blocklist de un sitio. La variable <code>$geo_blocked</code> en Nginx valdrá siempre <code>0</code>.</p>
+
+      <h3>Actualización periódica</h3>
+      <p>MaxMind actualiza GeoLite2-Country semanalmente. Se recomienda volver a descargar la base periódicamente para mantener la precisión geográfica actualizada.</p>
+    </div>
+
+    {# ── 5. Console-site ─────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="console-site">
+      <h2><i class="bi bi-exclamation-triangle-fill" style="color:var(--accent)"></i>5 · ⚠️ Acceso al panel (console-site)</h2>
+      <div class="doc-note doc-warn">
+        <strong>⚠️ Configura esto ANTES de activar el módulo WF.</strong> Al activar WF con <code>ufw default deny incoming</code>, el puerto 5000 queda bloqueado. Si no hay console-site configurado, la consola quedará inaccesible desde el exterior.
+      </div>
+
+      <p>Define el dominio (y opcionalmente el puerto) desde el que los administradores acceden a la consola WardNode.</p>
+
+      <h3>Formato</h3>
+      <p>Solo el dominio, sin protocolo ni barra final:</p>
+      <table>
+        <thead><tr><th>Correcto</th><th>Incorrecto</th></tr></thead>
+        <tbody>
+          <tr><td><code>mi-consola.ejemplo.com</code></td><td><code>https://mi-consola.ejemplo.com/</code></td></tr>
+          <tr><td><code>mi-consola.ejemplo.com:8080</code></td><td><code>http://mi-consola.ejemplo.com</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Qué hace al configurarlo</h3>
+      <p>WardNode genera un server block Nginx para el dominio de la consola y abre el puerto correspondiente en UFW, de modo que el acceso de administración quede permitido incluso tras activar el modo restrictivo del firewall.</p>
+    </div>
+
+    {# ── 6. Reset secretos ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="secretos">
+      <h2><i class="bi bi-shield-exclamation" style="color:var(--accent)"></i>6 · ⚠️ Reset de secretos cifrados</h2>
+      <div class="doc-note doc-warn">
+        <strong>⚠️ Usar solo en emergencia.</strong> Esta acción elimina TODOS los secretos almacenados de forma irreversible. Solo úsala si has perdido <code>WARDNODE_SECRET_KEY</code> y necesitas empezar de cero.
+      </div>
+
+      <p>WardNode cifra secretos sensibles (API keys SOC, credenciales SMTP, configuración syslog, clave MaxMind) con <code>WARDNODE_SECRET_KEY</code> usando cifrado Fernet simétrico.</p>
+
+      <p>El botón <strong>"Resetear secretos cifrados"</strong> elimina de la base de datos <strong>todos</strong> los secretos almacenados:</p>
+      <ul>
+        <li>Contraseña SMTP</li>
+        <li>Credenciales MaxMind GeoIP</li>
+        <li>API keys de proveedores LLM (SOC)</li>
+        <li>Token de Telegram (SOC alertas)</li>
+        <li>Configuración syslog cifrada</li>
+      </ul>
+
+      <p>Tras el reset, deberás volver a introducir todas las credenciales. Las otras configuraciones (sitios, reglas WAF, eventos) no se ven afectadas.</p>
+    </div>
+
+    {# ── 7. Limpiar eventos WAF ──────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="limpiar-eventos">
+      <h2><i class="bi bi-trash3" style="color:var(--accent)"></i>7 · Limpiar eventos WAF</h2>
+      <p>Elimina todos los registros de la tabla <code>attack_event</code> (historial de eventos WAF detectados o bloqueados por ModSecurity).</p>
+
+      <p>Útil en estos escenarios:</p>
+      <ul>
+        <li>Durante pruebas o puesta en marcha, para reiniciar el historial sin datos de test.</li>
+        <li>Tras una migración, para resetear el dashboard con datos limpios del nuevo entorno.</li>
+        <li>Para cumplimiento normativo que requiera borrado de datos históricos.</li>
+      </ul>
+
+      <div class="doc-note doc-warn">
+        <strong>⚠️ Acción irreversible.</strong> El historial WAF no se puede recuperar después del borrado. Los incidentes SOC relacionados con esos eventos también perderán su contexto de AttackEvents.
+      </div>
+    </div>
+
+    {# ── 8. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>8 · Referencia rápida</h2>
+
+      <table>
+        <thead><tr><th>Función</th><th>Requiere</th><th>Afecta</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>SMTP</strong></td>
+            <td>Servidor SMTP externo</td>
+            <td>Alertas SOC, backups por email, resets de contraseña</td>
+          </tr>
+          <tr>
+            <td><strong>Syslog</strong></td>
+            <td>SIEM / servidor syslog externo</td>
+            <td>WAF events + audit log en tiempo real (RFC5424)</td>
+          </tr>
+          <tr>
+            <td><strong>GeoIP</strong></td>
+            <td>Cuenta MaxMind gratuita</td>
+            <td>Bloqueo por país en el WAF (todos los sitios)</td>
+          </tr>
+          <tr>
+            <td><strong>Console-site</strong></td>
+            <td>Dominio propio apuntando al servidor</td>
+            <td>Acceso seguro a la consola tras activar módulo WF</td>
+          </tr>
+          <tr>
+            <td><strong>Reset secretos</strong></td>
+            <td>Solo emergencia (pérdida de <code>WARDNODE_SECRET_KEY</code>)</td>
+            <td>Elimina TODAS las credenciales cifradas</td>
+          </tr>
+          <tr>
+            <td><strong>Limpiar eventos WAF</strong></td>
+            <td>—</td>
+            <td>Vacía la tabla <code>attack_event</code> — irreversible</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

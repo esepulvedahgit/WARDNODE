@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Log ModSecurity | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('proxy.logs_list') }}" class="bc-link">Log</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('proxy.logs_list') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-journal-text me-1"></i>Log
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Log ModSecurity
+    </h1>
+    <p class="text-secondary mb-0 small">Visor de log ModSecurity crudo — polling en vivo desde la base de datos.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#polling">2 · Polling en vivo</a>
+      <a href="#busqueda">3 · Búsqueda por frase</a>
+      <a href="#archivo">4 · Archivo cifrado en reposo</a>
+      <a href="#retencion">5 · Retención y purga</a>
+      <a href="#diferencia">6 · Log vs Eventos</a>
+      <a href="#referencia">7 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-journal-text" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>La pestaña <strong>"Log"</strong> muestra el log ModSecurity crudo directamente desde la tabla <code>modsec_raw_log</code> en PostgreSQL.</p>
+      <p>A diferencia de la pestaña <a href="{{ url_for('proxy.events_list') }}">Eventos</a> (que muestra AttackEvents deduplicados por transacción), aquí se ve <strong>cada línea de log sin procesar</strong> — incluyendo headers, fragmentos de body y los detalles de cada regla que se disparó individualmente.</p>
+
+      <h3>Cuándo usarlo</h3>
+      <ul>
+        <li><strong>Diagnóstico de falsos positivos:</strong> ver exactamente qué regla disparó y qué parte de la petición la activó.</li>
+        <li><strong>Verificación de reglas personalizadas:</strong> confirmar que una regla <code>SecRule</code> recién añadida actúa sobre el tráfico esperado.</li>
+        <li><strong>Análisis forense:</strong> reconstruir una secuencia de peticiones de un atacante con todos los detalles del log original.</li>
+      </ul>
+    </div>
+
+    {# ── 2. Polling en vivo ──────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="polling">
+      <h2><i class="bi bi-arrow-repeat" style="color:var(--accent)"></i>2 · Polling en vivo</h2>
+      <p>La pantalla refresca automáticamente el log cada pocos segundos usando <strong>polling HTMX</strong>. No requiere recargar la página — las nuevas entradas aparecen al inicio de la lista.</p>
+
+      <h3>Cómo se alimenta <code>modsec_raw_log</code></h3>
+      <p>El thread <code>rawlog-worker</code> (advisory lock PostgreSQL <strong>815004</strong>, que asegura un solo proceso activo bajo gunicorn multi-worker) lee el stream de logs del contenedor proxy vía Docker SDK y almacena cada línea JSON en <code>modsec_raw_log</code>.</p>
+
+      <p>En desarrollo sin Docker, el thread no arranca (el ping al daemon Docker falla de forma controlada) y la tabla estará vacía.</p>
+    </div>
+
+    {# ── 3. Búsqueda por frase ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="busqueda">
+      <h2><i class="bi bi-search" style="color:var(--accent)"></i>3 · Búsqueda por frase</h2>
+      <p>El campo de búsqueda filtra entradas que contengan la frase introducida (búsqueda sobre el cuerpo del log JSON como texto).</p>
+
+      <h3>Ejemplos de búsqueda útiles</h3>
+      <table>
+        <thead><tr><th>Búsqueda</th><th>Para encontrar</th></tr></thead>
+        <tbody>
+          <tr><td><code>192.168.1.100</code></td><td>Todas las entradas de log de esa IP de origen</td></tr>
+          <tr><td><code>/wp-admin</code></td><td>Peticiones a la ruta de WordPress admin</td></tr>
+          <tr><td><code>930100</code></td><td>Entradas donde se disparó la regla CRS con ese ID</td></tr>
+          <tr><td><code>sql injection</code></td><td>Mensajes que mencionen inyección SQL</td></tr>
+          <tr><td><code>CRITICAL</code></td><td>Solo entradas de severidad crítica</td></tr>
+        </tbody>
+      </table>
+
+      <p>La búsqueda <strong>no interrumpe el polling</strong> — se aplica en cada refresco automático. Si introduces una frase de búsqueda, verás solo las nuevas entradas que la contengan.</p>
+    </div>
+
+    {# ── 4. Archivo cifrado ──────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="archivo">
+      <h2><i class="bi bi-archive" style="color:var(--accent)"></i>4 · Archivo cifrado en reposo</h2>
+      <p>Las entradas del log pueden archivarse cifradas en zip <strong>AES-256</strong> antes de ser purgadas de la base de datos.</p>
+
+      <h3>Configuración del archivo</h3>
+      <table>
+        <thead><tr><th>Opción</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Activar archivo</strong></td><td>Habilita el archivado automático antes de la purga.</td></tr>
+          <tr><td><strong>Periodo de retención</strong></td><td>Número de días a retener en BD antes de archivar y purgar.</td></tr>
+          <tr><td><strong>Contraseña del zip</strong></td><td>Contraseña para el cifrado AES-256. Necesaria para abrir el archivo después.</td></tr>
+        </tbody>
+      </table>
+
+      <p>Los archivos zip se almacenan en el directorio configurado y son descargables desde el panel. Útil para cumplimiento normativo (auditorías, retención legal) o análisis forense posterior sin consumir espacio en PostgreSQL.</p>
+
+      <div class="doc-note">
+        <strong>Guarda la contraseña del zip</strong> en un lugar seguro. Los archivos cifrados no son recuperables sin la contraseña — WardNode no guarda una copia de la contraseña en texto claro.
+      </div>
+    </div>
+
+    {# ── 5. Retención y purga ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="retencion">
+      <h2><i class="bi bi-calendar-x" style="color:var(--accent)"></i>5 · Retención y purga</h2>
+      <p>La tabla <code>modsec_raw_log</code> crece indefinidamente si no se configura una política de retención. En sitios con tráfico medio-alto esto puede representar varios GB al mes.</p>
+
+      <h3>Configuración de retención</h3>
+      <p>Define el <strong>número de días</strong> a retener en la base de datos. Las entradas más antiguas del límite configurado serán eliminadas por la purga.</p>
+      <p>El botón <strong>"Purgar ahora"</strong> ejecuta la purga inmediatamente (sin esperar al ciclo automático).</p>
+
+      <div class="doc-note">
+        El archivado previo a la purga permite <strong>retener el historial completo</strong> sin consumir espacio en PostgreSQL. Si activas archivo, las entradas se comprimen y cifran antes de ser eliminadas de la base de datos.
+      </div>
+
+      <div class="doc-note doc-warn">
+        <strong>⚠️ La purga sin archivo activo es irreversible.</strong> Las entradas eliminadas no se pueden recuperar. Configura el archivo si necesitas retención histórica.
+      </div>
+    </div>
+
+    {# ── 6. Diferencia Log vs Eventos ────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="diferencia">
+      <h2><i class="bi bi-table" style="color:var(--accent)"></i>6 · Diferencia entre Log y Eventos</h2>
+
+      <div class="doc-note">
+        <table>
+          <thead>
+            <tr><th></th><th>Log</th><th>Eventos</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Fuente</strong></td>
+              <td><code>modsec_raw_log</code> (líneas crudas)</td>
+              <td><code>attack_event</code> (transacciones deduplicadas)</td>
+            </tr>
+            <tr>
+              <td><strong>Granularidad</strong></td>
+              <td>Cada alerta individual de ModSecurity</td>
+              <td>Una fila por transacción HTTP completa</td>
+            </tr>
+            <tr>
+              <td><strong>Uso</strong></td>
+              <td>Diagnóstico, forense, análisis de reglas</td>
+              <td>Dashboard, KPIs, correlación SOC</td>
+            </tr>
+            <tr>
+              <td><strong>Búsqueda</strong></td>
+              <td>Por frase en el cuerpo JSON</td>
+              <td>Por IP, fecha, categoría, modo</td>
+            </tr>
+            <tr>
+              <td><strong>Retención</strong></td>
+              <td>Configurable (días) + archivo zip</td>
+              <td>Sin límite (purga manual)</td>
+            </tr>
+            <tr>
+              <td><strong>Conteo</strong></td>
+              <td>Alertas individuales (N por transacción)</td>
+              <td>Transacciones únicas (1 por <code>transaction_id</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Ambas vistas son complementarias. Para el análisis de tendencias y KPIs usa <a href="{{ url_for('proxy.events_list') }}">Eventos</a>; para investigar el detalle de una alerta concreta usa esta pestaña de Log.</p>
+    </div>
+
+    {# ── 7. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>7 · Referencia rápida — campos frecuentes del log JSON</h2>
+
+      <table>
+        <thead><tr><th>Campo JSON</th><th>Significado</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>ID de la regla CRS que disparó la alerta (ej. <code>930100</code> para LFI).</td></tr>
+          <tr><td><code>msg</code></td><td>Mensaje descriptivo de la alerta generado por ModSecurity.</td></tr>
+          <tr><td><code>uri</code></td><td>Ruta HTTP que activó la regla.</td></tr>
+          <tr><td><code>severity</code></td><td>Nivel de severidad de la regla (CRITICAL, ERROR, WARNING, NOTICE).</td></tr>
+          <tr><td><code>data</code></td><td>Fragmento del dato que activó la coincidencia (p.ej. el payload que pareció SQLi).</td></tr>
+          <tr><td><code>maturity</code></td><td>Nivel de madurez de la regla CRS (0–9).</td></tr>
+          <tr><td><code>accuracy</code></td><td>Precisión estimada de la regla (0–9). Baja precisión → más probable falso positivo.</td></tr>
+          <tr><td><code>tags</code></td><td>Etiquetas CRS de la regla (ej. <code>attack-sqli</code>, <code>OWASP_CRS</code>).</td></tr>
+          <tr><td><code>transaction.id</code></td><td>ID de la transacción completa — el mismo que <code>transaction_id</code> en AttackEvent.</td></tr>
+          <tr><td><code>transaction.request.headers</code></td><td>Headers HTTP de la petición original.</td></tr>
+          <tr><td><code>transaction.response.status</code></td><td>Código HTTP de la respuesta (403 si fue bloqueada).</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Buscar el ID de regla en excepciones WAF</h3>
+      <p>Si una regla genera falsos positivos, busca su <code>id</code> en este log y añádela como excepción WAF en el sitio correspondiente (<strong>Proxy &amp; WAF → [sitio] → Excepciones WAF</strong>). Las excepciones aceptan IDs del rango CRS <code>900000–999999</code>.</p>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

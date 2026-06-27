@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Eventos WAF | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('proxy.events_list') }}" class="bc-link">Eventos WAF</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('proxy.events_list') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-bell-fill me-1"></i>Eventos WAF
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Eventos WAF
+    </h1>
+    <p class="text-secondary mb-0 small">Bitácora de eventos WAF — incidentes detectados y bloqueados por ModSecurity.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Qué es un AttackEvent</a>
+      <a href="#deduplicacion">2 · Deduplicación y agrupación</a>
+      <a href="#severidades">3 · Severidades y categorías</a>
+      <a href="#filtros">4 · Filtros disponibles</a>
+      <a href="#export">5 · Export CSV</a>
+      <a href="#relacion">6 · Relación con SOC y WAF</a>
+      <a href="#referencia">7 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general / AttackEvent ─────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-bell" style="color:var(--accent)"></i>1 · Qué es un AttackEvent</h2>
+      <p>Cada fila en la pantalla de Eventos corresponde a un <strong>AttackEvent</strong>: una transacción HTTP que ModSecurity detectó o bloqueó.</p>
+      <p>Un AttackEvent equivale a una <strong>transacción completa</strong>. Aunque una sola petición HTTP pueda disparar múltiples alertas internas de ModSecurity, WardNode las agrupa en un único AttackEvent por <code>transaction_id</code>, deduplicando el ruido.</p>
+
+      <h3>Origen de los datos</h3>
+      <p>Los datos vienen del stream JSON de logs del contenedor proxy (Docker SDK), procesados por el thread daemon <code>modsec-ingest</code> que corre en segundo plano desde el inicio de la consola. La imagen <code>owasp/modsecurity-crs:nginx</code> escribe siempre los eventos ModSecurity como JSON en el stdout del contenedor.</p>
+    </div>
+
+    {# ── 2. Deduplicación ────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="deduplicacion">
+      <h2><i class="bi bi-intersect" style="color:var(--accent)"></i>2 · Deduplicación y agrupación</h2>
+      <p>ModSecurity puede generar múltiples alertas para una sola petición HTTP. WardNode las agrupa en un único AttackEvent por <code>transaction_id</code> mediante un constraint <code>UNIQUE</code> en la base de datos.</p>
+
+      <p>Los duplicados son <strong>ignorados silenciosamente</strong> — se producen en el commit de la transacción como un <code>IntegrityError</code> que el ingestor captura y descarta sin interrumpir el procesamiento.</p>
+
+      <div class="doc-note">
+        El número de eventos mostrado en la pantalla representa siempre <strong>transacciones HTTP únicas</strong>, no alertas individuales de reglas ModSecurity. Si ves 50 eventos, hubo 50 peticiones HTTP distintas que dispararon al menos una regla — no 50 alertas de una misma petición.
+      </div>
+    </div>
+
+    {# ── 3. Severidades ──────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="severidades">
+      <h2><i class="bi bi-exclamation-diamond" style="color:var(--accent)"></i>3 · Severidades y categorías</h2>
+
+      <h3>Niveles de severidad</h3>
+      <table>
+        <thead><tr><th>Severidad</th><th>Significado</th></tr></thead>
+        <tbody>
+          <tr><td><strong>CRITICAL</strong></td><td>Regla de alta confianza — bloqueo casi seguro de ataque real. Anomaly score muy elevado.</td></tr>
+          <tr><td><strong>ERROR</strong></td><td>Alta probabilidad de ataque. Múltiples reglas disparadas o patrón muy reconocible.</td></tr>
+          <tr><td><strong>WARNING</strong></td><td>Comportamiento sospechoso que puede ser falso positivo. Revisar antes de ajustar reglas.</td></tr>
+          <tr><td><strong>NOTICE</strong></td><td>Actividad anómala menor. Frecuente en sitios con tráfico legítimo variado.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Categorías CRS</h3>
+      <p>Las categorías indican qué tipo de ataque detectó ModSecurity (SQLi, XSS, RCE, LFI, etc.). Corresponden a los tags del OWASP Core Rule Set y son las mismas que se pueden activar o desactivar por sitio en <strong>Categorías CRS</strong>.</p>
+      <p>Un AttackEvent puede asociarse a más de una categoría si la petición disparó reglas de distintos tipos.</p>
+    </div>
+
+    {# ── 4. Filtros ──────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="filtros">
+      <h2><i class="bi bi-funnel" style="color:var(--accent)"></i>4 · Filtros disponibles</h2>
+      <p>La pantalla de Eventos soporta los siguientes filtros combinables (todos se aplican con lógica AND):</p>
+
+      <table>
+        <thead><tr><th>Filtro</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>IP de origen</strong></td><td>Filtrar por dirección IP exacta o prefijo. Útil para investigar un atacante concreto.</td></tr>
+          <tr><td><strong>Rango de fechas</strong></td><td>Acotar el periodo de análisis (fecha inicio / fecha fin).</td></tr>
+          <tr><td><strong>Categoría de ataque</strong></td><td>Filtrar por tipo de amenaza (SQLi, XSS, RCE, etc.).</td></tr>
+          <tr><td><strong>Modo</strong></td><td><em>detect</em> (solo registrado) o <em>block</em> (petición bloqueada con 403).</td></tr>
+        </tbody>
+      </table>
+
+      <p>Los filtros se mantienen activos al paginar resultados. Se puede exportar el subconjunto filtrado directamente a CSV.</p>
+    </div>
+
+    {# ── 5. Export CSV ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="export">
+      <h2><i class="bi bi-download" style="color:var(--accent)"></i>5 · Export CSV</h2>
+      <p>El botón <strong>"Exportar CSV"</strong> descarga todos los AttackEvents que coincidan con los filtros activos.</p>
+
+      <h3>Campos incluidos en el CSV</h3>
+      <table>
+        <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><code>timestamp</code></td><td>Fecha y hora del evento (UTC).</td></tr>
+          <tr><td><code>src_ip</code></td><td>IP de origen de la petición.</td></tr>
+          <tr><td><code>method</code></td><td>Método HTTP (GET, POST, PUT, etc.).</td></tr>
+          <tr><td><code>uri</code></td><td>Ruta HTTP afectada.</td></tr>
+          <tr><td><code>severity</code></td><td>Nivel de severidad (CRITICAL, ERROR, WARNING, NOTICE).</td></tr>
+          <tr><td><code>category</code></td><td>Categoría CRS del ataque detectado.</td></tr>
+          <tr><td><code>mode</code></td><td>Modo del WAF en el momento del evento (detect / block).</td></tr>
+          <tr><td><code>transaction_id</code></td><td>Identificador único de la transacción ModSecurity.</td></tr>
+        </tbody>
+      </table>
+
+      <p>El CSV es útil para análisis offline, integración con herramientas externas o cumplimiento normativo.</p>
+    </div>
+
+    {# ── 6. Relación con SOC y WAF ───────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="relacion">
+      <h2><i class="bi bi-diagram-2" style="color:var(--accent)"></i>6 · Relación con SOC y WAF</h2>
+
+      <div class="doc-note">
+        <p><strong>Los AttackEvents son la fuente de datos del módulo SOC.</strong> El worker SOC (<code>soc-worker</code>) agrega eventos por IP dentro de ventanas de tiempo y genera <strong>SocIncidents</strong> cuando detecta patrones sospechosos (volumen anómalo, diversidad de categorías, fan-out de rutas, etc.).</p>
+        <p>El dashboard de Overview (<code>/proxy/</code>) muestra KPIs basados en las últimas 24 horas de AttackEvents: <code>events_24h</code>, <code>unique_ips</code>, <code>top_country</code> y distribución geográfica.</p>
+        <p><strong>Si los conteos aquí no coinciden con Loki/Grafana, es normal:</strong> Loki cuenta líneas de log crudas con retención de 30 días; PostgreSQL cuenta transacciones deduplicadas sin límite de retención. Estos números no son comparables.</p>
+      </div>
+
+      <h3>Fuente autoritativa de conteos WAF</h3>
+      <p>Siempre usa esta pantalla (o el dashboard <strong>WAF Analytics</strong> en Grafana, que lee la misma tabla <code>attack_event</code>) como fuente oficial de conteos. Los números de Loki son orientativos.</p>
+    </div>
+
+    {# ── 7. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>7 · Referencia rápida — campos del AttackEvent</h2>
+
+      <table>
+        <thead><tr><th>Campo</th><th>Significado</th><th>Notas</th></tr></thead>
+        <tbody>
+          <tr><td><code>transaction_id</code></td><td>ID único de la transacción ModSecurity</td><td>Clave de deduplicación — UNIQUE en BD</td></tr>
+          <tr><td><code>src_ip</code></td><td>IP de origen de la petición HTTP</td><td>Base para correlación en SOC</td></tr>
+          <tr><td><code>country_code</code></td><td>Código ISO del país de origen</td><td>Requiere GeoIP descargado</td></tr>
+          <tr><td><code>method</code></td><td>Método HTTP de la petición</td><td>GET, POST, PUT, DELETE…</td></tr>
+          <tr><td><code>uri</code></td><td>Ruta HTTP afectada</td><td>Sin query string en algunas reglas</td></tr>
+          <tr><td><code>severity</code></td><td>Nivel de severidad ModSecurity</td><td>CRITICAL / ERROR / WARNING / NOTICE</td></tr>
+          <tr><td><code>category</code></td><td>Categoría CRS del ataque</td><td>sqli, xss, rce, lfi, scanner…</td></tr>
+          <tr><td><code>mode</code></td><td>Modo WAF en el momento del evento</td><td>detect o block</td></tr>
+          <tr><td><code>rule_ids</code></td><td>IDs de reglas CRS disparadas</td><td>Útil para crear excepciones WAF</td></tr>
+          <tr><td><code>site_id</code></td><td>Sitio WAF al que pertenece el evento</td><td>FK a la tabla <code>site</code></td></tr>
+          <tr><td><code>timestamp</code></td><td>Fecha/hora del evento (UTC)</td><td>Base para KPIs de 24h</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}
