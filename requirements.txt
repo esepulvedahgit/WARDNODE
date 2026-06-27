@@ -5,6 +5,7 @@ cryptography>=42.0
 docker>=7.0
 flask>=3.0
 flask-limiter>=3.8
+redis>=5.0
 flask-login>=0.6
 flask-migrate>=4.0
 flask-sqlalchemy>=3.1
