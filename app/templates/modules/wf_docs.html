@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación WardNode WF | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('modules.wf_index') }}" class="bc-link">WardNode WF</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('modules.wf_index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-shield-fill-exclamation me-1"></i>WardNode WF
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · WardNode WF
+    </h1>
+    <p class="text-secondary mb-0 small">Agente host de gestión de firewall UFW — instalación, reglas, protección de puertos Docker.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#arquitectura">2 · Arquitectura del agente</a>
+      <a href="#instalacion">3 · Instalación del agente</a>
+      <a href="#init">4 · Inicialización obligatoria</a>
+      <a href="#reglas">5 · Gestionar reglas</a>
+      <a href="#docker-ports">6 · Puertos publicados por Docker</a>
+      <a href="#ssh-limit">7 · SSH rate-limit</a>
+      <a href="#ipv6">8 · IPv6</a>
+      <a href="#advertencias">9 · Advertencias críticas</a>
+      <a href="#referencia">10 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>WardNode WF gestiona el firewall UFW del servidor host desde la consola web, sin necesidad de SSH directo. El módulo permite crear, eliminar y listar reglas de firewall, proteger puertos expuestos por Docker y aplicar rate-limiting SSH, todo desde el navegador.</p>
+      <p>La comunicación sigue el siguiente flujo:</p>
+      <pre>Consola Flask (contenedor)
+      │  socket Unix
+      ▼
+/app/sockets/wardnode-wf.sock
+      │
+      ▼
+Agente host Python (wardnode-wf-agent.py)
+      │  subprocess.run (nunca shell=True)
+      ▼
+UFW / iptables (host)</pre>
+      <p>El agente corre en el host como <code>root:wardnode</code> bajo systemd, lo que garantiza que solo el proceso autorizado puede escribir en el socket y ejecutar comandos con privilegios.</p>
+    </div>
+
+    {# ── 2. Arquitectura del agente ──────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="arquitectura">
+      <h2><i class="bi bi-cpu" style="color:var(--accent)"></i>2 · Arquitectura del agente</h2>
+      <p>El sistema usa un protocolo de mensajes JSON sobre un socket Unix con prefijo de longitud (4 bytes big-endian):</p>
+      <table>
+        <thead><tr><th>Capa</th><th>Componente</th><th>Responsabilidad</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Contenedor Flask</strong></td>
+            <td><code>modules/socket_client.py</code></td>
+            <td>Serializa comandos JSON, envía con prefijo de longitud, recibe respuesta.</td>
+          </tr>
+          <tr>
+            <td><strong>Socket Unix</strong></td>
+            <td><code>/app/sockets/wardnode-wf.sock</code></td>
+            <td>Canal de comunicación bind-montado desde el host al contenedor.</td>
+          </tr>
+          <tr>
+            <td><strong>Agente host</strong></td>
+            <td><code>wardnode-wf-agent.py</code></td>
+            <td>Re-valida todos los argumentos con regex antes de llamar a <code>subprocess.run</code> (nunca <code>shell=True</code>). Los comandos están en una lista blanca (<code>ACTIONS</code>).</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>La variable de entorno <code>WF_SOCKET_PATH</code> controla la ruta del socket en el contenedor (default: <code>/app/sockets/wardnode-wf.sock</code>). La validación de entrada es <strong>dual-layer</strong>: Flask valida en <code>socket_client.py</code> antes de enviar; el agente re-valida de forma independiente — nunca confía en el llamador.</p>
+    </div>
+
+    {# ── 3. Instalación del agente ───────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="instalacion">
+      <h2><i class="bi bi-download" style="color:var(--accent)"></i>3 · Instalación del agente</h2>
+      <p>El agente host se instala desde el panel WF de la consola. El proceso es el siguiente:</p>
+      <ol>
+        <li>Desde el panel WF, hacer clic en <strong>"Generar clave"</strong> para crear el par de claves SSH que usará WardNode para conectarse al host.</li>
+        <li>Añadir la clave pública generada al archivo <code>~/.ssh/authorized_keys</code> del servidor host.</li>
+        <li>Hacer clic en <strong>"Instalar agente"</strong>. WardNode se conectará por SSH a <code>host.docker.internal</code> usando la clave privada del admin.</li>
+        <li>El script <code>host-agent/install.sh</code> (ejecutado como root) instala: grupo <code>wardnode</code>, el agente <code>wardnode-wf-agent.py</code>, el servicio systemd, habilita UFW e instala CrowdSec (desactivado hasta que se active el módulo DDoS).</li>
+      </ol>
+      <table>
+        <thead><tr><th>Requisito</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td>SSH accesible en <code>host.docker.internal:22</code></td><td>El servidor debe aceptar conexiones SSH desde el contenedor. Requiere <code>extra_hosts: host-gateway</code> en <code>docker-compose.vps.yml</code>.</td></tr>
+          <tr><td>Python 3 disponible en el host</td><td>El agente es un script Python. Python 3.8+ recomendado.</td></tr>
+          <tr><td>UFW disponible</td><td><code>ufw</code> debe estar instalado en el sistema (<code>apt install ufw</code>).</td></tr>
+          <tr><td>Privilegios root</td><td>El script de instalación debe ejecutarse como root para crear el servicio systemd.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 4. Inicialización obligatoria ───────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="init">
+      <h2><i class="bi bi-shield-lock" style="color:var(--accent)"></i>4 · Inicialización obligatoria (primera vez)</h2>
+      <p>Antes de poder crear reglas, se debe ejecutar el paso <strong>"Inicializar firewall"</strong> (botón en el panel WF). Esta acción aplica la política por defecto de UFW:</p>
+      <ul>
+        <li><code>ufw default deny incoming</code> — bloquea todo el tráfico entrante no explícitamente permitido.</li>
+        <li><code>ufw default allow outgoing</code> — permite todo el tráfico saliente.</li>
+      </ul>
+      <div class="doc-warn doc-note">
+        <strong>Importante: puerto SSH.</strong> Durante el init se solicita el puerto SSH actual del servidor. Introducirlo incorrectamente bloqueará el acceso SSH al servidor. WardNode añade automáticamente una regla <code>allow</code> para el puerto indicado antes de activar UFW.
+      </div>
+      <p>Hasta completar este paso, los paneles <strong>"Permitir"</strong> y <strong>"Bloquear"</strong> están deshabilitados en la UI.</p>
+    </div>
+
+    {# ── 5. Gestionar reglas ─────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="reglas">
+      <h2><i class="bi bi-list-ul" style="color:var(--accent)"></i>5 · Gestionar reglas (allow / deny / delete)</h2>
+      <p>Una vez inicializado el firewall, el panel WF permite gestionar reglas UFW de forma visual:</p>
+      <table>
+        <thead><tr><th>Acción</th><th>Cómo</th><th>Notas</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Añadir regla allow</strong></td>
+            <td>Formulario "Permitir": especificar puerto (número o rango <code>8080:8090</code>) y protocolo (<code>tcp</code> / <code>udp</code> / <code>any</code>). Opcionalmente restringir a una IP origen.</td>
+            <td>Ejemplo: <code>puerto=8080, proto=tcp, from=192.168.1.0/24</code></td>
+          </tr>
+          <tr>
+            <td><strong>Añadir regla deny</strong></td>
+            <td>Formulario "Bloquear": mismos campos que allow.</td>
+            <td>Bloquea el acceso al puerto indicado.</td>
+          </tr>
+          <tr>
+            <td><strong>Eliminar regla</strong></td>
+            <td>Desde la lista de reglas activas, icono de papelera.</td>
+            <td>La eliminación es inmediata en UFW.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Las reglas se aplican <strong>inmediatamente</strong> en UFW — no requieren recarga manual ni reinicio del agente.</p>
+    </div>
+
+    {# ── 6. Puertos publicados por Docker ────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="docker-ports">
+      <h2><i class="bi bi-box-seam" style="color:var(--accent)"></i>6 · Puertos publicados por Docker</h2>
+      <p>Docker expone puertos directamente en el host usando la chain <code>DOCKER</code> de iptables, que tiene <strong>precedencia sobre UFW</strong>. Esto significa que un puerto expuesto por Docker puede ser accesible desde el exterior aunque UFW no tenga una regla <code>allow</code> explícita.</p>
+      <p>El panel <strong>"Puertos Docker"</strong> lista los puertos expuestos por los contenedores del stack WardNode. Para cada puerto se puede aplicar <strong>"Proteger puerto"</strong>, que añade una regla <code>iptables</code> explícita en <code>raw/PREROUTING</code> para que UFW controle el acceso antes de que la chain DOCKER lo intercepte.</p>
+      <div class="doc-note">
+        <strong>Recomendación:</strong> proteger el puerto del proxy (80/443) antes de configurar el WAF en producción. Sin esta protección, el tráfico puede llegar al proxy saltándose las reglas UFW.
+      </div>
+    </div>
+
+    {# ── 7. SSH rate-limit ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="ssh-limit">
+      <h2><i class="bi bi-speedometer" style="color:var(--accent)"></i>7 · SSH rate-limit</h2>
+      <p>El botón <strong>"Limitar SSH"</strong> activa <code>ufw limit ssh</code>, que bloquea automáticamente las IPs que intentan más de 6 conexiones SSH en 30 segundos. Es una protección básica contra ataques de fuerza bruta por SSH.</p>
+      <div class="doc-warn doc-note">
+        <strong>Conflicto con CrowdSec:</strong> no activar este límite si ya tienes el módulo CrowdSec (DDoS) activo con protección SSH. Ambos mecanismos pueden interferir, generando bloqueos inesperados o reglas duplicadas.
+      </div>
+      <p>El botón <strong>"Quitar límite"</strong> revierte la regla a un <code>allow ssh</code> simple, eliminando el rate-limiting.</p>
+    </div>
+
+    {# ── 8. IPv6 ─────────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="ipv6">
+      <h2><i class="bi bi-globe" style="color:var(--accent)"></i>8 · IPv6</h2>
+      <p>El toggle <strong>IPv6</strong> controla si UFW aplica reglas sobre tráfico IPv6, modificando la variable <code>IPV6=yes/no</code> en <code>/etc/default/ufw</code>.</p>
+      <table>
+        <thead><tr><th>Estado</th><th>Efecto</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Activado (yes)</strong></td><td>Las reglas UFW aplican tanto a IPv4 como a IPv6. Las conexiones entrantes IPv6 quedan sujetas a las mismas reglas.</td></tr>
+          <tr><td><strong>Desactivado (no)</strong></td><td>Las reglas solo aplican a IPv4. El tráfico IPv6 no está controlado por UFW.</td></tr>
+        </tbody>
+      </table>
+      <p>Cambiar este toggle requiere que UFW se reinicie para aplicar el cambio en <code>/etc/default/ufw</code>. El agente gestiona esto automáticamente.</p>
+    </div>
+
+    {# ── 9. Advertencias críticas ────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="advertencias">
+      <h2><i class="bi bi-exclamation-triangle-fill" style="color:var(--accent)"></i>9 · Advertencias críticas</h2>
+
+      <div class="doc-warn doc-note">
+        <strong>Puerto 5000 (consola WardNode).</strong> Al activar el módulo WF con UFW <code>default deny incoming</code>, el puerto 5000 de la consola queda bloqueado. Antes de inicializar, configurar el acceso al panel en <strong>Ajustes → Acceso al panel</strong> con tu dominio y asegurarse de que el proxy redirige correctamente. Acceder siempre por el dominio, nunca por <code>IP:5000</code>.
+      </div>
+
+      <div class="doc-warn doc-note">
+        <strong>Puerto SSH incorrecto durante el init.</strong> El puerto SSH se solicita durante la inicialización y se añade automáticamente como regla <code>allow</code>. Si se introduce un puerto incorrecto, UFW bloqueará el acceso SSH real y el servidor quedará inaccesible por SSH. Verificar el puerto SSH antes del init con <code>ss -tlnp | grep sshd</code>.
+      </div>
+
+      <div class="doc-warn doc-note">
+        <strong>Docker y UFW.</strong> Los puertos publicados por Docker pueden bypassear UFW. Usar el panel "Puertos Docker" para proteger los puertos críticos del stack.
+      </div>
+    </div>
+
+    {# ── 10. Referencia rápida ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>10 · Referencia rápida</h2>
+      <table>
+        <thead><tr><th>Acción</th><th>Dónde</th></tr></thead>
+        <tbody>
+          <tr><td>Instalar agente</td><td>Panel WF → Botón "Instalar agente"</td></tr>
+          <tr><td>Generar clave SSH</td><td>Panel WF → Botón "Generar clave"</td></tr>
+          <tr><td>Inicializar firewall</td><td>Panel WF → Botón "Inicializar firewall"</td></tr>
+          <tr><td>Permitir puerto</td><td>Panel WF → Formulario "Permitir"</td></tr>
+          <tr><td>Bloquear puerto</td><td>Panel WF → Formulario "Bloquear"</td></tr>
+          <tr><td>Eliminar regla</td><td>Panel WF → Lista de reglas activas → ícono papelera</td></tr>
+          <tr><td>Proteger puertos Docker</td><td>Panel WF → Sección "Puertos Docker" → "Proteger puerto"</td></tr>
+          <tr><td>Activar SSH rate-limit</td><td>Panel WF → Botón "Limitar SSH"</td></tr>
+          <tr><td>Toggle IPv6</td><td>Panel WF → Toggle "IPv6"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

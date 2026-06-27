@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación WardNode CrowdSec | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('modules.ddos_index') }}" class="bc-link">WardNode CrowdSec</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('modules.ddos_index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-shield-shaded me-1"></i>WardNode CrowdSec
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · WardNode CrowdSec
+    </h1>
+    <p class="text-secondary mb-0 small">Protección contra SSH brute-force y ataques de red usando CrowdSec + nftables.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#arquitectura">2 · Arquitectura</a>
+      <a href="#requisito-wf">3 · Requisito: módulo WF</a>
+      <a href="#decisiones">4 · Decisiones y bans activos</a>
+      <a href="#ban-unban">5 · Ban / Unban manual</a>
+      <a href="#safe-ips">6 · Safe-IPs / Whitelist</a>
+      <a href="#activar">7 · Activar / Desactivar</a>
+      <a href="#referencia">8 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>WardNode CrowdSec detecta y bloquea ataques de SSH brute-force y otros patrones maliciosos en la red del servidor host. El módulo integra CrowdSec directamente en la consola WardNode, permitiendo gestionar decisiones, bans manuales y whitelist desde el navegador.</p>
+      <p>El stack CrowdSec se compone de dos contenedores que trabajan juntos:</p>
+      <table>
+        <thead><tr><th>Contenedor</th><th>Función</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong><code>wardnode-crowdsec</code></strong></td>
+            <td>Motor IDS. Analiza logs del sistema (SSH, Nginx, etc.) y genera "decisiones" de ban de IPs cuando detecta comportamiento anómalo.</td>
+          </tr>
+          <tr>
+            <td><strong><code>wardnode-crowdsec-bouncer</code></strong></td>
+            <td>Aplica las decisiones CrowdSec directamente en <strong>nftables</strong> del kernel. Las reglas se crean a nivel de red antes de que cualquier proceso del host las vea.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Requiere que el <strong>módulo WF (WardNode WF)</strong> esté instalado y activo, ya que WF gestiona la infraestructura de red del host sobre la que CrowdSec opera.</p>
+    </div>
+
+    {# ── 2. Arquitectura ─────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="arquitectura">
+      <h2><i class="bi bi-cpu" style="color:var(--accent)"></i>2 · Arquitectura</h2>
+      <p>El control de CrowdSec se realiza vía Docker SDK (no vía socket WF), gestionando directamente los contenedores CrowdSec:</p>
+      <pre>Consola Flask (contenedor)
+      │  Docker SDK
+      ▼
+wardnode-crowdsec (motor IDS)
+      │  decisiones (JSON)
+      ▼
+wardnode-crowdsec-bouncer
+      │  nftables
+      ▼
+Kernel del host (bloqueo de IPs)</pre>
+      <p>Los módulos relevantes en la consola son:</p>
+      <table>
+        <thead><tr><th>Módulo</th><th>Responsabilidad</th></tr></thead>
+        <tbody>
+          <tr><td><code>app/ddos/control.py</code></td><td>Operaciones start/stop/ban/unban vía Docker SDK y <code>cscli</code>.</td></tr>
+          <tr><td><code>app/ddos/ingest.py</code></td><td>Ingesta de decisiones CrowdSec activas.</td></tr>
+          <tr><td><code>app/ddos/safety.py</code></td><td>Gestión de safe-IPs (whitelist) — IPs que nunca se banean.</td></tr>
+        </tbody>
+      </table>
+      <p>El bouncer actúa vía <strong>nftables</strong> (no UFW) — las reglas se crean directamente en el subsistema de red del kernel, con mayor prioridad que las reglas UFW.</p>
+    </div>
+
+    {# ── 3. Requisito: módulo WF ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="requisito-wf">
+      <h2><i class="bi bi-shield-fill-exclamation" style="color:var(--accent)"></i>3 · Requisito: módulo WF activo</h2>
+      <div class="doc-warn doc-note">
+        <strong>WardNode WF debe estar instalado y activo</strong> antes de activar el módulo CrowdSec. El script de instalación del agente WF (<code>host-agent/install.sh</code>) instala también CrowdSec en el host (desactivado por defecto).<br><br>
+        Si el módulo WF se desactiva posteriormente, CrowdSec queda sin la infraestructura de red gestionada y las decisiones de ban pueden no aplicarse correctamente.
+      </div>
+      <p>Para activar WardNode CrowdSec por primera vez:</p>
+      <ol>
+        <li>Instalar y activar el módulo WF.</li>
+        <li>Completar la inicialización del firewall (paso obligatorio en WF).</li>
+        <li>Activar el módulo CrowdSec desde este panel.</li>
+      </ol>
+    </div>
+
+    {# ── 4. Decisiones y bans activos ────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="decisiones">
+      <h2><i class="bi bi-table" style="color:var(--accent)"></i>4 · Decisiones y bans activos</h2>
+      <p>El panel principal de CrowdSec muestra la lista de decisiones activas generadas por el motor. Para cada decisión se muestra:</p>
+      <table>
+        <thead><tr><th>Campo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><strong>IP</strong></td><td>Dirección IP baneada (puede ser IPv4 o IPv6).</td></tr>
+          <tr><td><strong>Duración</strong></td><td>Tiempo restante del ban.</td></tr>
+          <tr><td><strong>Razón</strong></td><td>Motivo del ban (ej. <code>crowdsecurity/ssh-bf</code> para SSH brute-force).</td></tr>
+          <tr><td><strong>Origen</strong></td><td>Fuente de la decisión: <code>cscli</code> (manual), <code>crowdsec</code> (automático), <code>crowdsecurity/CrowdSec</code> (comunidad).</td></tr>
+        </tbody>
+      </table>
+      <p>Las decisiones se generan automáticamente por el motor CrowdSec al detectar comportamiento anómalo en los logs del sistema. Un ban automático no requiere intervención del operador.</p>
+    </div>
+
+    {# ── 5. Ban / Unban manual ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="ban-unban">
+      <h2><i class="bi bi-person-slash" style="color:var(--accent)"></i>5 · Ban / Unban manual</h2>
+      <p>Además de los bans automáticos, el panel permite gestionar bans de forma manual:</p>
+      <h3>Banear una IP</h3>
+      <ul>
+        <li><strong>IP:</strong> dirección IPv4 o IPv6 a banear.</li>
+        <li><strong>Duración:</strong> en formato CrowdSec — <code>30s</code>, <code>5m</code>, <code>1h</code>, <code>7d</code>, <code>1M</code>.</li>
+        <li><strong>Razón:</strong> solo letras, números, guiones y guiones bajos (la validación se aplica en servidor). Ejemplo: <code>manual-ban</code>, <code>suspicious_scan</code>.</li>
+      </ul>
+      <h3>Desbanear una IP</h3>
+      <p>Desde la lista de decisiones activas, usar el botón de desbanear para eliminar la decisión inmediatamente. El bouncer retira la regla nftables en segundos.</p>
+    </div>
+
+    {# ── 6. Safe-IPs / Whitelist ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="safe-ips">
+      <h2><i class="bi bi-check-circle" style="color:var(--accent)"></i>6 · Safe-IPs / Whitelist</h2>
+      <p>Las IPs en la whitelist (Safe-IPs) nunca son baneadas por CrowdSec, independientemente de su comportamiento. Las IPs se normalizan a forma canónica antes de guardarse (ejemplo: <code>::ffff:1.2.3.4</code> → <code>1.2.3.4</code>).</p>
+      <div class="doc-note">
+        <strong>Recomendación:</strong> añadir la IP de tu oficina, VPN o cualquier fuente de tráfico legítimo intenso a la whitelist antes de activar CrowdSec. Sin esta precaución, los patrones de acceso normales de un administrador (múltiples conexiones SSH, scrips de despliegue, etc.) pueden desencadenar un ban automático.
+      </div>
+      <p>La gestión de Safe-IPs está disponible en el panel CrowdSec → sección "Safe-IPs". Se pueden añadir y eliminar IPs individualmente.</p>
+    </div>
+
+    {# ── 7. Activar / Desactivar ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="activar">
+      <h2><i class="bi bi-power" style="color:var(--accent)"></i>7 · Activar / Desactivar</h2>
+      <table>
+        <thead><tr><th>Acción</th><th>Efecto</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Activar</strong></td>
+            <td>Levanta los contenedores <code>wardnode-crowdsec</code> y <code>wardnode-crowdsec-bouncer</code>. CrowdSec empieza a analizar logs y aplicar decisiones inmediatamente.</td>
+          </tr>
+          <tr>
+            <td><strong>Desactivar</strong></td>
+            <td>Detiene ambos contenedores. La protección CrowdSec queda inactiva. Las reglas nftables activas son retiradas por el bouncer al detenerse.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Al <strong>reactivar</strong>, CrowdSec retoma el análisis desde donde lo dejó — los logs acumulados mientras estuvo inactivo no se procesan retroactivamente, pero el historial de decisiones previas sigue disponible.</p>
+    </div>
+
+    {# ── 8. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>8 · Referencia rápida</h2>
+      <table>
+        <thead><tr><th>Acción</th><th>Dónde</th></tr></thead>
+        <tbody>
+          <tr><td>Activar protección CrowdSec</td><td>Panel CrowdSec → Botón "Activar"</td></tr>
+          <tr><td>Ver bans activos</td><td>Panel CrowdSec → Lista de decisiones</td></tr>
+          <tr><td>Banear IP manualmente</td><td>Panel CrowdSec → Formulario "Ban manual"</td></tr>
+          <tr><td>Desbanear IP</td><td>Panel CrowdSec → Lista de decisiones → ícono desbanear</td></tr>
+          <tr><td>Añadir IP a whitelist</td><td>Panel CrowdSec → Sección "Safe-IPs" → Añadir IP</td></tr>
+          <tr><td>Eliminar IP de whitelist</td><td>Panel CrowdSec → Sección "Safe-IPs" → ícono eliminar</td></tr>
+          <tr><td>Desactivar protección</td><td>Panel CrowdSec → Botón "Desactivar"</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

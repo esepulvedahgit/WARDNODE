@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Contenedores / Sistema | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('modules.sys_index') }}" class="bc-link">Contenedores / Sistema</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('modules.sys_index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-layers-fill me-1"></i>Contenedores / Sistema
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Contenedores / Sistema
+    </h1>
+    <p class="text-secondary mb-0 small">Panel de estado y reinicio de los contenedores del stack WardNode.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#contenedores">2 · Contenedores gestionados</a>
+      <a href="#reinicio">3 · Reinicio seguro</a>
+      <a href="#diagnostico">4 · Diagnóstico y estado</a>
+      <a href="#referencia">5 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>El panel de <strong>Contenedores / Sistema</strong> permite ver el estado de todos los servicios del stack WardNode y reiniciarlos de forma individual, sin necesidad de acceso SSH al servidor.</p>
+      <p>El control se realiza mediante el <strong>Docker SDK</strong> desde la consola Flask. La consola tiene acceso al socket Docker del host (bind-montado en la imagen) y puede inspeccionar y controlar los contenedores del stack.</p>
+      <p>Este panel está orientado a operaciones de mantenimiento rutinario: recargar configuración tras cambios en Nginx, reiniciar un contenedor que haya fallado, o comprobar el estado del stack antes de un despliegue.</p>
+    </div>
+
+    {# ── 2. Contenedores gestionados ─────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="contenedores">
+      <h2><i class="bi bi-layers" style="color:var(--accent)"></i>2 · Contenedores gestionados</h2>
+      <table>
+        <thead><tr><th>Contenedor</th><th>Función</th><th>Módulo</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>wardnode-proxy</code></td>
+            <td>Nginx + ModSecurity. WAF principal — maneja todo el tráfico proxiado y aplica las reglas CRS.</td>
+            <td>Core</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-loki</code></td>
+            <td>Almacén de logs de texto. Recibe logs del contenedor proxy vía Alloy. Retención 30 días.</td>
+            <td>OBS</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-grafana</code></td>
+            <td>Plataforma de visualización. Dashboards de WAF, logs y métricas.</td>
+            <td>OBS (visualización)</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-alloy</code></td>
+            <td>Agente colector. Stream de logs Docker + scrape de métricas Prometheus + métricas de sistema.</td>
+            <td>OBS</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-prometheus</code></td>
+            <td>Almacén de métricas de series temporales.</td>
+            <td>OBS</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-nginx-exporter</code></td>
+            <td>Exporta métricas Nginx stub_status vía HTTP para que Prometheus las scrape.</td>
+            <td>OBS</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-crowdsec</code></td>
+            <td>Motor IDS CrowdSec. Analiza logs y genera decisiones de ban.</td>
+            <td>DDoS (CrowdSec)</td>
+          </tr>
+          <tr>
+            <td><code>wardnode-crowdsec-bouncer</code></td>
+            <td>Aplica las decisiones CrowdSec en nftables del kernel.</td>
+            <td>DDoS (CrowdSec)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 3. Reinicio seguro ──────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="reinicio">
+      <h2><i class="bi bi-arrow-clockwise" style="color:var(--accent)"></i>3 · Reinicio seguro</h2>
+      <p>El reinicio es <strong>por contenedor individual</strong> — no hay opción de reiniciar el stack completo desde este panel. Esto es deliberado: reiniciar todos los contenedores a la vez podría interrumpir el tráfico y causar una interrupción de servicio.</p>
+
+      <div class="doc-warn doc-note">
+        <strong>No reiniciar la consola WardNode (<code>wardnode-console</code>) desde este panel.</strong> Reiniciar la consola mientras hay una sesión activa cierra la sesión inmediatamente y puede interrumpir operaciones en curso (regeneración de configs, ingesta de eventos WAF, etc.).<br><br>
+        Para reiniciar la consola, usar <code>docker compose restart wardnode-console</code> desde el host con acceso SSH.
+      </div>
+
+      <h3>Cuándo reiniciar el proxy</h3>
+      <p>Reiniciar <code>wardnode-proxy</code> desde este panel equivale a <code>docker compose restart proxy</code>. Es necesario en los siguientes casos:</p>
+      <ul>
+        <li>Tras cambios manuales en archivos de configuración Nginx (fuera del ciclo normal de regeneración de la consola).</li>
+        <li>Si el proxy queda en estado <code>restarting</code> o no responde.</li>
+        <li>Tras actualizar la imagen del proxy (el reinicio aplica la nueva imagen si ya fue descargada).</li>
+      </ul>
+      <p>La consola regenera y recarga Nginx automáticamente tras guardar configuración — este botón es solo para casos excepcionales.</p>
+    </div>
+
+    {# ── 4. Diagnóstico y estado ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="diagnostico">
+      <h2><i class="bi bi-activity" style="color:var(--accent)"></i>4 · Diagnóstico y estado</h2>
+      <p>El panel muestra el estado de cada contenedor en tiempo real:</p>
+      <table>
+        <thead><tr><th>Estado</th><th>Significado</th><th>Acción recomendada</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>running</strong></td>
+            <td>El contenedor está activo y respondiendo.</td>
+            <td>Ninguna.</td>
+          </tr>
+          <tr>
+            <td><strong>stopped / exited</strong></td>
+            <td>El contenedor se ha detenido, ya sea de forma planificada o inesperada.</td>
+            <td>Revisar logs. Si es inesperado, reiniciar desde este panel o investigar la causa.</td>
+          </tr>
+          <tr>
+            <td><strong>restarting</strong></td>
+            <td>Docker está intentando reiniciar el contenedor repetidamente (crash loop).</td>
+            <td>Revisar logs con <code>docker logs &lt;nombre&gt;</code> desde el host para identificar el error de arranque.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Si un contenedor aparece como <strong>stopped</strong> inesperadamente, las fuentes de información para el diagnóstico son:</p>
+      <ul>
+        <li><strong>Grafana/Loki</strong> (si OBS está activo): revisar el dashboard NGINX Logs (04) para logs del proxy.</li>
+        <li><strong>SSH al host</strong>: <code>docker logs wardnode-&lt;nombre&gt;</code> para el log completo del contenedor.</li>
+        <li><strong>Audit Log de WardNode</strong> (<code>/audit/</code>): muestra acciones recientes del sistema que puedan haber causado el problema.</li>
+      </ul>
+    </div>
+
+    {# ── 5. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>5 · Referencia rápida</h2>
+      <table>
+        <thead><tr><th>Cuándo reiniciar</th><th>Contenedor</th><th>Por qué</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Tras cambio manual en configs Nginx</td>
+            <td><code>wardnode-proxy</code></td>
+            <td>Recargar configuración Nginx sin parar tráfico.</td>
+          </tr>
+          <tr>
+            <td>Proxy no responde o en crash loop</td>
+            <td><code>wardnode-proxy</code></td>
+            <td>Intentar recuperación. Si persiste, revisar logs.</td>
+          </tr>
+          <tr>
+            <td>Loki/Prometheus no reciben datos</td>
+            <td><code>wardnode-alloy</code></td>
+            <td>Reiniciar el colector para restablecer conexiones.</td>
+          </tr>
+          <tr>
+            <td>Grafana no carga dashboards</td>
+            <td><code>wardnode-grafana</code></td>
+            <td>Reiniciar visualización (no afecta colección de datos).</td>
+          </tr>
+          <tr>
+            <td>CrowdSec no aplica bans</td>
+            <td><code>wardnode-crowdsec-bouncer</code></td>
+            <td>Reiniciar el bouncer para restaurar reglas nftables.</td>
+          </tr>
+          <tr>
+            <td>Consola WardNode colgada</td>
+            <td>No usar este panel — SSH al host</td>
+            <td><code>docker compose restart wardnode-console</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

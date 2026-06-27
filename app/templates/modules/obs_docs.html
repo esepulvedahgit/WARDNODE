@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación WardNode OBS | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('modules.obs_index') }}" class="bc-link">WardNode OBS</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('modules.obs_index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-bar-chart-line-fill me-1"></i>WardNode OBS
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · WardNode OBS
+    </h1>
+    <p class="text-secondary mb-0 small">Stack de observabilidad integrado — colección de logs y métricas con Grafana para visualización.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#coleccion">2 · Capa de colección</a>
+      <a href="#visualizacion">3 · Capa de visualización</a>
+      <a href="#dashboards">4 · Dashboards incluidos</a>
+      <a href="#invariante">5 · Invariante importante</a>
+      <a href="#acceso">6 · Acceso y pantalla completa</a>
+      <a href="#referencia">7 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>El stack OBS tiene una arquitectura de <strong>dos capas independientes</strong>:</p>
+      <table>
+        <thead><tr><th>Capa</th><th>Servicios</th><th>Cuándo arranca</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Colección</strong></td>
+            <td>Alloy, Loki, Prometheus, nginx-exporter</td>
+            <td>Siempre — con <code>docker compose up</code> base. No requiere módulo OBS activo.</td>
+          </tr>
+          <tr>
+            <td><strong>Visualización</strong></td>
+            <td>Grafana</td>
+            <td>Solo con <code>--profile obs</code> o al activar el módulo OBS desde la consola.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Esta separación garantiza que los logs y métricas se capturan desde el primer contenedor levantado, minimizando el riesgo de perder datos de observabilidad antes de que el módulo esté activo.</p>
+    </div>
+
+    {# ── 2. Capa de colección ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="coleccion">
+      <h2><i class="bi bi-collection" style="color:var(--accent)"></i>2 · Capa de colección (siempre activa)</h2>
+      <p>Los cuatro servicios de colección arrancan con el stack base y no requieren intervención manual:</p>
+      <table>
+        <thead><tr><th>Servicio</th><th>Función</th><th>Límite de memoria</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Alloy</strong> (Grafana Alloy)</td>
+            <td>Agente colector. Hace stream de logs del contenedor proxy vía Docker y scrape de métricas Prometheus. También provee métricas de sistema mediante <code>prometheus.exporter.unix</code>.</td>
+            <td>256 MB</td>
+          </tr>
+          <tr>
+            <td><strong>Loki</strong></td>
+            <td>Almacén de logs. Retención por defecto de 30 días. Fuente autoritativa para logs HTTP raw (acceso, errores, URIs, códigos de respuesta).</td>
+            <td>256 MB</td>
+          </tr>
+          <tr>
+            <td><strong>Prometheus</strong></td>
+            <td>Almacén de métricas de series temporales. Recibe scrapes de Alloy y nginx-exporter.</td>
+            <td>256 MB</td>
+          </tr>
+          <tr>
+            <td><strong>nginx-exporter</strong></td>
+            <td>Expone métricas del módulo <code>ngx_http_stub_status</code> de Nginx vía HTTP para que Prometheus las scrape.</td>
+            <td>32 MB</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>La capa de colección no requiere módulo OBS activo — siempre recoge datos. Fluent Bit ha sido eliminado del stack; Alloy cubre toda la colección.</p>
+    </div>
+
+    {# ── 3. Capa de visualización ────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="visualizacion">
+      <h2><i class="bi bi-bar-chart-line" style="color:var(--accent)"></i>3 · Capa de visualización (Grafana)</h2>
+      <p>Grafana es la única pieza de visualización y se gestiona de forma independiente de la colección:</p>
+      <ul>
+        <li><strong>Activar desde la consola:</strong> panel OBS → botón "Activar módulo OBS". Esto levanta únicamente el contenedor <code>wardnode-grafana</code>.</li>
+        <li><strong>En producción:</strong> <code>docker-compose.vps.yml</code> incluye el profile <code>obs</code> preconfigurado. Las configuraciones de OBS se copian desde la imagen de la consola a volúmenes nombrados antes de que los contenedores OBS arranquen.</li>
+        <li><strong>Acceso:</strong> Grafana se sirve en <code>/obs/</code> vía un bloque nginx (<code>obs.conf</code>) inyectado dinámicamente en el contenedor proxy al activar el módulo.</li>
+      </ul>
+    </div>
+
+    {# ── 4. Dashboards incluidos ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="dashboards">
+      <h2><i class="bi bi-grid-1x2" style="color:var(--accent)"></i>4 · Dashboards incluidos</h2>
+      <table>
+        <thead><tr><th>Dashboard</th><th>Fuente de datos</th><th>Uso principal</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>WAF Analytics (03)</strong></td>
+            <td>PostgreSQL — tabla <code>attack_event</code></td>
+            <td>Conteos WAF oficiales — siempre coincide con los KPIs de <code>/proxy/</code>. Fuente autoritativa de eventos WAF.</td>
+          </tr>
+          <tr>
+            <td><strong>Security Overview (01)</strong></td>
+            <td>PostgreSQL (estadísticas WAF) + Loki (tendencias)</td>
+            <td>Postura de seguridad general del stack. Vista ejecutiva combinada.</td>
+          </tr>
+          <tr>
+            <td><strong>NGINX Logs (04)</strong></td>
+            <td>Loki</td>
+            <td>HTTP 4xx/5xx, URIs, vhosts. Fuente autoritativa para logs de acceso HTTP raw.</td>
+          </tr>
+          <tr>
+            <td><strong>NGINX Metrics (07)</strong></td>
+            <td>Loki</td>
+            <td>Agregados de códigos de respuesta HTTP a lo largo del tiempo.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 5. Invariante importante ────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="invariante">
+      <h2><i class="bi bi-info-circle" style="color:var(--accent)"></i>5 · Invariante importante</h2>
+      <div class="doc-note">
+        <strong>Los conteos de eventos WAF deben leerse siempre desde PostgreSQL</strong>, ya sea desde el dashboard <em>WAF Analytics (03)</em> o desde la página <code>/proxy/</code> de la consola.<br><br>
+        Loki almacena líneas de log crudas con retención de 30 días. Los números de Loki y PostgreSQL <strong>no coincidirán</strong> — y eso es completamente esperado. PostgreSQL deduplica transacciones ModSecurity por <code>transaction_id</code>, mientras que Loki almacena cada línea de log individualmente.<br><br>
+        Nunca uses los conteos de Loki para reportar incidentes WAF. Usa siempre PostgreSQL como fuente autoritativa.
+      </div>
+    </div>
+
+    {# ── 6. Acceso y pantalla completa ───────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="acceso">
+      <h2><i class="bi bi-fullscreen" style="color:var(--accent)"></i>6 · Acceso y pantalla completa</h2>
+      <p>Una vez el módulo OBS está activo:</p>
+      <table>
+        <thead><tr><th>Opción</th><th>URL</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Grafana embebido</strong></td>
+            <td><code>/obs/</code></td>
+            <td>Grafana sirviéndose a través del proxy WAF. El acceso requiere módulo OBS activo.</td>
+          </tr>
+          <tr>
+            <td><strong>Pantalla completa</strong></td>
+            <td><code>/modules/obs/fullscreen</code></td>
+            <td>Vista embebida de Grafana en la consola WardNode a pantalla completa. Accesible desde el panel OBS con el botón "Pantalla completa".</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Si el módulo no está activo, el acceso a <code>/obs/</code> devuelve un error 502 (el proxy no tiene configurado ese bloque de ubicación).</p>
+    </div>
+
+    {# ── 7. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>7 · Referencia rápida</h2>
+      <table>
+        <thead><tr><th>Acción</th><th>Dónde</th></tr></thead>
+        <tbody>
+          <tr><td>Activar Grafana</td><td>Panel OBS → Botón "Activar módulo OBS"</td></tr>
+          <tr><td>Acceder a Grafana</td><td>Navegador → <code>/obs/</code> (módulo debe estar activo)</td></tr>
+          <tr><td>Vista pantalla completa</td><td>Panel OBS → Botón "Pantalla completa" → <code>/modules/obs/fullscreen</code></td></tr>
+          <tr><td>Ver eventos WAF (oficial)</td><td>Dashboard WAF Analytics (03) o <code>/proxy/</code></td></tr>
+          <tr><td>Ver logs HTTP raw</td><td>Dashboard NGINX Logs (04) en Grafana</td></tr>
+          <tr><td>Ver métricas de sistema</td><td>Alloy — <code>prometheus.exporter.unix</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}
