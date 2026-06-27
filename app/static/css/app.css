@@ -17,6 +17,8 @@
   --body-bg:      #f0f4f9;
   --card-bg:      #ffffff;
   --card-border:  #e2e8f0;
+  --border-color: #e2e8f0;
+  --bg-secondary: #f8fafc;
   --card-radius:  10px;
   --card-shadow:  0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
 
@@ -949,3 +951,20 @@ code, pre, .font-mono {
   /* Donut más compacto en teléfonos pequeños */
   .chart-wrap-sm { max-width: 240px; }
 }
+
+/* ── Docs pages ────────────────────────────────────────────────────────── */
+.wn-toc { position: sticky; top: 80px; }
+.wn-toc a { display: block; font-size: 12.5px; padding: 4px 10px; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+.wn-toc a:hover { color: var(--accent); background: var(--bg-secondary); border-left-color: var(--accent); }
+.wn-toc a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+.wn-toc .toc-group { font-size: 10.5px; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 10px 10px 3px; }
+.wn-docs h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; scroll-margin-top: 80px; }
+.wn-docs h3 { font-size: 14px; font-weight: 700; margin: 18px 0 8px; color: var(--text-primary); }
+.wn-docs p, .wn-docs li { font-size: 13px; line-height: 1.65; color: var(--text-secondary); }
+.wn-docs pre { background: var(--bg-secondary); border: 1px solid var(--card-border); border-radius: 6px; padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow-x: auto; margin: 10px 0; }
+.wn-docs table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+.wn-docs table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); border-bottom: 1px solid var(--card-border); padding: 6px 10px; }
+.wn-docs table td { border-bottom: 1px solid var(--card-border); padding: 6px 10px; color: var(--text-secondary); vertical-align: top; }
+.wn-docs code { font-size: 12px; }
+.wn-docs .doc-note { border-left: 3px solid var(--accent); background: var(--bg-secondary); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 12.5px; margin: 12px 0; }
+.wn-docs .doc-warn { border-left-color: #f59e0b; }
