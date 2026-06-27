@@ -7,6 +7,9 @@ from flask_wtf import CSRFProtect
 
 csrf = CSRFProtect()
 db = SQLAlchemy()
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(
+    key_func=get_remote_address,
+    in_memory_fallback_enabled=True,
+)
 login_manager = LoginManager()
 migrate = Migrate()

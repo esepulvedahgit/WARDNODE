@@ -18,7 +18,12 @@ class Config:
     REMEMBER_COOKIE_SAMESITE = "Strict"
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
     RATELIMIT_DEFAULT = os.getenv("RATELIMIT_DEFAULT", "200 per day;50 per hour")
-    RATELIMIT_STORAGE_URI = os.getenv("RATELIMIT_STORAGE_URI", "memory://")
+    _redis_pw = os.getenv("REDIS_PASSWORD", "")
+    _redis_host = os.getenv("REDIS_HOST", "127.0.0.1:6379")
+    RATELIMIT_STORAGE_URI = os.getenv(
+        "RATELIMIT_STORAGE_URI",
+        f"redis://:{_redis_pw}@{_redis_host}" if _redis_pw else "memory://",
+    )
     LOGIN_RATELIMIT = os.getenv("LOGIN_RATELIMIT", "10 per hour")
     PROPAGATE_EXCEPTIONS = False
     PASSWORD_RESET_TOKEN_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30"))
