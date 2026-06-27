@@ -447,3 +447,55 @@ def test_wf_status_returns_active_and_initialized_fields(client, login_as, monke
     assert data["active"] is True
     assert "output" in data
     assert "defaults_output" in data
+
+
+# ── Docs OBS / DDoS / Sys ───────────────────────────────────────────────────
+
+def test_obs_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/modules/obs/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "coleccion", "dashboards", "invariante", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_obs_docs_accessible_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    assert client.get("/modules/obs/docs").status_code == 200
+
+
+def test_ddos_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/modules/ddos/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "arquitectura", "requisito-wf", "ban-unban", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_ddos_docs_denied_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.get("/modules/ddos/docs")
+    assert r.status_code in (302, 403)
+
+
+def test_sys_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/modules/sys/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "contenedores", "reinicio", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_sys_docs_denied_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.get("/modules/sys/docs")
+    assert r.status_code in (302, 403)

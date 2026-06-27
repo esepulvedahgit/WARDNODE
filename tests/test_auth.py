@@ -358,3 +358,32 @@ def test_login_rate_limit_returns_429_when_exceeded():
 
     assert codes[:3] == [302, 302, 302]
     assert codes[3] == 429
+
+
+# ── Docs Auth ────────────────────────────────────────────────────────────────
+
+def test_auth_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/auth/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "roles", "mfa", "reset", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_auth_docs_accessible_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    assert client.get("/auth/docs").status_code == 200
+
+
+def test_auth_docs_accessible_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    assert client.get("/auth/docs").status_code == 200
+
+
+def test_auth_docs_button_on_profile(client, login_as):
+    login_as()
+    body = client.get("/auth/profile").get_data(as_text=True)
+    assert "/auth/docs" in body

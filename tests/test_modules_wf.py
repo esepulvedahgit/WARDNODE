@@ -252,3 +252,34 @@ def test_toggle_wf_disable_works_without_console_domain(client, login_as):
 
     with client.application.app_context():
         assert AppConfig.get("module_wf_enabled") == "0"
+
+
+# ── Docs WF ─────────────────────────────────────────────────────────────────
+
+def test_wf_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/modules/wf/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "instalacion", "init", "advertencias", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_wf_docs_accessible_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    assert client.get("/modules/wf/docs").status_code == 200
+
+
+def test_wf_docs_denied_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    r = client.get("/modules/wf/docs")
+    assert r.status_code in (302, 403)
+
+
+def test_wf_docs_button_on_panel(client, login_as):
+    login_as()
+    AppConfig.set("module_wf_enabled", "1")
+    body = client.get("/modules/wf/").get_data(as_text=True)
+    assert "/modules/wf/docs" in body

@@ -1988,3 +1988,60 @@ def test_editing_default_header_marks_is_default_false(client, login_as):
     updated = SecurityHeader.query.get(header.id)
     assert updated.value == "SAMEORIGIN"
     assert updated.is_default is False  # la UI marcó como editado por operador
+
+
+# ── Docs Settings / Events / Logs ────────────────────────────────────────────
+
+def test_settings_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/proxy/settings/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "smtp", "syslog", "console-site", "secretos", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_settings_docs_denied_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.get("/proxy/settings/docs")
+    assert r.status_code in (302, 403)
+
+
+def test_events_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/proxy/events/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "deduplicacion", "severidades", "export", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_events_docs_accessible_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    assert client.get("/proxy/events/docs").status_code == 200
+
+
+def test_events_docs_button(client, login_as):
+    login_as()
+    body = client.get("/proxy/events").get_data(as_text=True)
+    assert "/proxy/events/docs" in body
+
+
+def test_logs_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/proxy/logs/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "polling", "busqueda", "archivo", "diferencia", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_logs_docs_accessible_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    assert client.get("/proxy/logs/docs").status_code == 200

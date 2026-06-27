@@ -529,3 +529,28 @@ class TestEmailAttachments:
         # El CRLF se reemplaza por espacios: jamás una cabecera Bcc inyectada.
         assert not any(line.startswith("Bcc:")
                        for line in smtp_spy["msg"].splitlines())
+
+
+# ── Docs Backup ─────────────────────────────────────────────────────────────
+
+def test_backup_docs_renders(client, login_as):
+    login_as()
+    r = client.get("/backup/docs")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Índice" in body
+    for anchor in ("vision-general", "contenido", "secreto", "restauracion-ui", "referencia"):
+        assert f'id="{anchor}"' in body
+        assert f'href="#{anchor}"' in body
+
+
+def test_backup_docs_denied_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.get("/backup/docs")
+    assert r.status_code in (302, 403)
+
+
+def test_backup_docs_button_on_panel(client, login_as):
+    login_as()
+    body = client.get("/backup/").get_data(as_text=True)
+    assert "/backup/docs" in body
