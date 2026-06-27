@@ -1866,3 +1866,25 @@ def rawlog_prune_now():
     )
 
     return redirect(url_for("proxy.logs_list"))
+
+
+# ── Docs de Ajustes / Eventos / Log ────────────────────────────────────────────
+@bp.get("/settings/docs")
+@roles_required(ROLE_ADMIN)
+def settings_docs():
+    """Documentación de la pantalla de Ajustes."""
+    return render_template("proxy/settings_docs.html")
+
+
+@bp.get("/events/docs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def events_docs():
+    """Documentación de la bitácora de Eventos WAF."""
+    return render_template("proxy/events_docs.html")
+
+
+@bp.get("/logs/docs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def logs_docs():
+    """Documentación del Log ModSecurity crudo."""
+    return render_template("proxy/logs_docs.html")

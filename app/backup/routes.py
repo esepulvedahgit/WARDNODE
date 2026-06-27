@@ -258,3 +258,10 @@ def restore():
         "success",
     )
     return redirect(url_for("auth.login"))
+
+
+@bp.get("/docs")
+@roles_required(ROLE_ADMIN)
+def docs():
+    """Documentación oficial del módulo de Backups."""
+    return render_template("backup/docs.html")

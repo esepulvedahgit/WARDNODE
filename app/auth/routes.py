@@ -381,3 +381,10 @@ def mfa_disable():
     db.session.commit()
     flash("Autenticacion de dos factores desactivada.", "success")
     return redirect(url_for("auth.profile"))
+
+
+@bp.get("/docs")
+@login_required
+def docs():
+    """Documentación de usuarios, roles y MFA (accesible a todos los roles)."""
+    return render_template("auth/docs.html")

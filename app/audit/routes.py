@@ -157,3 +157,10 @@ def export_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename=wardnode_audit_{ts}.csv"},
     )
+
+
+@bp.get("/docs")
+@roles_required(ROLE_ADMIN)
+def docs():
+    """Documentación oficial del Audit Log."""
+    return render_template("audit/docs.html")

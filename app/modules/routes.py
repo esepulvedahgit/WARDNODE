@@ -1757,3 +1757,32 @@ def ddos_safe_ips_update():
     log_audit("ddos.safe_ips_update", resource_type="config", resource_name="ddos_safe_ips",
               detail={"count": len(ips)})
     return jsonify({"ok": True, "count": len(ips)})
+
+
+# ── Docs de módulos ────────────────────────────────────────────────────────────
+@bp.get("/wf/docs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
+def wf_docs():
+    """Documentación oficial del módulo WardNode WF (Firewall UFW)."""
+    return render_template("modules/wf_docs.html")
+
+
+@bp.get("/obs/docs")
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER)
+def obs_docs():
+    """Documentación oficial del módulo WardNode OBS (Observabilidad/Grafana)."""
+    return render_template("modules/obs_docs.html")
+
+
+@bp.get("/ddos/docs")
+@roles_required(ROLE_ADMIN)
+def ddos_docs():
+    """Documentación oficial del módulo WardNode CrowdSec (DDoS/brute-force)."""
+    return render_template("modules/ddos_docs.html")
+
+
+@bp.get("/sys/docs")
+@roles_required(ROLE_ADMIN)
+def sys_docs():
+    """Documentación oficial del panel de Contenedores / Sistema."""
+    return render_template("modules/sys_docs.html")
