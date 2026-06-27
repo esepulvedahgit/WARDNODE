@@ -7,6 +7,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Nginx](https://img.shields.io/badge/Nginx-OWASP--CRS-009639?style=flat-square&logo=nginx&logoColor=white)
 ![ModSecurity](https://img.shields.io/badge/ModSecurity-v3-CC0000?style=flat-square)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-11.5-F46800?style=flat-square&logo=grafana&logoColor=white)
 ![Loki](https://img.shields.io/badge/Loki-3-F46800?style=flat-square&logo=grafana&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-latest-E6522C?style=flat-square&logo=prometheus&logoColor=white)
@@ -16,7 +17,7 @@
 
 **WardNode** es una consola de administración Flask para un stack de proxy inverso Nginx + ModSecurity + OWASP CRS. Separa el **plano de gestión** (consola Flask, puerto 5000) del **plano de tráfico** (proxy Nginx, puertos 80/443): la consola escribe configuración Nginx a disco y el proxy la lee, sin manejar tráfico de usuario directamente.
 
-Módulos opcionales extienden la consola con gestión del firewall UFW del host y un stack de observabilidad completo (Grafana + Loki + Prometheus).
+Cuatro módulos opcionales extienden la consola con capacidades de gestión del host: **WardNode WF** (firewall UFW), **WardNode OBS** (observabilidad Grafana/Loki/Prometheus), **WardNode SOC** (correlación de incidentes, análisis LLM y scoring ML) y **WardNode CrowdSec** (IDS/IPS). Cada pantalla de la consola incluye una página de **ayuda embebida** accesible desde el botón "Documentación".
 
 ---
 
@@ -54,6 +55,7 @@ Módulos opcionales extienden la consola con gestión del firewall UFW del host 
 | ![PostgreSQL](https://img.shields.io/badge/-PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white) | 16-alpine | Base de datos (producción) |
 | SQLite | — | Base de datos (desarrollo local) |
 | psycopg | 3.1 | Driver PostgreSQL |
+| ![Redis](https://img.shields.io/badge/-Redis-DC382D?style=flat-square&logo=redis&logoColor=white) | 7-alpine | Storage compartido Flask-Limiter (producción multi-worker) |
 
 ### Observabilidad (perfil `obs`)
 | Tecnología | Versión | Rol |
@@ -63,12 +65,15 @@ Módulos opcionales extienden la consola con gestión del firewall UFW del host 
 | Grafana Alloy | latest | Recolector (logs + métricas) |
 | ![Prometheus](https://img.shields.io/badge/-Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white) | latest | Almacenamiento de métricas |
 
-### Seguridad adicional
+### Seguridad y análisis
 ![pyotp](https://img.shields.io/badge/-pyotp%20TOTP-4A4A4A?style=flat-square)
 ![cryptography](https://img.shields.io/badge/-cryptography%20Fernet-4A4A4A?style=flat-square)
 ![MaxMind](https://img.shields.io/badge/-MaxMind%20GeoLite2-003399?style=flat-square)
 ![paramiko](https://img.shields.io/badge/-paramiko%20SSH-4A4A4A?style=flat-square)
 ![Flask‑Limiter](https://img.shields.io/badge/-Flask--Limiter%203.8-4A4A4A?style=flat-square)
+![scikit-learn](https://img.shields.io/badge/-scikit--learn-F7931E?style=flat-square&logo=scikit-learn&logoColor=white)
+![httpx](https://img.shields.io/badge/-httpx-4A4A4A?style=flat-square)
+![pyzipper](https://img.shields.io/badge/-pyzipper%20AES--256-4A4A4A?style=flat-square)
 
 ---
 
@@ -77,28 +82,45 @@ Módulos opcionales extienden la consola con gestión del firewall UFW del host 
 WardNode separa completamente el plano de gestión del plano de tráfico:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Docker Compose                          │
-│                                                                 │
-│  ┌──────────────────┐   generated/nginx/   ┌─────────────────┐ │
-│  │  Flask Console   │  ──────────────────► │  Proxy (Nginx   │ │
-│  │  :5000 (gestión) │   *.conf (montado    │  + ModSecurity  │ │
-│  │                  │   como read-only)    │  + OWASP CRS)   │ │
-│  │  - Genera config │                      │  :80 / :443     │ │
-│  │  - Recarga proxy │◄── Docker SDK ──────►│                 │ │
-│  └────────┬─────────┘                      └────────┬────────┘ │
-│           │                                         │          │
-│           ▼                                         ▼          │
-│  ┌──────────────────┐              stdout  ┌─────────────────┐ │
-│  │  PostgreSQL :5432│              logs    │  ModSec JSON    │ │
-│  │  (sitios, eventos│              ───────►│  audit → ingest │ │
-│  │   audit, config) │                      │  → AttackEvent  │ │
-│  └──────────────────┘                      └─────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Docker Compose                              │
+│                                                                      │
+│  ┌──────────────────┐   generated/nginx/   ┌──────────────────────┐ │
+│  │  Flask Console   │  ──────────────────► │  Proxy (Nginx        │ │
+│  │  :5000 (gestión) │   *.conf (montado    │  + ModSecurity       │ │
+│  │                  │   como read-only)    │  + OWASP CRS)        │ │
+│  │  - Genera config │                      │  :80 / :443          │ │
+│  │  - Recarga proxy │◄── Docker SDK ──────►│                      │ │
+│  └────────┬─────────┘                      └──────────┬───────────┘ │
+│           │                                           │             │
+│           ▼                                           ▼             │
+│  ┌──────────────────┐              stdout    ┌─────────────────┐    │
+│  │  PostgreSQL :5432│              logs      │  ModSec JSON    │    │
+│  │  (sitios, eventos│              ─────────►│  audit → ingest │    │
+│  │   audit, config) │                        │  → AttackEvent  │    │
+│  └──────────────────┘                        └─────────────────┘    │
+│                                                                      │
+│  ┌──────────────────┐                                               │
+│  │  Redis :6379     │  ← storage Flask-Limiter (multi-worker)      │
+│  └──────────────────┘                                               │
+└──────────────────────────────────────────────────────────────────────┘
 
 Perfil OBS (opcional):
   Alloy ──► Loki (logs) + Prometheus (métricas) ──► Grafana :3000
 ```
+
+### Workers en segundo plano
+
+La consola arranca seis hilos daemon en startup. En producción con Gunicorn multi-worker, un advisory lock de PostgreSQL garantiza que solo un proceso ejecuta cada ciclo:
+
+| Hilo | Advisory lock | Función |
+|---|---|---|
+| `modsec-ingest` | — | Lee JSON de stdout del proxy → `AttackEvent` |
+| `rawlog-worker` | 815004 | Persiste log crudo en `modsec_raw_log` |
+| `syslog-forwarder` | 815005 | Reenvía WAF events + audit log a SIEM (RFC5424) |
+| `soc-worker` | 815001 | Correlación de incidentes + ML (cada N min.) |
+| `backup-scheduler` | 815002 | Backup cifrado diario a hora configurable |
+| `crowdsec-ingest` | — | Lee alertas CrowdSec → `DdosBanEvent` |
 
 ### Pipeline de generación de configuración
 
@@ -116,7 +138,7 @@ _apply_nginx()  ──►  render_nginx_configs()  ──►  generated/nginx/
 reload_nginx()  (docker exec nginx -s reload)
 ```
 
-### Módulos host (Unix socket)
+### Módulo WF — comunicación con el host
 
 ```
 Flask container ─── Unix socket ─── wardnode-wf-agent.py (root:wardnode)
@@ -130,54 +152,89 @@ socket_client.py                    systemd: wardnode-wf.service
 
 ```
 wardnode/
-├── app/                          # Aplicación Flask
-│   ├── __init__.py               # Factory, extensiones, CLI commands, ingest thread
-│   ├── models.py                 # Site, AttackEvent, AuditLog, AppConfig, ...
-│   ├── config.py                 # Configuración por entorno
-│   ├── auth/                     # Blueprint: login, TOTP, usuarios, reset contraseña
-│   ├── proxy/                    # Blueprint: WAF, sitios, reglas, GeoIP, headers
-│   │   ├── routes.py             # Rutas de gestión
-│   │   ├── services.py           # render_nginx_configs(), _build_challenge_html()
-│   │   ├── ingest.py             # Hilo daemon: Docker logs → AttackEvent
-│   │   ├── custom_rules.py       # Validación SecRule/SecAction
-│   │   ├── security_headers.py   # Validación de cabeceras HTTP
-│   │   ├── nginx_extra.py        # Validación directivas Nginx extra
-│   │   ├── geoip.py              # Integración MaxMind GeoLite2
-│   │   └── geoip_blocklist.py    # Regenera 00-geoip.conf + recarga
-│   ├── modules/                  # Blueprint: WF / CS / OBS
-│   │   ├── routes.py             # Toggle módulos, inyección obs.conf
-│   │   └── socket_client.py      # Cliente Unix socket → wf-agent
-│   ├── audit/                    # Blueprint: dashboard audit log
-│   │   └── helpers.py            # log_audit() — escritura segura con SAVEPOINT
-│   └── security.py               # Decoradores y utilidades de seguridad
+├── app/                            # Aplicación Flask
+│   ├── __init__.py                 # Factory, extensiones, CLI commands, threads
+│   ├── models.py                   # Site, AttackEvent, AuditLog, AppConfig, ...
+│   ├── config.py                   # Configuración por entorno
+│   ├── email.py                    # send_email() — wrapper SMTP con adjuntos
+│   ├── encryption.py               # encrypt_secret() / decrypt_secret() (Fernet)
+│   ├── extensions.py               # Instancias db, login_manager, limiter, csrf
+│   ├── security.py                 # Decoradores @roles_required, utilidades
+│   │
+│   ├── auth/                       # Blueprint /auth — login, TOTP, usuarios, reset
+│   ├── proxy/                      # Blueprint /proxy — WAF, sitios, reglas, GeoIP
+│   │   ├── routes.py               # Rutas de gestión + 4 rutas /docs
+│   │   ├── services.py             # render_nginx_configs(), bot challenge HTML
+│   │   ├── ingest.py               # Thread: Docker logs → AttackEvent
+│   │   ├── rawlog_worker.py        # Thread: log crudo → modsec_raw_log
+│   │   ├── syslog_forwarder.py     # RFC5424: build_rfc5424, SyslogSender
+│   │   ├── syslog_worker.py        # Thread: cursor incremental → SIEM
+│   │   ├── custom_rules.py         # Validación SecRule/SecAction
+│   │   ├── security_headers.py     # Validación cabeceras HTTP
+│   │   ├── nginx_extra.py          # Validación directivas Nginx extra
+│   │   ├── geoip.py                # Integración MaxMind GeoLite2
+│   │   └── geoip_blocklist.py      # Regenera 00-geoip.conf + recarga
+│   │
+│   ├── modules/                    # Blueprint /modules — WF / OBS / SOC / CrowdSec / Sys
+│   │   ├── routes.py               # Toggle módulos, inyección obs.conf, rutas /docs
+│   │   └── socket_client.py        # Cliente Unix socket → wf-agent
+│   │
+│   ├── soc/                        # Blueprint /soc — Security Operations Center
+│   │   ├── worker.py               # Thread: ciclo detección + ML (advisory lock 815001)
+│   │   ├── detect.py               # Heurística SQL sobre AttackEvent → SocIncident
+│   │   ├── enrich.py               # AbuseIPDB (TTL 24h) + MITRE ATT&CK mapping
+│   │   ├── mitre_cti.py            # Sincronización enterprise-attack.json → MitreAttackTechnique
+│   │   ├── alerts.py               # Email + Telegram con cooldown por IP
+│   │   ├── ml.py                   # IsolationForest (scikit-learn) sobre agregados 14d
+│   │   ├── soar.py                 # Bloqueo automático de IPs vía CrowdSec/UFW
+│   │   ├── daily_report.py         # Reporte estadístico diario por correo
+│   │   ├── schema.py               # Normalización y validación de salida LLM
+│   │   └── llm/                    # Multi-proveedor httpx (OpenRouter, Anthropic, OpenAI…)
+│   │
+│   ├── backup/                     # Blueprint /backup — backups AES-256
+│   │   ├── service.py              # Creación/restauración de zip AES-256 (pyzipper)
+│   │   ├── worker.py               # Thread: scheduler diario (advisory lock 815002)
+│   │   ├── collectors.py           # pg_dump, TLS certs, estado WF via Docker SDK
+│   │   └── routes.py               # Rutas UI + CLI + /backup/docs
+│   │
+│   ├── ddos/                       # Lógica CrowdSec (no es blueprint; rutas en modules/)
+│   │   ├── control.py              # ban/unban vía Docker SDK (wardnode-crowdsec)
+│   │   ├── ingest.py               # Thread: cscli alerts → DdosBanEvent
+│   │   └── safety.py               # is_ban_safe() — 5 capas de protección antes de banear
+│   │
+│   ├── audit/                      # Blueprint /audit — dashboard de auditoría
+│   │   ├── helpers.py              # log_audit() — escritura segura con SAVEPOINT
+│   │   └── routes.py               # KPI cards, timeline, CSV export, /audit/docs
+│   │
+│   └── main/                       # Blueprint / — root redirect, /status JSON
 │
-├── proxy/                        # Imagen Docker del proxy
-│   ├── Dockerfile                # Multi-stage: compila ngx_http_geoip2_module
-│   ├── conf.d/generated.conf     # Include generated/*.conf
-│   └── modsecurity/              # modsecurity-override.conf (JSON audit logs)
+├── proxy/                          # Imagen Docker del proxy
+│   ├── Dockerfile                  # Añade ngx_http_geoip2_module sobre OWASP CRS base
+│   ├── conf.d/generated.conf       # include generated/*.conf
+│   └── modsecurity/                # modsecurity-override.conf (JSON audit logs vía YAJL)
 │
 ├── observability/
-│   ├── alloy/config.alloy        # Pipeline Alloy: ModSec + Nginx + UFW → Loki; métricas → Prometheus
+│   ├── alloy/config.alloy          # Pipeline: ModSec + Nginx + UFW → Loki; métricas → Prometheus
 │   ├── grafana/provisioning/
-│   │   ├── datasources/          # loki.yaml, prometheus.yaml, postgres.yaml
-│   │   └── dashboards/           # 01-security-overview, 03-waf-analytics,
-│   │                             # 04-nginx-logs, 05-host-resources, 06-firewall-ufw
-│   │                             # (log crudo ModSecurity → pestaña Log en /proxy/logs)
+│   │   ├── datasources/            # loki.yaml, prometheus.yaml, postgres.yaml
+│   │   └── dashboards/             # 01-security-overview, 03-waf-analytics,
+│   │                               # 04-nginx-logs, 06-firewall-ufw, 07-nginx-metrics
 │   ├── loki.yaml
 │   └── prometheus.yml
 │
 ├── host-agent/
-│   ├── wardnode-wf-agent.py      # Daemon privilegiado UFW/iptables via Unix socket
-│   ├── install.sh                # Instala UFW, rsyslog, configura logging medium, crea systemd service
-│   └── wardnode-wf.service       # Unit de systemd
+│   ├── wardnode-wf-agent.py        # Daemon privilegiado UFW/iptables vía Unix socket
+│   ├── install.sh                  # Instala UFW, rsyslog, CrowdSec; crea servicio systemd
+│   └── wardnode-wf.service         # Unit de systemd
 │
-├── generated/nginx/              # Configs generadas (git-ignored, montadas en proxy)
-├── tests/                        # 8 módulos, ~80 tests (pytest)
-├── docs/                         # architecture.md, deployment.md, security-baseline.md, adr/
-├── docker-compose.yml            # Stack de desarrollo
-├── docker-compose.vps.yml        # Stack de producción (VPS)
-├── Dockerfile                    # Imagen de la consola Flask
-├── .env.example                  # Variables de entorno de referencia
+├── generated/nginx/                # Configs generadas (git-ignored, montadas en proxy)
+├── tests/                          # 13 módulos, 492 tests (pytest)
+├── docs/                           # architecture.md, deployment.md, security-baseline.md
+│                                   # frontend-guidelines.md, testing-strategy.md, adr/
+├── docker-compose.yml              # Stack de desarrollo
+├── docker-compose.vps.yml          # Stack de producción (VPS, incluye Redis)
+├── Dockerfile                      # Imagen de la consola Flask
+├── .env.example                    # Variables de entorno de referencia
 ├── CHANGELOG.md
 └── SECURITY.md
 ```
@@ -221,8 +278,30 @@ Aprovisionamiento de certificados desde la UI usando Docker SDK. Soporte para ce
 ### Catch-all WAF (`default_server`)
 Bloque `default_server` generado automáticamente (`00-default.conf`) con ModSecurity activo: captura todo el tráfico directo a la IP que no coincide con ningún virtual host registrado.
 
+### Log crudo ModSecurity en vivo
+Pestaña **Log** (`/proxy/logs`): polling en tiempo real desde `modsec_raw_log`, buscador por frase, detalle expandible y archivado cifrado AES-256 opcional. Distinto de los Eventos WAF: muestra cada alerta individual sin deduplicar.
+
+### SOC — Centro de Operaciones de Seguridad
+Pipeline automático sobre `AttackEvent`:
+1. **Detección heurística** (volumen, diversidad, fan-out de paths, block ratio) → `SocIncident` con severidad 0–100.
+2. **Enriquecimiento**: reputación AbuseIPDB (cache 24h) + mapping CRS → MITRE ATT&CK.
+3. **Análisis LLM** opt-in (OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini) — nunca se envían cuerpos de petición, solo metadatos agregados.
+4. **Alertas** email y Telegram con cooldown por IP.
+5. **Scoring ML**: IsolationForest (scikit-learn) entrenado sobre los últimos 14 días de datos; eleva el score heurístico si detecta anomalías.
+6. **SOAR**: bloqueo automático de IPs vía CrowdSec/UFW cuando la severidad supera el umbral.
+7. **Reporte diario** por correo con estadísticas de incidentes.
+
+### Backups cifrados
+- Zip AES-256 (pyzipper) con: volcado PostgreSQL (`pg_dump -Fc`), certificados TLS, estado UFW, manifest con checksums SHA-256.
+- **Nunca incluye** `WARDNODE_SECRET_KEY` ni `.env` — deben guardarse por separado.
+- Scheduler diario configurable con retención automática y notificación por email.
+- Restauración por UI (re-autenticación admin + TOTP + confirmación `RESTAURAR`) o CLI.
+
+### Syslog RFC5424 — reenvío a SIEM
+Thread daemon que reenvía eventos WAF (`modsec_raw_log`) y entradas de auditoría (`audit_log`) a un servidor syslog externo vía UDP o TCP (RFC6587 octet-counting). Semántica at-least-once con cursores incrementales.
+
 ### TOTP 2FA
-Autenticación de dos factores basada en TOTP (RFC 6238) por usuario. Secreta almacenada cifrada con Fernet. Flujo de enrollment con QR code en la UI.
+Autenticación de dos factores basada en TOTP (RFC 6238) por usuario. Secreto almacenado cifrado con Fernet. Flujo de enrollment con QR code en la UI.
 
 ### Audit Log
 Registro de todas las acciones del operador (cambios de config, inicios de sesión, errores). Dashboard con KPI cards, timeline y exportación CSV. Escritura segura con `SAVEPOINT` de SQLAlchemy.
@@ -230,9 +309,9 @@ Registro de todas las acciones del operador (cambios de config, inicios de sesi�
 ### Roles
 | Rol | Capacidades |
 |---|---|
-| `admin` | Gestión de usuarios + todas las acciones del proxy |
-| `operator` | Todas las acciones del proxy, sin gestión de usuarios |
-| `reader` | Solo lectura de paneles y detalles |
+| `admin` | Gestión de usuarios + todas las acciones del proxy y módulos |
+| `operator` | Todas las acciones del proxy y módulos WF/OBS; sin gestión de usuarios, ajustes ni backups |
+| `reader` | Solo lectura de paneles, eventos, logs y SOC (vista); sin modificar configuración |
 
 ### Recuperación de contraseña
 Tokens hasheados, de un solo uso, con expiración configurable (`PASSWORD_RESET_TOKEN_MINUTES`). Integración SMTP configurable.
@@ -241,6 +320,8 @@ Tokens hasheados, de un solo uso, con expiración configurable (`PASSWORD_RESET_
 
 ## 🧩 Módulos opcionales
 
+Los cuatro módulos se activan desde la consola (`/modules/`) y **requieren WardNode WF** como base (excepto OBS que también lo requiere por su dependencia de UFW para la red de contenedores).
+
 ### WardNode WF — Firewall UFW
 Administra UFW del host sin exponer SSH. Comunica con un daemon `wardnode-wf-agent.py` (systemd, `root:wardnode`) a través de un socket Unix bind-montado. Validación doble: Flask valida antes de enviar; el agente revalida antes de ejecutar `ufw`/`iptables`.
 
@@ -248,7 +329,7 @@ Funciones: allow/deny puertos e IPs, rate limiting de puertos (`limit_port`), pr
 
 #### Logging de eventos UFW
 
-`install.sh` configura el nivel de logging en `medium` (registra conexiones aceptadas y bloqueadas con rate-limiting) y garantiza el enrutamiento de logs mediante rsyslog:
+`install.sh` configura el nivel de logging en `medium` (registra conexiones aceptadas y bloqueadas) y garantiza el enrutamiento de logs mediante rsyslog:
 
 ```
 UFW → kernel → /var/log/kern.log          ← Alloy lee aquí (fuente primaria)
@@ -257,25 +338,32 @@ UFW → kernel → /var/log/kern.log          ← Alloy lee aquí (fuente primar
                /var/log/ufw.log            ← archivo separado (referencia/debug)
 ```
 
-`install.sh` instala rsyslog si no está activo y crea `/etc/rsyslog.d/20-ufw.conf` para filtrar y separar las líneas `[UFW ]` a `/var/log/ufw.log`. Alloy lee desde `kern.log` y filtra por `[UFW ` antes de enviar a Loki.
-
-> En hosts ya inicializados con `logging low`, aplicar manualmente: `sudo ufw logging medium`
-
 ### WardNode OBS — Observabilidad
-Stack Grafana activado con `--profile obs`. 5 dashboards provisionados automáticamente:
+Stack Grafana activado con `--profile obs`. Colección (Alloy + Loki + Prometheus + nginx-exporter) siempre activa; Grafana solo con el perfil. 5 dashboards provisionados automáticamente:
 
 | Dashboard | Datasource | Descripción |
 |---|---|---|
-| Security Overview | PostgreSQL + Loki | Resumen de eventos WAF y tendencia de tráfico HTTP |
-| WAF Analytics | **PostgreSQL** | KPIs, criticidad, top IPs/reglas desde `attack_event` |
-| Nginx Logs | Loki | Accesos y errores del proxy |
-| Host Resources | Prometheus | CPU, memoria, disco, red |
-| Firewall UFW | Loki | Eventos de bloqueo del firewall |
+| Security Overview (`01`) | PostgreSQL + Loki | Resumen de eventos WAF y tendencia de tráfico HTTP |
+| WAF Analytics (`03`) | **PostgreSQL** | KPIs, criticidad, top IPs/reglas desde `attack_event` |
+| Nginx Logs (`04`) | Loki | Accesos y errores del proxy |
+| Firewall UFW (`06`) | Loki | Eventos `[UFW BLOCK]`/`[UFW ALLOW]`, top IPs y puertos |
+| Nginx Metrics (`07`) | Loki | Agregados de códigos de respuesta HTTP |
 
-> **Log crudo ModSecurity:** disponible en la consola en la pestaña **Log** (`/proxy/logs`). Polling en tiempo real, buscador por frase, detalle expandible y archivado cifrado opcional — sustituye al antiguo dashboard «WardNode – ModSecurity WAF».
-| Firewall UFW | Loki | Eventos `[UFW BLOCK]`/`[UFW ALLOW]`, top IPs y puertos |
+> **Fuente autoritativa de eventos WAF:** siempre la tabla `attack_event` en PostgreSQL (1 fila = 1 transacción deduplicada). Los conteos de Loki son orientativos (retención 30 días, líneas crudas sin deduplicar).
+
+> **Log crudo ModSecurity:** disponible en la consola en la pestaña **Log** (`/proxy/logs`).
 
 Grafana se sirve en `/obs/` con autenticación por proxy a la sesión Flask.
+
+### WardNode SOC — Centro de Operaciones
+Correlación automática de `AttackEvent` en `SocIncident`. El pipeline (detección → enriquecimiento → LLM → alertas → ML → SOAR) corre en el worker daemon `soc-worker`. Gated por `module_soc_enabled` + rol admin.
+
+Configuración desde `/soc/config`: proveedores LLM y claves API (cifradas), opt-in de envío de datos, umbrales de alerta, habilitación del scoring ML, sincronización MITRE ATT&CK.
+
+### WardNode CrowdSec — IDS/IPS
+Integra CrowdSec para detección y bloqueo de amenazas (SSH brute-force, escaneos, etc.). Comunica con el contenedor `wardnode-crowdsec` vía **Docker SDK** (no el socket WF). El bouncer actúa sobre UFW.
+
+Funciones: visualización de decisiones activas, ban/unban manual, safe-IPs (no banear IPs del propio sistema), ingest automático de alertas CrowdSec → `DdosBanEvent`.
 
 ---
 
@@ -317,7 +405,7 @@ docker compose --profile obs up --build
 # 1. Clonar y preparar variables de entorno
 cp .env.prod.example .env
 
-# 2. Construir e iniciar el stack
+# 2. Construir e iniciar el stack (incluye Redis)
 docker compose -f docker-compose.vps.yml up -d --build
 
 # 3. (Opcional) Activar observabilidad
@@ -327,13 +415,20 @@ docker compose -f docker-compose.vps.yml --profile obs up -d
 sudo bash host-agent/install.sh
 ```
 
-Los comandos CLI de producción se ejecutan automáticamente en el entrypoint del contenedor:
+Los comandos CLI se ejecutan en el entrypoint del contenedor (producción) o manualmente:
 
 | Comando | Descripción |
 |---|---|
 | `flask db-setup` | `create_all` + stamp en DB nueva; `db upgrade` en existente |
-| `flask ensure-geoip` | Descarga GeoLite2-Country si hay credenciales MaxMind configuradas |
+| `flask init-db` | Seed de categorías OWASP CRS |
+| `flask ensure-geoip` | Descarga GeoLite2-Country si hay credenciales MaxMind |
 | `flask render-configs` | Regenera todos los `.conf` de Nginx manualmente |
+| `flask reap-reset-tokens` | Elimina tokens de reset de contraseña expirados |
+| `flask reset-encrypted-secrets` | Borra todos los secretos cifrados (solo emergencia) |
+| `flask grafana-provision-ro` | Crea usuario de solo lectura en Grafana para PostgreSQL |
+| `flask backup-create` | Genera un backup cifrado AES-256 ahora |
+| `flask backup-restore <zip>` | Restaura desde un zip (interactivo; `--yes` para omitir confirmación) |
+| `flask backup-prune [--keep N]` | Elimina backups más antiguos, retiene N (default: config) |
 
 #### Let's Encrypt (producción)
 
@@ -351,19 +446,31 @@ docker compose -f docker-compose.vps.yml --profile certbot run --rm certbot \
 | Variable | Por defecto | Descripción |
 |---|---|---|
 | `SECRET_KEY` | `change-me` | Clave de sesión Flask — **cambiar en producción** |
-| `WARDNODE_SECRET_KEY` | `""` | Clave Fernet para cifrar secretos (TOTP, SMTP, MaxMind) |
+| `WARDNODE_SECRET_KEY` | `""` | Clave Fernet para cifrar secretos (TOTP, SMTP, MaxMind, APIs SOC) |
 | `DATABASE_URL` | `sqlite:///app.db` | Docker usa `postgresql+psycopg://...` |
 | `PROXY_CONFIG_DIR` | `generated/nginx` | Directorio donde Flask escribe los `.conf` |
 | `GEOIP_DB_PATH` | `/app/data/geoip/GeoLite2-Country.mmdb` | Ruta a la base de datos GeoIP |
-| `NGINX_CONTAINER_NAME` | `wardnode-proxy` | Nombre del contenedor para Docker SDK |
+| `NGINX_CONTAINER_NAME` | `wardnode-proxy` | Contenedor proxy para Docker SDK (TLS) |
 | `WARDNODE_PROXY_CONTAINER` | `wardnode-proxy` | Contenedor del que se leen logs ModSecurity |
+| `WARDNODE_DB_CONTAINER` | `wardnode-db` | Contenedor para `pg_dump`/`pg_restore` (backups) |
+| `WARDNODE_CROWDSEC_CONTAINER` | `wardnode-crowdsec` | Contenedor CrowdSec para `cscli` vía Docker SDK |
+| `WARDNODE_BACKUP_DIR` | `/app/data/backups` | Directorio de almacenamiento de backups cifrados |
 | `WF_SOCKET_PATH` | `/app/sockets/wardnode-wf.sock` | Socket Unix del agente WF |
 | `SESSION_COOKIE_SECURE` | `false` | Poner `true` detrás de HTTPS en producción |
-| `RATELIMIT_STORAGE_URI` | `memory://` | Usar `redis://` en entornos multi-proceso |
+| `RATELIMIT_STORAGE_URI` | `memory://` | Se construye como `redis://` si `REDIS_PASSWORD` está definida |
+| `REDIS_PASSWORD` | `""` | Contraseña Redis; activa storage compartido de rate-limit en producción |
+| `REDIS_HOST` | `127.0.0.1:6379` | Host:puerto de Redis |
+| `RATELIMIT_DEFAULT` | `200/day;50/hour` | Límite global por defecto |
+| `LOGIN_RATELIMIT` | `5/hour` | Límite específico para el endpoint de login |
+| `PASSWORD_RESET_TOKEN_MINUTES` | `30` | Expiración de tokens de reset de contraseña |
+| `PASSWORD_RESET_SHOW_TOKEN` | `false` | Solo desarrollo — nunca activar en producción |
+| `PUBLIC_BASE_URL` | `""` | URL base pública para enlaces en emails de reset y alertas |
 | `GRAFANA_ADMIN_PASSWORD` | `wardnode` | Contraseña del admin de Grafana |
+| `GRAFANA_DB_USER` | `grafana_ro` | Usuario de solo lectura de Grafana en PostgreSQL |
+| `GRAFANA_DB_PASSWORD` | `""` | Contraseña del usuario de solo lectura de Grafana |
 | `WARDNODE_PROJECT_DIR` | `""` | Ruta absoluta al proyecto en el host (necesaria para módulo OBS en VPS) |
 
-Ver `.env.example` para la lista completa.
+Ver `.env.example` y `.env.prod.example` para la lista completa con comentarios.
 
 ---
 
@@ -372,31 +479,37 @@ Ver `.env.example` para la lista completa.
 ```bash
 source .venv/bin/activate
 
-pytest                     # todos los tests (~80)
+pytest                     # todos los tests (492)
 pytest tests/test_proxy.py # módulo individual
 pytest -k "test_name"      # test específico
 pytest --cov=app           # con cobertura
 ```
 
-Los tests usan SQLite en memoria, CSRF y rate limiting desactivados. Fixtures: `app`, `client`, `user_factory`, `login_as`.
+Los tests usan SQLite en memoria, CSRF y rate limiting desactivados. Fixtures: `app`, `client`, `user_factory`, `login_as`. Trece módulos de test cubren: proxy/WAF, autenticación, backups, módulos WF/OBS, seguridad, SOC, syslog, log crudo y páginas de documentación embebida.
 
 ---
 
 ## 🔒 Seguridad
 
 - **CSRF** global vía Flask-WTF; header `X-CSRFToken` inyectado en todas las mutaciones HTMX.
-- **Rate limiting** en login (5/hora), setup y reset de contraseña.
+- **Rate limiting** en login (configurable, default 5/hora), setup y reset de contraseña.
 - **RBAC** con decorador `@roles_required` en todas las rutas mutantes.
 - **Validación de entrada** en reglas ModSec, directivas Nginx extra y cabeceras HTTP.
 - **Secretos cifrados** en base de datos con Fernet (`WARDNODE_SECRET_KEY`).
 - **TOTP 2FA** opcional por usuario.
 - **Socket Unix** con doble capa de validación para comandos privilegiados del host.
+- **CrowdSec safe-IPs**: cinco capas de protección antes de ejecutar un ban.
+- **Backups**: zip AES-256, checksums SHA-256, anti zip-bomb, validación de cabecera Alembic en restore.
 
 Ver [`SECURITY.md`](SECURITY.md) para la línea base de seguridad completa.
 
 ---
 
 ## 📚 Documentación
+
+La consola incluye **ayuda embebida** en cada área del sidebar: el botón **"Documentación"** abre una página in-app con TOC navegable, advertencias y referencia rápida — sin salir de la consola.
+
+Documentación de referencia en el repositorio:
 
 | Documento | Descripción |
 |---|---|
@@ -405,6 +518,6 @@ Ver [`SECURITY.md`](SECURITY.md) para la línea base de seguridad completa.
 | [`docs/security-baseline.md`](docs/security-baseline.md) | Controles de seguridad implementados |
 | [`docs/frontend-guidelines.md`](docs/frontend-guidelines.md) | Guía de desarrollo frontend (HTMX + Alpine.js) |
 | [`docs/testing-strategy.md`](docs/testing-strategy.md) | Estrategia de tests |
-| [`docs/adr/`](docs/adr/) | Registros de decisiones de arquitectura (ADR) |
+| [`docs/adr/`](docs/adr/) | Registros de decisiones de arquitectura (ADR 0001–0004) |
 | [`CHANGELOG.md`](CHANGELOG.md) | Historial de cambios por versión |
 | [`SECURITY.md`](SECURITY.md) | Política de seguridad y reporte de vulnerabilidades |
