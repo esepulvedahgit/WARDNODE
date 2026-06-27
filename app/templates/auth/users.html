@@ -2,6 +2,12 @@
 
 {% block title %}Usuarios | WardNode{% endblock %}
 
+{% block page_actions %}
+<a href="{{ url_for('auth.docs') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-book-half me-1"></i>Documentación
+</a>
+{% endblock %}
+
 {% block content %}
 <div class="row g-4">
   <section class="col-lg-5">

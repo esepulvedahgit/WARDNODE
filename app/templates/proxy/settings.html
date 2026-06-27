@@ -7,6 +7,12 @@
   <span class="bc-current">Ajustes</span>
 {% endblock %}
 
+{% block page_actions %}
+<a href="{{ url_for('proxy.settings_docs') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-book-half me-1"></i>Documentación
+</a>
+{% endblock %}
+
 {% block content %}
 <div class="events-page">
 
