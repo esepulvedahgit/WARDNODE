@@ -2009,6 +2009,12 @@ def test_settings_docs_denied_operator(client, login_as):
     assert r.status_code in (302, 403)
 
 
+def test_settings_docs_denied_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    r = client.get("/proxy/settings/docs")
+    assert r.status_code in (302, 403)
+
+
 def test_events_docs_renders(client, login_as):
     login_as()
     r = client.get("/proxy/events/docs")

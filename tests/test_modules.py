@@ -499,3 +499,15 @@ def test_sys_docs_denied_operator(client, login_as):
     login_as(role=ROLE_OPERATOR)
     r = client.get("/modules/sys/docs")
     assert r.status_code in (302, 403)
+
+
+def test_ddos_docs_denied_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    r = client.get("/modules/ddos/docs")
+    assert r.status_code in (302, 403)
+
+
+def test_sys_docs_denied_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    r = client.get("/modules/sys/docs")
+    assert r.status_code in (302, 403)

@@ -25,7 +25,7 @@ from app.backup.service import (
     validate_backup_zip,
 )
 from app.backup.worker import is_backup_due
-from app.models import ROLE_ADMIN, ROLE_OPERATOR, AppConfig, User
+from app.models import ROLE_ADMIN, ROLE_OPERATOR, ROLE_READER, AppConfig, User
 
 PASSWORD = "zip-password-123"
 
@@ -554,3 +554,9 @@ def test_backup_docs_button_on_panel(client, login_as):
     login_as()
     body = client.get("/backup/").get_data(as_text=True)
     assert "/backup/docs" in body
+
+
+def test_backup_docs_denied_reader(client, login_as):
+    login_as(role=ROLE_READER)
+    r = client.get("/backup/docs")
+    assert r.status_code in (302, 403)
