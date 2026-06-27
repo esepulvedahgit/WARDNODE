@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Auditoría | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('audit.index') }}" class="bc-link">Auditoría</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('audit.index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-clipboard-data-fill me-1"></i>Auditoría
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Auditoría
+    </h1>
+    <p class="text-secondary mb-0 small">Registro de auditoría — acciones de operadores y eventos del sistema.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#que-registra">2 · Qué se registra</a>
+      <a href="#campos">3 · Campos del evento</a>
+      <a href="#filtros">4 · Filtros y visualización</a>
+      <a href="#export">5 · Export CSV</a>
+      <a href="#retencion">6 · Retención</a>
+      <a href="#referencia">7 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-journal-text" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>WardNode registra automáticamente todas las acciones significativas realizadas por los operadores y los eventos internos del sistema. Este registro es la trazabilidad completa de quién hizo qué y cuándo.</p>
+      <ul>
+        <li>El log de auditoría es <strong>inmutable desde la UI</strong> — no se puede editar ni eliminar ninguna entrada a través de la interfaz de WardNode.</li>
+        <li>Solo los administradores pueden acceder al log de auditoría (<code>/audit/</code>).</li>
+        <li>Cada entrada se escribe con un <code>SAVEPOINT</code> de SQLAlchemy, de modo que nunca interfiere con la transacción del operador que la generó — si la acción principal falla, el registro de auditoría se guarda igualmente.</li>
+      </ul>
+    </div>
+
+    {# ── 2. Qué acciones se registran ───────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="que-registra">
+      <h2><i class="bi bi-list-ul" style="color:var(--accent)"></i>2 · Qué acciones se registran</h2>
+      <table>
+        <thead><tr><th>Categoría</th><th>Ejemplos</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Autenticación</strong></td>
+            <td>Login exitoso, login fallido, logout, reset de contraseña</td>
+          </tr>
+          <tr>
+            <td><strong>Gestión de usuarios</strong></td>
+            <td>Crear usuario, eliminar usuario, cambio de rol</td>
+          </tr>
+          <tr>
+            <td><strong>Proxy</strong></td>
+            <td>Crear sitio, eliminar sitio, cambiar upstream, activar/desactivar WAF</td>
+          </tr>
+          <tr>
+            <td><strong>WAF</strong></td>
+            <td>Añadir regla personalizada, añadir exclusión, cambiar modo detect/block</td>
+          </tr>
+          <tr>
+            <td><strong>Módulos</strong></td>
+            <td>Activar/desactivar módulo, instalar agente WF, reglas UFW</td>
+          </tr>
+          <tr>
+            <td><strong>Backups</strong></td>
+            <td>Crear backup, restaurar backup, eliminar backup</td>
+          </tr>
+          <tr>
+            <td><strong>SOC</strong></td>
+            <td>Crear incidente, cambiar estado incidente, sincronizar MITRE</td>
+          </tr>
+          <tr>
+            <td><strong>Sistema</strong></td>
+            <td>Regenerar configs Nginx, download GeoIP, reset de secretos</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 3. Campos del evento de auditoría ───────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="campos">
+      <h2><i class="bi bi-table" style="color:var(--accent)"></i>3 · Campos del evento de auditoría</h2>
+      <table>
+        <thead><tr><th>Campo</th><th>Tipo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>actor_email</code></td>
+            <td>string</td>
+            <td>Email del usuario que realizó la acción (o <code>"system"</code> para eventos automáticos)</td>
+          </tr>
+          <tr>
+            <td><code>action</code></td>
+            <td>string</td>
+            <td>Identificador de la acción (ej: <code>proxy.site.create</code>, <code>auth.login.success</code>)</td>
+          </tr>
+          <tr>
+            <td><code>resource_type</code></td>
+            <td>string</td>
+            <td>Tipo del recurso afectado (ej: <code>site</code>, <code>user</code>, <code>rule</code>)</td>
+          </tr>
+          <tr>
+            <td><code>resource_name</code></td>
+            <td>string</td>
+            <td>Nombre o ID del recurso afectado</td>
+          </tr>
+          <tr>
+            <td><code>severity</code></td>
+            <td>enum</td>
+            <td><code>info</code> (operación normal), <code>warning</code> (acción notable), <code>error</code> (fallo), <code>critical</code> (acción de alto impacto)</td>
+          </tr>
+          <tr>
+            <td><code>status</code></td>
+            <td>enum</td>
+            <td><code>success</code> o <code>failure</code></td>
+          </tr>
+          <tr>
+            <td><code>detail</code></td>
+            <td>JSON</td>
+            <td>Información adicional específica de la acción (IPs, cambios de configuración, etc.)</td>
+          </tr>
+          <tr>
+            <td><code>timestamp</code></td>
+            <td>datetime</td>
+            <td>Fecha y hora UTC del evento</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 4. Filtros y visualización ──────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="filtros">
+      <h2><i class="bi bi-funnel" style="color:var(--accent)"></i>4 · Filtros y visualización</h2>
+      <p>El dashboard de auditoría (<a href="{{ url_for('audit.index') }}">Auditoría</a>) ofrece varias herramientas para explorar el log:</p>
+      <ul>
+        <li><strong>Filtro por severidad</strong>: mostrar solo eventos de un nivel determinado (<code>info</code>, <code>warning</code>, <code>error</code>, <code>critical</code>).</li>
+        <li><strong>Filtro por recurso</strong>: limitar la vista a un tipo de recurso específico (<code>site</code>, <code>user</code>, <code>rule</code>, etc.).</li>
+        <li><strong>Filtro por actor</strong>: ver únicamente las acciones de un operador concreto.</li>
+        <li><strong>Filtro por rango de fechas</strong>: acotar el período de tiempo a analizar.</li>
+        <li><strong>Timeline</strong>: gráfico de eventos por hora que muestra picos de actividad inusual.</li>
+        <li><strong>Paginación</strong>: navegación automática para registros extensos.</li>
+      </ul>
+    </div>
+
+    {# ── 5. Export CSV ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="export">
+      <h2><i class="bi bi-file-earmark-spreadsheet" style="color:var(--accent)"></i>5 · Export CSV</h2>
+      <p>El botón <strong>"Exportar CSV"</strong> descarga todos los registros que cumplan los filtros activos en ese momento. El archivo incluye todos los campos del evento de auditoría (<code>actor_email</code>, <code>action</code>, <code>resource_type</code>, <code>resource_name</code>, <code>severity</code>, <code>status</code>, <code>detail</code>, <code>timestamp</code>).</p>
+      <p>Casos de uso habituales:</p>
+      <ul>
+        <li>Auditorías externas y revisiones de cumplimiento normativo (ISO 27001, GDPR, etc.).</li>
+        <li>Análisis offline en hojas de cálculo o herramientas SIEM.</li>
+        <li>Archivo periódico para gestionar el crecimiento del log.</li>
+      </ul>
+    </div>
+
+    {# ── 6. Retención ────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="retencion">
+      <h2><i class="bi bi-clock-history" style="color:var(--accent)"></i>6 · Retención</h2>
+      <p>El log de auditoría no tiene límite de retención por defecto — crece indefinidamente en la base de datos PostgreSQL. En instalaciones de larga duración con alta actividad, esto puede representar un volumen de datos considerable.</p>
+      <p>Recomendaciones para gestionar el tamaño:</p>
+      <ul>
+        <li>Exportar y archivar el CSV periódicamente (mensual o trimestral) y, si es necesario, purgar los registros más antiguos directamente en la base de datos.</li>
+        <li>El módulo de backup incluye el dump completo de la base de datos, por lo que los backups también capturan el log de auditoría.</li>
+      </ul>
+      <div class="doc-note">
+        El syslog forwarder (Ajustes → Syslog) puede reenviar en tiempo real las entradas del audit log a un servidor syslog externo (UDP/TCP, RFC5424). Esto permite retención externa ilimitada y facilita la integración con sistemas SIEM sin necesidad de exportar CSV manualmente.
+      </div>
+    </div>
+
+    {# ── 7. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>7 · Referencia rápida</h2>
+      <p>Acciones de auditoría comunes con su severidad esperada:</p>
+      <table>
+        <thead><tr><th>Acción</th><th>Severidad esperada</th><th>Status típico</th></tr></thead>
+        <tbody>
+          <tr><td>Login exitoso</td><td><code>info</code></td><td><code>success</code></td></tr>
+          <tr><td>Login fallido (contraseña incorrecta)</td><td><code>warning</code></td><td><code>failure</code></td></tr>
+          <tr><td>Crear sitio</td><td><code>info</code></td><td><code>success</code></td></tr>
+          <tr><td>Eliminar sitio</td><td><code>warning</code></td><td><code>success</code></td></tr>
+          <tr><td>Activar bloqueo WAF</td><td><code>warning</code></td><td><code>success</code></td></tr>
+          <tr><td>Crear usuario</td><td><code>info</code></td><td><code>success</code></td></tr>
+          <tr><td>Eliminar usuario</td><td><code>warning</code></td><td><code>success</code></td></tr>
+          <tr><td>Restaurar backup</td><td><code>critical</code></td><td><code>success</code> / <code>failure</code></td></tr>
+          <tr><td>Activar/desactivar módulo</td><td><code>warning</code></td><td><code>success</code></td></tr>
+          <tr><td>Error al regenerar configs Nginx</td><td><code>error</code></td><td><code>failure</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

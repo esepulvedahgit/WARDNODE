@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Backups | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('backup.index') }}" class="bc-link">Backups</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('backup.index') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-archive-fill me-1"></i>Backups
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Backups
+    </h1>
+    <p class="text-secondary mb-0 small">Backups cifrados AES-256 — contenido, programación, descarga y restauración.</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#contenido">2 · Contenido del backup</a>
+      <a href="#secreto">3 · Lo que NUNCA se incluye</a>
+      <a href="#programacion">4 · Programación y retención</a>
+      <a href="#manual">5 · Ejecución manual y descarga</a>
+      <a href="#restauracion-ui">6 · Restauración por UI</a>
+      <a href="#restauracion-cli">7 · Restauración por CLI</a>
+      <a href="#referencia">8 · Referencia rápida — CLI</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-shield-lock" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>WardNode genera backups cifrados en zip AES-256 (<code>pyzipper</code>) que contienen todo lo necesario para restaurar la instalación completa: base de datos, certificados TLS y estado del firewall del host.</p>
+      <p>El módulo está activo por defecto (<code>module_backup_enabled</code>) y no requiere configuración adicional para empezar a funcionar.</p>
+      <p>Los backups se almacenan en <code>WARDNODE_BACKUP_DIR</code> (default: <code>/app/data/backups</code>, volumen nombrado <code>backups</code>). El directorio persiste entre actualizaciones y reinicios del contenedor.</p>
+    </div>
+
+    {# ── 2. Contenido del backup ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="contenido">
+      <h2><i class="bi bi-file-earmark-zip" style="color:var(--accent)"></i>2 · Contenido del backup (ZIP AES-256)</h2>
+      <p>Cada archivo de backup es un zip cifrado con AES-256 que contiene los siguientes componentes:</p>
+      <table>
+        <thead><tr><th>Componente</th><th>Qué contiene</th><th>Nota</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>db/wardnode.pgdump</code></td>
+            <td>Volcado completo de la base de datos PostgreSQL (<code>pg_dump -Fc</code>)</td>
+            <td>Incluye usuarios, sitios, reglas, eventos, configuración</td>
+          </tr>
+          <tr>
+            <td><code>tls/letsencrypt.tar.gz</code></td>
+            <td>Certificados TLS gestionados por Let's Encrypt</td>
+            <td>Del volumen <code>letsencrypt</code></td>
+          </tr>
+          <tr>
+            <td><code>host/ufw-rules.txt</code></td>
+            <td>Reglas UFW del firewall del host</td>
+            <td>Solo si módulo WF activo</td>
+          </tr>
+          <tr>
+            <td><code>host/protected_ports.json</code></td>
+            <td>Puertos Docker protegidos</td>
+            <td>Solo si módulo WF activo</td>
+          </tr>
+          <tr>
+            <td><code>manifest.json</code></td>
+            <td>Metadatos: versión de formato, cabecera Alembic, checksums SHA-256</td>
+            <td>Usado para validar la restauración</td>
+          </tr>
+          <tr>
+            <td><code>README-RESTORE.md</code></td>
+            <td>Instrucciones de restauración paso a paso</td>
+            <td>Se incluye dentro del zip</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {# ── 3. Lo que NUNCA se incluye ──────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="secreto">
+      <h2><i class="bi bi-exclamation-triangle" style="color:var(--accent)"></i>3 · Lo que NUNCA se incluye</h2>
+      <div class="doc-note doc-warn">
+        <strong>⚠️ El backup NO incluye <code>WARDNODE_SECRET_KEY</code> ni el archivo <code>.env</code>.</strong><br>
+        Esta clave es imprescindible para descifrar los secretos almacenados en la base de datos (MaxMind, SMTP, claves API SOC, etc.). Sin ella, incluso con el backup completo, los secretos cifrados en la base de datos serán irrecuperables.
+      </div>
+      <p><strong>Debes guardar <code>WARDNODE_SECRET_KEY</code> por separado</strong>, en un gestor de contraseñas o vault seguro. Sin ella, el backup es inútil aunque esté completo e íntegro.</p>
+    </div>
+
+    {# ── 4. Programación y retención ─────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="programacion">
+      <h2><i class="bi bi-calendar-check" style="color:var(--accent)"></i>4 · Programación y retención</h2>
+      <p>El scheduler ejecuta un backup automático diariamente a la hora configurada (UTC). La configuración disponible es:</p>
+      <ul>
+        <li><strong>Hora de ejecución</strong> (<code>backup_hour</code>): hora del día en UTC en que se lanza el backup automático.</li>
+        <li><strong>Retención</strong> (<code>backup_retention</code>): número máximo de backups a conservar. Al superar el límite, el backup más antiguo se elimina automáticamente.</li>
+      </ul>
+      <h3>Notificación por email</h3>
+      <p>Si SMTP está configurado en Ajustes, el scheduler envía un email tras cada backup automático:</p>
+      <ul>
+        <li>Si el zip es menor de <code>backup_email_max_mb</code> (default 20 MB): se adjunta el zip completo.</li>
+        <li>Si el zip supera ese límite: se envía solo una notificación con el estado del backup (sin adjunto).</li>
+        <li>En caso de error: se envía un email de alerta con el detalle del fallo.</li>
+      </ul>
+    </div>
+
+    {# ── 5. Ejecución manual y descarga ──────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="manual">
+      <h2><i class="bi bi-download" style="color:var(--accent)"></i>5 · Ejecución manual y descarga</h2>
+      <p>Desde la interfaz de Backups (<a href="{{ url_for('backup.index') }}">Backups</a>) puedes realizar las siguientes operaciones:</p>
+      <ul>
+        <li><strong>Generar backup ahora</strong>: crea un backup inmediatamente. La escritura es atómica (<code>.zip.part</code> → <code>.zip</code>) para evitar backups corruptos en caso de error.</li>
+        <li><strong>Descargar</strong>: descarga el zip cifrado de un backup existente.</li>
+        <li><strong>Eliminar</strong>: elimina un backup de la lista. Esta acción es irreversible.</li>
+      </ul>
+      <p>El nombre de cada archivo sigue el patrón <code>wardnode-backup-YYYYMMDD-HHMMSS.zip</code>, que también actúa como guarda frente a traversal de rutas en las operaciones de descarga y eliminación.</p>
+    </div>
+
+    {# ── 6. Restauración por UI ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="restauracion-ui">
+      <h2><i class="bi bi-arrow-counterclockwise" style="color:var(--accent)"></i>6 · Restauración por UI</h2>
+      <div class="doc-note doc-warn">
+        <strong>⚠️ La restauración es irreversible.</strong> Sobrescribe completamente la base de datos activa con los datos del backup. Este proceso no se puede deshacer.
+      </div>
+      <h3>Pasos de seguridad obligatorios</h3>
+      <p>Antes de ejecutar la restauración, el sistema exige tres confirmaciones:</p>
+      <ol>
+        <li><strong>Re-autenticación</strong>: introducir la contraseña del administrador actual.</li>
+        <li><strong>TOTP</strong> (si está activo): introducir el código de 6 dígitos de la app autenticadora.</li>
+        <li><strong>Confirmación textual</strong>: escribir <code>RESTAURAR</code> en el campo de confirmación.</li>
+      </ol>
+      <h3>Validaciones antes de restaurar</h3>
+      <p>El sistema valida automáticamente el zip antes de aplicarlo:</p>
+      <ul>
+        <li><strong>Checksums SHA-256</strong>: verifica la integridad de todos los componentes del zip.</li>
+        <li><strong>Versión Alembic</strong>: rechaza backups de una versión de base de datos más nueva (que requeriría una migración adicional antes de restaurar).</li>
+        <li><strong>Seguridad del zip</strong>: valida lista blanca de archivos internos y aplica límites anti zip-bomb (ratio y tamaño máximo).</li>
+      </ul>
+      <div class="doc-note">
+        Después de restaurar, la sesión actual se cierra automáticamente — la base de datos restaurada tiene sus propios usuarios y contraseñas. Deberás iniciar sesión con las credenciales del backup restaurado.
+      </div>
+    </div>
+
+    {# ── 7. Restauración por CLI ──────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="restauracion-cli">
+      <h2><i class="bi bi-terminal" style="color:var(--accent)"></i>7 · Restauración por CLI</h2>
+      <p>La restauración por CLI es útil en escenarios de recuperación ante desastre donde la UI no está disponible. Los comandos disponibles son:</p>
+<pre># Restaurar (solicita la contraseña del zip interactivamente)
+flask backup-restore &lt;archivo.zip&gt;
+
+# Restaurar sin confirmación interactiva (útil en scripts)
+flask backup-restore &lt;archivo.zip&gt; --yes
+
+# Validar y extraer sin restaurar la base de datos
+flask backup-restore &lt;archivo.zip&gt; --skip-db</pre>
+      <div class="doc-note">
+        Después del restore CLI: ejecutar <code>flask db upgrade</code> si hay migraciones pendientes, luego reiniciar la consola para que los cambios sean efectivos.
+      </div>
+      <p>El proceso CLI aplica las mismas validaciones de integridad que la UI (checksums, versión Alembic, anti zip-bomb). La contraseña del zip es la misma que <code>WARDNODE_SECRET_KEY</code> usada al crear el backup.</p>
+    </div>
+
+    {# ── 8. Referencia rápida — CLI ──────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>8 · Referencia rápida — CLI</h2>
+      <table>
+        <thead><tr><th>Comando</th><th>Acción</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>flask backup-create</code></td>
+            <td>Genera un backup ahora</td>
+          </tr>
+          <tr>
+            <td><code>flask backup-restore &lt;zip&gt;</code></td>
+            <td>Restaura desde un zip (interactivo)</td>
+          </tr>
+          <tr>
+            <td><code>flask backup-prune [--keep N]</code></td>
+            <td>Elimina los más antiguos, retiene N (default: valor de configuración)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}

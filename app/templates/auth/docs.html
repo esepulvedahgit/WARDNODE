@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block title %}Documentación Usuarios y MFA | WardNode{% endblock %}
+
+{% block breadcrumb %}
+  <span class="bc-sep">/</span>
+  <a href="{{ url_for('auth.profile') }}" class="bc-link">Mi perfil</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">Documentación</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('auth.profile') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-people-fill me-1"></i>Mi perfil
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 mb-1" style="display:flex;align-items:center;gap:10px">
+      <i class="bi bi-book-half" style="color:var(--accent)"></i>
+      Documentación · Usuarios y MFA
+    </h1>
+    <p class="text-secondary mb-0 small">Gestión de usuarios, roles y autenticación de dos factores (TOTP).</p>
+  </div>
+</div>
+
+<div class="row g-4 wn-docs">
+
+  {# ── Índice ──────────────────────────────────────────────────── #}
+  <div class="col-lg-3">
+    <div class="card-panel wn-toc" style="padding:14px 10px">
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:0 10px 8px">Índice</div>
+      <a href="#vision-general">1 · Visión general</a>
+      <a href="#roles">2 · Roles y permisos</a>
+      <a href="#usuarios">3 · Gestión de usuarios</a>
+      <a href="#mfa">4 · MFA / TOTP — Enrolamiento</a>
+      <a href="#mfa-login">5 · Login con TOTP activo</a>
+      <a href="#mfa-desactivar">6 · Desactivar MFA</a>
+      <a href="#reset">7 · Reset de contraseña</a>
+      <a href="#referencia">8 · Referencia rápida</a>
+    </div>
+  </div>
+
+  <div class="col-lg-9">
+
+    {# ── 1. Visión general ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="vision-general">
+      <h2><i class="bi bi-people" style="color:var(--accent)"></i>1 · Visión general</h2>
+      <p>WardNode usa un sistema de roles con tres niveles de acceso que permite ajustar los permisos de cada operador según su responsabilidad. Los usuarios se gestionan desde el panel de administración y cada uno gestiona su propia seguridad de cuenta desde el perfil.</p>
+      <p>La autenticación de dos factores (TOTP) es opcional pero recomendada para todas las cuentas, especialmente las de tipo <code>admin</code>. El secreto TOTP se almacena cifrado y requiere <code>WARDNODE_SECRET_KEY</code> para funcionar.</p>
+    </div>
+
+    {# ── 2. Roles y permisos ─────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="roles">
+      <h2><i class="bi bi-person-badge" style="color:var(--accent)"></i>2 · Roles y permisos</h2>
+      <table>
+        <thead><tr><th>Rol</th><th>Acceso</th><th>Limitaciones</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>admin</code></td>
+            <td>Acceso completo: crear/eliminar usuarios, todos los módulos, ajustes, restaurar backups</td>
+            <td>Sin limitaciones</td>
+          </tr>
+          <tr>
+            <td><code>operator</code></td>
+            <td>Gestión del proxy/WAF y módulos activos (WF, OBS)</td>
+            <td>Sin acceso a: usuarios, ajustes, backup, auditoría, SOC config</td>
+          </tr>
+          <tr>
+            <td><code>reader</code></td>
+            <td>Solo lectura: dashboard, eventos, logs, SOC (vista), OBS</td>
+            <td>No puede modificar ninguna configuración</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        El sistema requiere siempre al menos un usuario con rol <code>admin</code>. No es posible eliminar el último administrador ni cambiar su rol a uno inferior.
+      </div>
+    </div>
+
+    {# ── 3. Gestión de usuarios ──────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="usuarios">
+      <h2><i class="bi bi-person-plus" style="color:var(--accent)"></i>3 · Gestión de usuarios (solo admin)</h2>
+      <p>La gestión de usuarios está disponible para administradores en <a href="{{ url_for('auth.users') }}">Admin → Usuarios</a>.</p>
+      <h3>Crear usuario</h3>
+      <p>Desde el formulario "Nuevo usuario": introduce nombre, email, rol y contraseña inicial. El usuario podrá cambiar su contraseña desde su perfil en cualquier momento.</p>
+      <h3>Eliminar usuario</h3>
+      <p>Botón de eliminar en la lista de usuarios. Restricciones:</p>
+      <ul>
+        <li>No se puede eliminar el propio usuario activo (sesión actual).</li>
+        <li>No se puede eliminar el último usuario con rol <code>admin</code>.</li>
+      </ul>
+      <h3>Política de contraseñas</h3>
+      <p>Mínimo 8 caracteres. La contraseña debe incluir letras y números. No se permite una contraseña compuesta solo de letras o solo de números.</p>
+    </div>
+
+    {# ── 4. MFA / TOTP — Enrolamiento ────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="mfa">
+      <h2><i class="bi bi-phone" style="color:var(--accent)"></i>4 · MFA / TOTP — Enrolamiento</h2>
+      <p>Cada usuario gestiona su propio TOTP desde <strong>Mi perfil</strong> → sección <strong>"Autenticación de dos factores"</strong>.</p>
+      <h3>Pasos de enrolamiento</h3>
+      <ol>
+        <li>Clic en <strong>"Configurar 2FA"</strong> → WardNode genera un código QR con el secreto TOTP.</li>
+        <li>Escanear el código QR con una app autenticadora compatible (Google Authenticator, Authy, 1Password, Bitwarden, etc.).</li>
+        <li>Introducir un código válido de 6 dígitos generado por la app para confirmar el enrolamiento.</li>
+      </ol>
+      <div class="doc-note">
+        El secreto TOTP se almacena cifrado en la base de datos (<code>totp_secret</code> en la tabla <code>user</code>) y requiere <code>WARDNODE_SECRET_KEY</code>. Si la clave cambia, los secretos TOTP existentes quedarán ilegibles.
+      </div>
+    </div>
+
+    {# ── 5. Flujo de login con TOTP activo ───────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="mfa-login">
+      <h2><i class="bi bi-shield-check" style="color:var(--accent)"></i>5 · Flujo de login con TOTP activo</h2>
+      <p>Cuando un usuario tiene TOTP activo, el login se realiza en dos pasos:</p>
+      <ol>
+        <li><strong>Paso 1</strong>: Introducir email y contraseña. Si son correctos, el sistema pide el código TOTP.</li>
+        <li><strong>Paso 2</strong>: Introducir el código de 6 dígitos de la app autenticadora. El código es válido durante 30 segundos (ventana de una ranura anterior/posterior para tolerar pequeños desfases de reloj).</li>
+      </ol>
+      <div class="doc-note">
+        <strong>Si el dispositivo TOTP se pierde:</strong> un administrador puede desactivar el TOTP del usuario afectado desde la gestión de usuarios en la consola, permitiéndole volver a hacer login solo con contraseña y configurar un nuevo dispositivo.
+      </div>
+    </div>
+
+    {# ── 6. Desactivar MFA ───────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="mfa-desactivar">
+      <h2><i class="bi bi-shield-x" style="color:var(--accent)"></i>6 · Desactivar MFA</h2>
+      <p>Para desactivar el TOTP del propio usuario:</p>
+      <ol>
+        <li>Ir a <strong>Mi perfil</strong> → sección <strong>"Autenticación de dos factores"</strong>.</li>
+        <li>Clic en <strong>"Desactivar 2FA"</strong>.</li>
+        <li>Confirmar la contraseña actual para verificar la identidad.</li>
+      </ol>
+      <p>Un administrador también puede desactivar el TOTP de cualquier usuario desde <a href="{{ url_for('auth.users') }}">Admin → Usuarios</a>, sin necesidad de conocer la contraseña del usuario afectado.</p>
+    </div>
+
+    {# ── 7. Reset de contraseña por email ────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="reset">
+      <h2><i class="bi bi-envelope-open" style="color:var(--accent)"></i>7 · Reset de contraseña por email</h2>
+      <p>WardNode incluye un flujo de reset de contraseña por email para casos en que el usuario no recuerda su contraseña actual:</p>
+      <ol>
+        <li>En la pantalla de login: enlace <strong>"¿Olvidaste tu contraseña?"</strong>.</li>
+        <li>Introducir el email de la cuenta → se envía un enlace de reset al email registrado.</li>
+        <li>El enlace es válido durante <code>PASSWORD_RESET_TOKEN_MINUTES</code> minutos (default: 30).</li>
+        <li>Al hacer clic en el enlace: introducir y confirmar la nueva contraseña.</li>
+      </ol>
+      <div class="doc-note">
+        <strong>Requisito:</strong> SMTP debe estar configurado en Ajustes para que el envío del email funcione. Sin SMTP configurado, esta funcionalidad no está disponible.
+      </div>
+    </div>
+
+    {# ── 8. Referencia rápida ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning-charge" style="color:var(--accent)"></i>8 · Referencia rápida</h2>
+      <table>
+        <thead><tr><th>Acción</th><th>Dónde</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Crear usuario</td>
+            <td>Admin → Usuarios → "Nuevo usuario"</td>
+          </tr>
+          <tr>
+            <td>Activar TOTP</td>
+            <td>Mi perfil → "Configurar 2FA"</td>
+          </tr>
+          <tr>
+            <td>Desactivar TOTP</td>
+            <td>Mi perfil → "Desactivar 2FA"</td>
+          </tr>
+          <tr>
+            <td>Reset de contraseña</td>
+            <td>Pantalla login → "¿Olvidaste tu contraseña?"</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>{# col-lg-9 #}
+</div>{# row #}
+{% endblock %}
