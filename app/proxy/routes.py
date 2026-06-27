@@ -728,6 +728,9 @@ def update_site_security_headers(site_id):
         header.value = value
         header.enabled = enabled
         header.always = always
+        # Marcar como editado por el operador para que la auto-migración de CSP
+        # no revierta cambios intencionados (ensure_site_security_headers respeta is_default=False).
+        header.is_default = False
 
     next_position = max((header.position for header in site.security_headers), default=0) + 1
     from app.models import SecurityHeader

@@ -35,6 +35,7 @@
   .soc-toc { position: sticky; top: 80px; }
   .soc-toc a { display: block; font-size: 12.5px; padding: 4px 10px; color: var(--text-secondary); text-decoration: none; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
   .soc-toc a:hover { color: var(--accent); background: var(--bg-secondary, #f8fafc); border-left-color: var(--accent); }
+  .soc-toc .toc-group { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 10px 10px 4px; margin-top: 4px; }
 </style>
 {% endblock %}
 
@@ -45,7 +46,7 @@
       <i class="bi bi-book-half" style="color:var(--accent)"></i>
       Documentación del SOC
     </h1>
-    <p class="text-secondary mb-0 small">Flujo de funcionamiento y lógica de decisiones — por qué se dispara un incidente, cómo se gradúa y cuándo se alerta.</p>
+    <p class="text-secondary mb-0 small">Flujo de funcionamiento, lógica de decisiones y respuesta automática — por qué se dispara un incidente, cómo se gradúa, cuándo se alerta y cómo se bloquea.</p>
   </div>
 </div>
 
@@ -61,10 +62,13 @@
       <a href="#enriquecimiento">4 · Enriquecimiento</a>
       <a href="#analisis-llm">5 · Análisis con IA (LLM)</a>
       <a href="#alertas">6 · Sistema de alertas</a>
-      <a href="#scoring-ml">7 · Scoring ML</a>
-      <a href="#estados">8 · Estados y revisión humana</a>
-      <a href="#garantias">9 · Garantías transversales</a>
-      <a href="#referencia">10 · Referencia rápida</a>
+      <a href="#soar">7 · Respuesta automática (SOAR)</a>
+      <a href="#scoring-ml">8 · Scoring ML</a>
+      <a href="#estados">9 · Estados y revisión humana</a>
+      <a href="#garantias">10 · Garantías transversales</a>
+      <div class="toc-group">Administración</div>
+      <a href="#configuracion-ui">11 · Configuración vía UI</a>
+      <a href="#referencia">12 · Referencia rápida</a>
     </div>
   </div>
 
@@ -73,7 +77,7 @@
     {# ── 1. Visión general ───────────────────────────────────────── #}
     <div class="card-panel mb-4" style="padding:20px" id="vision-general">
       <h2><i class="bi bi-diagram-3" style="color:var(--accent)"></i>1 · Visión general</h2>
-      <p>El módulo SOC convierte el flujo crudo de eventos del WAF (<code>AttackEvent</code>) en <strong>incidentes accionables</strong>: agrupa la actividad de cada IP atacante, la puntúa, la enriquece con threat intel, la explica con un LLM y notifica al operador.</p>
+      <p>El módulo SOC convierte el flujo crudo de eventos del WAF (<code>AttackEvent</code>) en <strong>incidentes accionables</strong>: agrupa la actividad de cada IP atacante, la puntúa, la enriquece con threat intel, la explica con un LLM, notifica al operador y — de forma opcional — bloquea la IP automáticamente (SOAR).</p>
 <pre>Tráfico atacante
       │
       ▼
@@ -91,14 +95,18 @@
 │  4. Creación/actualización del INCIDENTE (dedupe)                  │
 │  5. ANÁLISIS LLM (opt-in, solo incidentes elegibles)               │
 │  6. ALERTAS (email / Telegram, opt-in)                             │
+│  6.5 RESPUESTA SOAR (bloqueo automático, opt-in)                   │
 │  7. Reentrenamiento ML (time-gated)                                │
 └────────────────────────────────────────────────────────────────────┘
       │
       ▼
-UI /soc/  →  dashboard · bitácora · detalle · campana  →  revisión humana</pre>
+UI /soc/  →  dashboard · bitácora · detalle · campana  →  revisión humana
+                                    ↓ (SOAR activo)
+                            CrowdSec / UFW — IP bloqueada</pre>
       <div class="doc-note">
         <strong>Principio rector:</strong> cada etapa degrada con gracia. Sin API keys → solo heurísticas.
         Sin SMTP/Telegram → sin alertas pero con incidentes. Sin histórico → sin ML.
+        Sin módulo CrowdSec/WF → sin bloqueo automático.
         <strong>La detección nunca se detiene.</strong>
       </div>
     </div>
@@ -281,9 +289,82 @@ fan-out    = min(20, 2 × 30)      = 20
       </ul>
     </div>
 
-    {# ── 7. Scoring ML ───────────────────────────────────────────── #}
+    {# ── 7. SOAR ─────────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="soar">
+      <h2><i class="bi bi-shield-lock" style="color:var(--accent)"></i>7 · Respuesta automática (SOAR)</h2>
+      <p><strong>Apagado por defecto</strong> (opt-in, <code>soc_soar_enabled</code>). Código: <code>app/soc/soar.py</code>, <code>app/ddos/control.py</code>, <code>app/ddos/safety.py</code>.</p>
+      <p>El SOAR cierra el lazo <strong>detección → respuesta</strong>: bloquea automáticamente la IP de los incidentes recién creados que superan el umbral de severidad configurado. Corre en el mismo <code>soc-worker</code> tras las alertas — no tiene thread propio. Nunca lanza excepciones ni interrumpe el ciclo.</p>
+
+      <h3>7.1 Cadena de decisión</h3>
+      <table>
+        <thead><tr><th>#</th><th>Gate / guardia</th><th>Condición</th></tr></thead>
+        <tbody>
+          <tr><td>G1</td><td>SOAR habilitado</td><td><code>soc_soar_enabled == "1"</code> (default OFF)</td></tr>
+          <tr><td>G2</td><td>Módulo disponible</td><td>Si método <code>crowdsec</code> → <code>module_ddos_enabled</code>; si <code>ufw</code> → <code>module_wf_enabled</code> + UFW activo con default deny</td></tr>
+          <tr><td>G3</td><td>Incidente nuevo</td><td>Solo sobre incidentes recién creados en este ciclo (no dedupe/actualizaciones)</td></tr>
+          <tr><td>I1</td><td>Severidad ≥ umbral</td><td><code>incident.severity</code> ≥ <code>soc_soar_min_severity</code> (default <code>high</code>)</td></tr>
+          <tr><td>I2</td><td>IP pública</td><td><code>is_public_ip(ip)</code> — rechaza IPs de rangos privados/loopback/reservados</td></tr>
+          <tr><td>I3</td><td>Ban seguro</td><td><code>is_ban_safe(ip)</code> — 5 capas (ver 7.2)</td></tr>
+          <tr><td>I4</td><td>No login admin reciente</td><td>IP no aparece en logins admin exitosos de las últimas 24 h</td></tr>
+          <tr><td>I5</td><td>Anti-repetición 6 h</td><td>La misma IP no tiene otro incidente <code>blocked=True</code> con <code>blocked_at</code> &lt; 6 h</td></tr>
+        </tbody>
+      </table>
+      <p>Si todas las guardas pasan → se ejecuta el bloqueo y se envía notificación (<code>soc_soar_notify_channels</code>).</p>
+
+      <h3>7.2 Dos métodos de bloqueo</h3>
+      <table>
+        <thead><tr><th>Método</th><th>Cómo funciona</th><th>Tipo de ban</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>crowdsec</code> (default)</td>
+            <td><code>ddos.control.ban_ip()</code> → Docker SDK → <code>cscli decisions add --ip=… --duration=… --reason=soc-incident-&lt;id&gt;</code> en el contenedor <code>wardnode-crowdsec</code></td>
+            <td><strong>Temporal</strong> — expira automáticamente en CrowdSec (duración configurable, default <code>24h</code>)</td>
+          </tr>
+          <tr>
+            <td><code>ufw</code></td>
+            <td><code>socket_client.send_command("deny_ip", ip=…)</code> → daemon WF en host → <code>ufw deny from &lt;ip&gt;</code></td>
+            <td><strong>Permanente</strong> — no expira; requiere desbloqueo manual en el panel WF</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>El formato de duración sigue el patrón <code>\d+[smhd]</code> (ej. <code>24h</code>, <code>7d</code>, <code>30m</code>).</p>
+
+      <div class="doc-note doc-warn">
+        <strong>⚠️ Anti-autobloqueo — 5 capas <code>is_ban_safe()</code>:</strong>
+        <ol style="margin:6px 0 0 0">
+          <li>Formato válido (rechaza CIDRs — solo IPs individuales)</li>
+          <li>No es la IP del administrador que inicia la sesión actual</li>
+          <li>No pertenece a rangos privados/loopback/reservados/Docker (<code>172.16.0.0/12</code>)</li>
+          <li>No coincide con IPs propias del host</li>
+          <li>No está en la allowlist editable <code>ddos_safe_ips</code> (CSV en AppConfig)</li>
+        </ol>
+        Adicionalmente, la guardia I4 protege a los administradores con logins recientes: <strong>nunca se bloquea una IP que haya autenticado a un admin en las últimas 24 horas</strong>.
+      </div>
+
+      <div class="doc-note">
+        <strong>Desbloqueo — no es automático:</strong> el campo <code>incident.blocked</code> <em>no se auto-revierte</em>
+        cuando expira un ban de CrowdSec. El estado del incidente en la bitácora y el estado real del firewall
+        pueden divergir. Para desbloquear usa el panel <strong>DDoS · CrowdSec</strong> o <strong>WF · Firewall</strong>.
+        El panel WF muestra los últimos 50 bloqueos de SOAR en modo lectura cuando el SOAR está activo.
+      </div>
+
+      <h3>7.3 Estado del incidente tras el bloqueo</h3>
+      <p>Cuatro columnas de <code>SocIncident</code> registran el resultado:</p>
+      <table>
+        <thead><tr><th>Columna</th><th>Tipo</th><th>Descripción</th></tr></thead>
+        <tbody>
+          <tr><td><code>blocked</code></td><td>Boolean (indexado)</td><td><code>True</code> si el bloqueo fue exitoso; visible como badge en bitácora/detalle</td></tr>
+          <tr><td><code>blocked_at</code></td><td>DateTime</td><td>Timestamp del bloqueo</td></tr>
+          <tr><td><code>blocked_method</code></td><td>String</td><td><code>crowdsec</code> o <code>ufw</code></td></tr>
+          <tr><td><code>blocked_until</code></td><td>DateTime / null</td><td>Fecha de expiración estimada (CrowdSec); <code>null</code> si es permanente (UFW)</td></tr>
+        </tbody>
+      </table>
+      <p>El bloqueo es <strong>independiente del estado del incidente</strong> (nuevo/confirmado/revisado/descartado) — un incidente puede estar bloqueado y descartado a la vez si resultó ser un falso positivo detectado después del bloqueo automático.</p>
+    </div>
+
+    {# ── 8. Scoring ML ───────────────────────────────────────────── #}
     <div class="card-panel mb-4" style="padding:20px" id="scoring-ml">
-      <h2><i class="bi bi-graph-up-arrow" style="color:var(--accent)"></i>7 · Scoring ML (IsolationForest)</h2>
+      <h2><i class="bi bi-graph-up-arrow" style="color:var(--accent)"></i>8 · Scoring ML (IsolationForest)</h2>
       <p><strong>Opt-in</strong> (<code>soc_ml_enabled</code>, default OFF). Código: <code>app/soc/ml.py</code>.</p>
       <table>
         <thead><tr><th>Aspecto</th><th>Valor</th></tr></thead>
@@ -307,9 +388,9 @@ fan-out    = min(20, 2 × 30)      = 20
       </ul>
     </div>
 
-    {# ── 8. Estados ──────────────────────────────────────────────── #}
+    {# ── 9. Estados ──────────────────────────────────────────────── #}
     <div class="card-panel mb-4" style="padding:20px" id="estados">
-      <h2><i class="bi bi-person-check" style="color:var(--accent)"></i>8 · Estados del incidente y revisión humana</h2>
+      <h2><i class="bi bi-person-check" style="color:var(--accent)"></i>9 · Estados del incidente y revisión humana</h2>
 <pre>            ┌──────────┐
    creación │  nuevo   │ ← cuenta en la campana 🔔
             └────┬─────┘
@@ -325,12 +406,13 @@ fan-out    = min(20, 2 × 30)      = 20
         <li>Cambiar el estado registra quién y cuándo, y queda en auditoría.</li>
         <li>Un incidente <em>descartado/revisado</em> <strong>sale del dedupe</strong>: si la IP vuelve a atacar, se crea un incidente nuevo (y puede volver a alertar pasado el cooldown).</li>
         <li><strong>Bitácora</strong>: filtros por estado/severidad/fechas, paginación y export CSV.</li>
+        <li>Los incidentes con <code>blocked=True</code> muestran un <strong>badge de bloqueo</strong> en la bitácora y el detalle. El estado del incidente y el estado del firewall son independientes: un incidente descartado puede seguir bloqueado en el firewall (y viceversa).</li>
       </ul>
     </div>
 
-    {# ── 9. Garantías ────────────────────────────────────────────── #}
+    {# ── 10. Garantías ────────────────────────────────────────────── #}
     <div class="card-panel mb-4" style="padding:20px" id="garantias">
-      <h2><i class="bi bi-shield-check" style="color:var(--accent)"></i>9 · Garantías transversales</h2>
+      <h2><i class="bi bi-shield-check" style="color:var(--accent)"></i>10 · Garantías transversales</h2>
       <table>
         <thead><tr><th>Garantía</th><th>Implementación</th></tr></thead>
         <tbody>
@@ -342,15 +424,87 @@ fan-out    = min(20, 2 × 30)      = 20
           <tr><td>RBAC</td><td>todas las rutas /soc/* son solo admin + módulo activo</td></tr>
           <tr><td>Multi-worker seguro</td><td>advisory lock PostgreSQL para ciclo, ML y sync CTI</td></tr>
           <tr><td>Auditoría</td><td>incidentes, análisis, alertas, sync y config — solo nombres de campos, jamás valores secretos</td></tr>
+          <tr><td>SOAR anti-autobloqueo</td><td>5 capas is_ban_safe + protección de IPs de login admin (24 h) + anti-repetición 6 h</td></tr>
         </tbody>
       </table>
     </div>
 
-    {# ── 10. Referencia rápida ───────────────────────────────────── #}
-    <div class="card-panel mb-4" style="padding:20px" id="referencia">
-      <h2><i class="bi bi-lightning" style="color:var(--accent)"></i>10 · Referencia rápida</h2>
+    {# ── 11. Configuración vía UI ─────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="configuracion-ui">
+      <h2><i class="bi bi-sliders" style="color:var(--accent)"></i>11 · Configuración vía UI (<code>/soc/config</code>)</h2>
+      <p>Disponible solo para administradores. La página organiza toda la configuración del SOC en <strong>7 pestañas</strong>; cada una guarda de forma independiente. Las claves de acceso a APIs externas se almacenan <strong>cifradas</strong> (Fernet, requiere <code>WARDNODE_SECRET_KEY</code>) y se enmascaran en la UI tras guardar.</p>
 
-      <h3>10.1 Claves de configuración del SOC</h3>
+      <h3>Pestaña 1 — IA / LLM</h3>
+      <p>Selección del proveedor LLM activo, modelo y las 5 API keys (OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini). Incluye el opt-in explícito de envío de datos (<code>soc_data_optin</code>) — <strong>debe activarse conscientemente</strong> antes de que el SOC pueda llamar al LLM.</p>
+
+      <h3>Pestaña 2 — Detección</h3>
+      <p>Parámetros del ciclo de detección y los umbrales de correlación:</p>
+      <table>
+        <thead><tr><th>Campo</th><th>Clave</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>Intervalo del worker</td><td><code>soc_worker_interval_min</code></td><td>5 min (rango 1–60)</td></tr>
+          <tr><td>Ventana de correlación</td><td><code>soc_window_minutes</code></td><td>15 min</td></tr>
+          <tr><td>Mínimo de eventos</td><td><code>soc_threshold_events</code></td><td>20</td></tr>
+          <tr><td>Umbrales de severidad</td><td><code>soc_sev_critical</code> / <code>soc_sev_high</code> / <code>soc_sev_medium</code></td><td>80 / 60 / 40</td></tr>
+          <tr><td>Severidad mínima para IA</td><td><code>soc_analyze_min_severity</code></td><td>medium</td></tr>
+          <tr><td>Scoring ML activo</td><td><code>soc_ml_enabled</code></td><td>0 (OFF)</td></tr>
+          <tr><td>API key AbuseIPDB</td><td><code>soc_abuseipdb_api_key</code> (cifrada)</td><td>—</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Pestaña 3 — Ajuste ML <span style="font-size:11px;color:var(--accent);font-weight:400">(nueva)</span></h3>
+      <p>Hiperparámetros del modelo IsolationForest. Permite afinar el comportamiento del ML sin tocar código:</p>
+      <table>
+        <thead><tr><th>Campo</th><th>Clave</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>Reentrenamiento cada</td><td><code>soc_ml_retrain_hours</code></td><td>24 h (rango 1–168)</td></tr>
+          <tr><td>Ventana de datos de entrenamiento</td><td><code>soc_ml_lookback_days</code></td><td>14 días</td></tr>
+          <tr><td>Muestras mínimas para entrenar</td><td><code>soc_ml_min_samples</code></td><td>100</td></tr>
+          <tr><td>Estimadores del árbol</td><td><code>soc_ml_n_estimators</code></td><td>100</td></tr>
+          <tr><td>Contaminación esperada</td><td><code>soc_ml_contamination</code></td><td>auto</td></tr>
+        </tbody>
+      </table>
+      <p>El botón <strong>Entrenar ahora</strong> fuerza un reentrenamiento inmediato (también disponible en la pestaña Mantenimiento).</p>
+
+      <h3>Pestaña 4 — Alertas</h3>
+      <p>Canal email (SMTP global + lista de destinatarios <code>soc_alert_email_to</code>) y Telegram (bot token cifrado + <code>soc_alert_telegram_chat_id</code>). Umbral de severidad (<code>soc_alert_min_severity</code>) y cooldown por IP (<code>soc_alert_cooldown_min</code>).</p>
+
+      <h3>Pestaña 5 — Reporte diario <span style="font-size:11px;color:var(--accent);font-weight:400">(nueva)</span></h3>
+      <p>Envío automático de un resumen diario del SOC por email. Configurable con:</p>
+      <ul>
+        <li><code>soc_daily_report_enabled</code> — activa el reporte</li>
+        <li><code>soc_daily_report_email_to</code> — destinatarios (CSV)</li>
+        <li><code>soc_daily_report_hour</code> — hora de envío UTC (default 8)</li>
+      </ul>
+
+      <h3>Pestaña 6 — SOAR <span style="font-size:11px;color:var(--accent);font-weight:400">(nueva)</span></h3>
+      <p>Controla el motor de respuesta automática (ver sección 7):</p>
+      <table>
+        <thead><tr><th>Campo</th><th>Clave</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>Activar SOAR</td><td><code>soc_soar_enabled</code></td><td>0 (OFF)</td></tr>
+          <tr><td>Método de bloqueo</td><td><code>soc_soar_method</code></td><td><code>crowdsec</code></td></tr>
+          <tr><td>Severidad mínima para bloquear</td><td><code>soc_soar_min_severity</code></td><td><code>high</code></td></tr>
+          <tr><td>Duración del ban</td><td><code>soc_soar_duration</code></td><td><code>24h</code></td></tr>
+          <tr><td>Notificar por</td><td><code>soc_soar_notify_channels</code></td><td>CSV: <code>email,telegram</code></td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note doc-warn">
+        <strong>Recomendación de activación:</strong> habilita el SOAR solo cuando hayas verificado que <code>ddos_safe_ips</code> incluye las IPs legítimas de tu equipo y que el módulo CrowdSec (o WF) está operativo. Empieza con <code>soc_soar_min_severity = critical</code> para reducir el riesgo de falsos positivos. Revisa la bitácora a las 24 h y ajusta.
+      </div>
+
+      <h3>Pestaña 7 — Mantenimiento</h3>
+      <p>Acciones puntuales <strong>sin persistencia de configuración</strong>: enviar un reporte de prueba por email, entrenar el modelo ML ahora mismo, y sincronizar la base CTI de MITRE ATT&amp;CK (<code>enterprise-attack.json</code>, ~50 MB).</p>
+      <div class="doc-note">
+        La sincronización MITRE es manual (o automática una sola vez al inicio si la tabla está vacía). No se ejecuta en cada ciclo del worker.
+      </div>
+    </div>
+
+    {# ── 12. Referencia rápida ───────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="referencia">
+      <h2><i class="bi bi-lightning" style="color:var(--accent)"></i>12 · Referencia rápida</h2>
+
+      <h3>12.1 Claves de configuración del SOC</h3>
       <table>
         <thead><tr><th>Clave</th><th>Efecto</th><th>Default</th></tr></thead>
         <tbody>
@@ -358,10 +512,11 @@ fan-out    = min(20, 2 × 30)      = 20
           <tr><td><code>soc_window_minutes</code></td><td>ventana de correlación</td><td>15</td></tr>
           <tr><td><code>soc_threshold_events</code></td><td>mínimo de eventos por IP</td><td>20</td></tr>
           <tr><td><code>soc_worker_interval_min</code></td><td>cadencia del ciclo (1–60)</td><td>5</td></tr>
+          <tr><td><code>soc_sev_critical</code> / <code>soc_sev_high</code> / <code>soc_sev_medium</code></td><td>umbrales de score por severidad</td><td>80 / 60 / 40</td></tr>
           <tr><td><code>soc_data_optin</code></td><td>consentimiento de envío al LLM</td><td>0</td></tr>
           <tr><td><code>soc_llm_provider</code> / <code>soc_llm_model</code></td><td>proveedor y modelo LLM</td><td>openrouter / —</td></tr>
           <tr><td><code>soc_analyze_min_severity</code></td><td>severidad mínima para análisis IA</td><td>medium</td></tr>
-          <tr><td><code>soc_abuse_cache_ttl_hours</code></td><td>TTL del cache de reputación</td><td>24</td></tr>
+          <tr><td><code>soc_abuse_cache_ttl_hours</code></td><td>TTL del cache de reputación AbuseIPDB</td><td>24</td></tr>
           <tr><td><code>soc_alerts_enabled</code></td><td>activa alertas</td><td>0</td></tr>
           <tr><td><code>soc_alert_min_severity</code></td><td>severidad mínima para alertar</td><td>high</td></tr>
           <tr><td><code>soc_alert_email_to</code></td><td>destinos email (CSV)</td><td>—</td></tr>
@@ -369,10 +524,22 @@ fan-out    = min(20, 2 × 30)      = 20
           <tr><td><code>soc_alert_cooldown_min</code></td><td>cooldown por IP (5–1440)</td><td>60</td></tr>
           <tr><td><code>soc_ml_enabled</code></td><td>activa scoring ML</td><td>0</td></tr>
           <tr><td><code>soc_ml_retrain_hours</code></td><td>cadencia de reentrenamiento (1–168)</td><td>24</td></tr>
+          <tr><td><code>soc_ml_lookback_days</code></td><td>días de histórico para entrenar</td><td>14</td></tr>
+          <tr><td><code>soc_ml_min_samples</code></td><td>muestras mínimas para entrenar</td><td>100</td></tr>
+          <tr><td><code>soc_ml_n_estimators</code></td><td>estimadores IsolationForest</td><td>100</td></tr>
+          <tr><td><code>soc_ml_contamination</code></td><td>parámetro contamination del modelo</td><td>auto</td></tr>
+          <tr><td><code>soc_daily_report_enabled</code></td><td>activa el reporte diario por email</td><td>0</td></tr>
+          <tr><td><code>soc_daily_report_email_to</code></td><td>destinatarios del reporte (CSV)</td><td>—</td></tr>
+          <tr><td><code>soc_daily_report_hour</code></td><td>hora de envío UTC (0–23)</td><td>8</td></tr>
+          <tr><td><code>soc_soar_enabled</code></td><td>activa el bloqueo automático SOAR</td><td>0</td></tr>
+          <tr><td><code>soc_soar_method</code></td><td>método: <code>crowdsec</code> o <code>ufw</code></td><td>crowdsec</td></tr>
+          <tr><td><code>soc_soar_min_severity</code></td><td>severidad mínima para bloquear</td><td>high</td></tr>
+          <tr><td><code>soc_soar_duration</code></td><td>duración del ban (formato <code>\d+[smhd]</code>)</td><td>24h</td></tr>
+          <tr><td><code>soc_soar_notify_channels</code></td><td>canales de notificación del bloqueo (CSV)</td><td>email,telegram</td></tr>
         </tbody>
       </table>
 
-      <h3>10.2 Tuning rápido de sensibilidad</h3>
+      <h3>12.2 Tuning rápido de sensibilidad</h3>
       <table>
         <thead><tr><th>Quiero…</th><th>Ajuste</th></tr></thead>
         <tbody>
@@ -381,11 +548,12 @@ fan-out    = min(20, 2 × 30)      = 20
           <tr><td>Incidentes más rápido</td><td>bajar <code>soc_worker_interval_min</code> (mín. 1)</td></tr>
           <tr><td>Más/menos alertas</td><td>ajustar <code>soc_alert_min_severity</code> y <code>soc_alert_cooldown_min</code></td></tr>
           <tr><td>Más análisis IA</td><td>bajar <code>soc_analyze_min_severity</code> (ojo con el costo: cap 5/ciclo)</td></tr>
+          <tr><td>Activar SOAR de forma segura</td><td>empezar con <code>soc_soar_min_severity=critical</code>, revisar bitácora 24 h, luego bajar a <code>high</code></td></tr>
         </tbody>
       </table>
 
       <p class="mb-0" style="font-size:12px;color:var(--text-muted)">
-        Documento fuente: <code>docuemntacion/documentacion_soc.md</code> ·
+        Documento fuente: <code>documentacion/documentacion_soc.md</code> ·
         Referencias técnicas: <code>docs/architecture.md</code> y <code>docs/adr/0004-soc-module.md</code>.
       </p>
     </div>

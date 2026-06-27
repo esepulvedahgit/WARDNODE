@@ -444,15 +444,38 @@ _HSTS_VALUES: dict[str, str] = {
     "1y-sub-preload": "max-age=31536000; includeSubDomains; preload",
 }
 
+# Cabeceras de seguridad conocidas para las que nginx deduplica la copia del upstream.
+# nginx es el único emisor de cara al cliente; el upstream puede seguir emitiéndolas
+# internamente (defensa en profundidad) y proxy_hide_header normaliza la salida.
+# Allowlist explícita: NUNCA se añade proxy_hide_header para nombres fuera de este set,
+# lo que garantiza que Set-Cookie, Location y cabeceras custom del upstream no se
+# descarten accidentalmente.
+_DEDUP_SECURITY_HEADERS: frozenset[str] = frozenset({
+    "strict-transport-security",
+    "content-security-policy",
+    "content-security-policy-report-only",
+    "x-frame-options",
+    "x-content-type-options",
+    "referrer-policy",
+    "permissions-policy",
+    "x-xss-protection",
+    "x-permitted-cross-domain-policies",
+    "cross-origin-opener-policy",
+    "cross-origin-resource-policy",
+    "cross-origin-embedder-policy",
+})
+
 
 def _render_security_headers(site: Site) -> str:
     ensure_site_security_headers(site)
-    lines = []
+    hide_lines: list[str] = []
+    add_lines: list[str] = []
 
     # HSTS gestionado por site.hsts_mode (tiene prioridad sobre la tabla de headers).
     # Se emite primero para que aparezca al inicio del bloque de headers en el config.
     if site.hsts_mode in _HSTS_VALUES:
-        lines.append(
+        hide_lines.append("    proxy_hide_header Strict-Transport-Security;")
+        add_lines.append(
             f'    add_header Strict-Transport-Security'
             f' "{_HSTS_VALUES[site.hsts_mode]}" always;'
         )
@@ -465,10 +488,16 @@ def _render_security_headers(site: Site) -> str:
         if header.name.lower() == "strict-transport-security" and site.hsts_mode != "off":
             continue
         always = " always" if header.always else ""
-        lines.append(
+        # proxy_hide_header descarta la copia que el upstream pueda enviar,
+        # garantizando una única cabecera en el cliente con el valor de la UI.
+        # Solo se aplica a cabeceras de la allowlist conocida para no afectar
+        # Set-Cookie, Location ni cabeceras custom del upstream.
+        if header.name.lower() in _DEDUP_SECURITY_HEADERS:
+            hide_lines.append(f"    proxy_hide_header {header.name};")
+        add_lines.append(
             f'    add_header {header.name} "{_escape_nginx_header_value(header.value)}"{always};'
         )
-    return "\n".join(lines)
+    return "\n".join(hide_lines + add_lines)
 
 
 def _render_rule_exclusions(site: Site) -> str:

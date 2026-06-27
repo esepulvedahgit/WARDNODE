@@ -10,6 +10,9 @@
 {% endblock %}
 
 {% block page_actions %}
+<a href="{{ url_for('soc.docs') }}" class="btn btn-outline-secondary btn-sm">
+  <i class="bi bi-book-half me-1"></i>Documentación
+</a>
 <a href="{{ url_for('soc.bitacora_export', estado=estado or None, severidad=severidad or None, desde=desde or None, hasta=hasta or None) }}"
    class="btn btn-outline-primary btn-sm">
   <i class="bi bi-download me-1"></i>Exportar CSV

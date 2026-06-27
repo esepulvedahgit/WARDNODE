@@ -25,6 +25,7 @@
       toggleAll(state) {
         document.querySelectorAll('#crs-rules-form input[name=\'category_ids\']')
           .forEach(function(cb) { cb.checked = state; });
+        window.dispatchEvent(new CustomEvent('crs-recount'));
       }
     }">
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
@@ -69,7 +70,16 @@
             {% if s.enabled %}{% set ns.enabled = ns.enabled + 1 %}{% endif %}
           {% endfor %}
 
-          <div x-data="{ open: false }">
+          <div x-data="{
+                 open: false,
+                 total: {{ ns.total }},
+                 enabled: {{ ns.enabled }},
+                 recount() {
+                   this.enabled = [...$el.querySelectorAll('input[name=\'category_ids\']')]
+                     .filter(function(c){ return c.checked; }).length;
+                 }
+               }"
+               @crs-recount.window="recount()">
             <button type="button"
                     class="crs-accordion-btn"
                     :aria-expanded="open.toString()"
@@ -79,8 +89,9 @@
                  style="font-size:11px;color:var(--text-muted)"></i>
               <span style="text-transform:uppercase;letter-spacing:.07em;font-size:12px">{{ family }}</span>
               <span class="ms-auto d-flex align-items-center gap-2">
-                <span class="badge {% if ns.enabled == ns.total %}text-bg-success{% elif ns.enabled == 0 %}text-bg-secondary{% else %}text-bg-warning{% endif %}"
-                      style="font-size:10px">{{ ns.enabled }}/{{ ns.total }}</span>
+                <span class="badge"
+                      :class="enabled === total ? 'text-bg-success' : (enabled === 0 ? 'text-bg-secondary' : 'text-bg-warning')"
+                      style="font-size:10px" x-text="enabled + '/' + total"></span>
                 <span style="font-size:11px;color:var(--text-muted);font-weight:400">activas</span>
               </span>
             </button>
@@ -95,6 +106,7 @@
                   value="{{ s.category_id }}"
                   {% if s.enabled %}checked{% endif %}
                   {% if current_user.has_role('reader') %}disabled{% endif %}
+                  @change="recount()"
                 >
                 <span>
                   <strong>{{ s.category.name }}</strong>

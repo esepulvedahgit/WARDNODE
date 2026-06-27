@@ -450,6 +450,7 @@ code, pre, .font-mono {
 
 .rule-toggle { display: flex; gap: .75rem; align-items: flex-start; }
 .rule-toggle small { display: block; color: #687385; }
+.rule-toggle:has(input:checked) { background: #f0fdf4; border-color: #86efac; }
 
 .event-line { display: grid; grid-template-columns: auto 1fr; gap: .35rem .75rem; align-items: center; }
 .event-line code { grid-column: 2; }

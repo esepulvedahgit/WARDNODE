@@ -41,7 +41,7 @@
       <i class="bi bi-book-half" style="color:var(--accent)"></i>
       Documentación · Proxy &amp; WAF
     </h1>
-    <p class="text-secondary mb-0 small">Nginx + ModSecurity — arquitectura, alcances de upstream y despliegue.</p>
+    <p class="text-secondary mb-0 small">Nginx + ModSecurity — arquitectura, alcances de upstream, funciones y características configurables del WAF.</p>
   </div>
 </div>
 
@@ -57,6 +57,18 @@
       <a href="#red-host">3 · Red del host (127.0.0.1)</a>
       <a href="#red-externa">4 · Red externa / LAN</a>
       <a href="#referencia">5 · Referencia rápida</a>
+      <div class="toc-group">Funciones del WAF</div>
+      <a href="#waf-intro">6 · Qué es el WAF</a>
+      <a href="#waf-estado">7 · Estado del WAF</a>
+      <a href="#waf-crs">8 · Categorías CRS</a>
+      <a href="#waf-reglas">9 · Reglas personalizadas</a>
+      <a href="#waf-exclusiones">10 · Excepciones WAF</a>
+      <a href="#waf-headers">11 · Cabeceras de seguridad</a>
+      <a href="#waf-trafico">12 · Política de tráfico</a>
+      <a href="#waf-tls">13 · TLS y certificados</a>
+      <a href="#waf-bots">14 · Protección contra bots</a>
+      <a href="#waf-geo">15 · Bloqueo por país</a>
+      <a href="#waf-nginx-extra">16 · Nginx extra</a>
     </div>
   </div>
 
@@ -408,6 +420,366 @@ ss -tlnp | grep LISTEN</pre>
         <li>Apunta el registro DNS del dominio a la IP pública del servidor.</li>
         <li>Opcionalmente, activa TLS con Let's Encrypt desde la vista de detalle del sitio.</li>
       </ol>
+    </div>
+
+    {# ── 6. Qué es el WAF ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-intro">
+      <h2><i class="bi bi-shield-fill-check" style="color:var(--accent)"></i>6 · Qué es el WAF (ModSecurity + OWASP CRS)</h2>
+      <p>WardNode incorpora un <strong>Web Application Firewall (WAF)</strong> basado en dos componentes que trabajan juntos:</p>
+      <ul>
+        <li><strong>ModSecurity</strong> — motor de inspección HTTP que evalúa cada petición y respuesta contra un conjunto de reglas. Está embebido en el contenedor proxy como módulo de Nginx.</li>
+        <li><strong>OWASP Core Rule Set (CRS)</strong> — colección de reglas de detección para los ataques web más comunes (SQLi, XSS, LFI, RCE, etc.), mantenida por la fundación OWASP. WardNode usa la imagen oficial <code>owasp/modsecurity-crs:nginx</code>.</li>
+      </ul>
+      <p>El CRS usa un modelo de <strong>puntuación por anomalía</strong>: cada regla que dispara acumula puntos. Cuando la puntuación de una petición supera el umbral configurado, ModSecurity la bloquea (en modo bloqueo) o la registra (en modo solo detección). Los eventos quedan visibles en <a href="{{ url_for('proxy.events_list') }}">Eventos</a> y en los KPIs del <a href="{{ url_for('proxy.dashboard') }}">Overview</a>.</p>
+
+      <h3>Parámetros globales (fijos, baked-in en la imagen)</h3>
+      <div class="doc-note">
+        <strong>Paranoia level = 1 y anomaly threshold = valores por defecto de la imagen.</strong><br>
+        Estos parámetros están configurados en <code>proxy/modsecurity/modsecurity-override.conf</code> y <strong>no son editables desde la UI</strong> de WardNode. Cambiarlos requiere editar ese archivo y reconstruir la imagen del proxy (<code>docker compose build proxy</code>). El nivel de paranoia 1 es el más equilibrado: detecta los ataques más obvios con pocos falsos positivos.
+      </div>
+
+      <h3>Modos de operación del WAF</h3>
+      <table>
+        <thead><tr><th>Modo</th><th>Directiva generada</th><th>Comportamiento</th><th>Cuándo usarlo</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Bloqueo</strong></td>
+            <td><code>SecRuleEngine On</code></td>
+            <td>Las peticiones que superan el umbral reciben HTTP 403 y no llegan al upstream.</td>
+            <td>Producción, tras afinar las reglas con el modo detección.</td>
+          </tr>
+          <tr>
+            <td><strong>Solo detección</strong></td>
+            <td><code>SecRuleEngine DetectionOnly</code></td>
+            <td>Las reglas se evalúan y los ataques se registran en Eventos, pero <strong>no se bloquea ninguna petición</strong>.</td>
+            <td>Puesta en marcha, análisis de falsos positivos, pruebas A/B de reglas.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>En ambos modos <code>modsecurity on;</code> siempre está activo — la diferencia es solo si el motor actúa o solo registra.</p>
+    </div>
+
+    {# ── 7. Estado del WAF ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-estado">
+      <h2><i class="bi bi-toggle-on" style="color:var(--accent)"></i>7 · Estado del WAF</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Estado del WAF</strong> (columna derecha del detalle del sitio). El switch <strong>"Bloqueo de ataques"</strong> controla si el WAF bloquea o solo detecta.</p>
+      <table>
+        <thead><tr><th>Switch</th><th>Genera</th><th>Efecto</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>✅ Activado</td>
+            <td><code>SecRuleEngine On</code></td>
+            <td>Modo bloqueo — las peticiones que disparan reglas reciben HTTP 403.</td>
+          </tr>
+          <tr>
+            <td>☐ Desactivado</td>
+            <td><code>SecRuleEngine DetectionOnly</code></td>
+            <td>Modo solo detección — los ataques se registran en Eventos pero no se bloquean. Útil para afinar reglas antes de activar el bloqueo.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        <strong>Flujo recomendado para un sitio nuevo:</strong><br>
+        1. Crear el sitio con WAF en modo <em>solo detección</em>.<br>
+        2. Dejar correr tráfico real durante 24–48 h y revisar Eventos en busca de falsos positivos.<br>
+        3. Desactivar las categorías CRS o añadir excepciones por ID para los falsos positivos identificados.<br>
+        4. Activar el switch de bloqueo.
+      </div>
+    </div>
+
+    {# ── 8. Categorías CRS ───────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-crs">
+      <h2><i class="bi bi-list-check" style="color:var(--accent)"></i>8 · Categorías y subcategorías CRS</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Categorias y subcategorias CRS</strong>. Cada categoría agrupa reglas CRS por tipo de amenaza. Desactivar una categoría genera <code>SecRuleRemoveByTag</code> para ese sitio — las demás categorías y los demás sitios no se ven afectados.</p>
+      <div class="doc-note">
+        Las categorías activas aplican tanto en modo <strong>Bloqueo</strong> como en <strong>Solo detección</strong>. En detección los ataques se registran en Eventos sin bloquear.
+      </div>
+      <table>
+        <thead><tr><th>Clave</th><th>Nombre</th><th>Qué detecta</th><th>Activa por defecto</th></tr></thead>
+        <tbody>
+          <tr><td><code>sqli</code></td><td>SQL injection</td><td>Inyección SQL en parámetros, headers y body.</td><td>No</td></tr>
+          <tr><td><code>xss</code></td><td>Cross-site scripting</td><td>Inyección de scripts en respuestas y peticiones.</td><td>No</td></tr>
+          <tr><td><code>rce</code></td><td>Remote command execution</td><td>Intentos de ejecutar comandos en el servidor (shell injection, eval, etc.).</td><td>No</td></tr>
+          <tr><td><code>lfi</code></td><td>Local file inclusion</td><td>Path traversal y lectura de archivos locales (<code>../etc/passwd</code>).</td><td>No</td></tr>
+          <tr><td><code>rfi</code></td><td>Remote file inclusion</td><td>Inclusión de archivos remotos vía URL en parámetros.</td><td>No</td></tr>
+          <tr><td><code>protocol</code></td><td>Protocol enforcement</td><td>Violaciones del protocolo HTTP (métodos malformados, headers inválidos).</td><td>No</td></tr>
+          <tr><td><code>protocol-attack</code></td><td>Protocol attack</td><td>HTTP request smuggling, splitting y cache poisoning.</td><td>No</td></tr>
+          <tr><td><code>method-enforcement</code></td><td>Method enforcement</td><td>Métodos HTTP no permitidos (OPTIONS, TRACE, etc.).</td><td>No</td></tr>
+          <tr><td><code>scanner</code></td><td>Scanner detection</td><td>User-agents y patrones de escáneres automáticos (nikto, nmap, etc.).</td><td>No</td></tr>
+          <tr><td><code>dos</code></td><td>DoS protection</td><td>Patrones de denegación de servicio a nivel de aplicación.</td><td>No</td></tr>
+          <tr><td><code>ip-reputation</code></td><td>IP reputation</td><td>IPs en listas negras públicas conocidas.</td><td>No</td></tr>
+          <tr><td><code>multipart</code></td><td>Multipart attack</td><td>Ataques en subidas de archivos (multipart/form-data malformado).</td><td>No</td></tr>
+          <tr><td><code>php</code></td><td>PHP attack</td><td>Vectores específicos de PHP (eval, system, code injection).</td><td>No</td></tr>
+          <tr><td><code>java</code></td><td>Java attack</td><td>Deserialización Java, Log4Shell y vectores de JEE.</td><td>No</td></tr>
+          <tr><td><code>nodejs</code></td><td>Node.js attack</td><td>Prototype pollution y otros vectores específicos de Node.js.</td><td>No</td></tr>
+          <tr><td><code>session-fixation</code></td><td>Session fixation</td><td>Inyección de identificadores de sesión.</td><td>No</td></tr>
+          <tr><td><code>data-leakage</code></td><td>Filtración de datos</td><td>Respuestas que contienen stack traces, mensajes de error internos, etc.</td><td>No *</td></tr>
+          <tr><td><code>correlation</code></td><td>Correlación de ataques</td><td>Reglas de correlación de eventos entre petición y respuesta.</td><td>No *</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--text-muted)">* <code>data-leakage</code> y <code>correlation</code> están desactivadas por defecto porque inspeccionan las <em>respuestas</em> del servidor, lo que puede generar más falsos positivos. Actívalas solo si necesitas detectar filtraciones en las respuestas.</p>
+
+      <h3>Cómo actúa sobre la configuración generada</h3>
+      <p>Al desactivar una categoría, el archivo <code>.conf</code> del sitio incluye:</p>
+<pre>SecRuleRemoveByTag "attack-sqli"       # ejemplo para la categoría sqli
+SecRuleRemoveByTag "OWASP_CRS/AUTOMATION"  # ejemplo para scanner</pre>
+      <p>Cada categoría tiene su <code>crs_tag</code> específico. Solo se generan entradas <code>SecRuleRemoveByTag</code> para las categorías <em>desactivadas</em>; las activas simplemente no producen ninguna directiva de exclusión.</p>
+    </div>
+
+    {# ── 9. Reglas personalizadas ────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-reglas">
+      <h2><i class="bi bi-code-square" style="color:var(--accent)"></i>9 · Reglas personalizadas ModSecurity</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Reglas personalizadas ModSecurity</strong>. Permiten añadir directivas <code>SecRule</code> o <code>SecAction</code> propias que se insertan en el bloque ModSecurity del sitio, después de las reglas CRS.</p>
+
+      <h3>Formato válido</h3>
+      <p>Cada regla debe empezar por <code>SecRule </code> o <code>SecAction </code> y llevar una acción <code>id:</code> en el rango reservado para reglas personalizadas de WardNode:</p>
+<pre># Bloquear un user-agent específico
+SecRule REQUEST_HEADERS:User-Agent "@contains badbot" \
+    "id:1000001,phase:1,deny,status:403,log,msg:'Bot bloqueado'"
+
+# Excluir un parámetro de la inspección SQLi (SecAction)
+SecAction "id:1000002,phase:1,pass,nolog,setvar:tx.sql_injection_score=0"</pre>
+
+      <h3>Reglas de validación</h3>
+      <table>
+        <thead><tr><th>Restricción</th><th>Detalle</th></tr></thead>
+        <tbody>
+          <tr><td>Rango de IDs obligatorio</td><td><code>1.000.000 – 1.999.999</code>. Los IDs del CRS oficial (900000–999999) no pueden usarse aquí.</td></tr>
+          <tr><td>IDs únicos por sitio</td><td>No se permiten dos reglas con el mismo ID en el mismo sitio.</td></tr>
+          <tr><td>Solo <code>SecRule</code> / <code>SecAction</code></td><td>Otros statements (SecPolicy, SecComponentSignature…) son rechazados.</td></tr>
+          <tr><td>Sin comillas simples</td><td>Usar comillas dobles para todos los valores.</td></tr>
+          <tr><td>Sin tokens peligrosos</td><td><code>include</code>, <code>exec:</code>, <code>lua:</code> y <code>ctl:</code> están prohibidos.</td></tr>
+          <tr><td>Máx. 6.000 caracteres</td><td>Por regla (suma de nombre + texto).</td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        <strong>Activar/desactivar sin borrar:</strong> cada regla tiene un switch de habilitación. Una regla desactivada no se incluye en el <code>.conf</code> generado pero permanece en la base de datos para su reutilización posterior.
+      </div>
+    </div>
+
+    {# ── 10. Excepciones WAF ─────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-exclusiones">
+      <h2><i class="bi bi-pass" style="color:var(--accent)"></i>10 · Excepciones WAF</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Excepciones WAF</strong>. Permiten silenciar una regla CRS concreta por su ID cuando genera falsos positivos para un sitio específico. La excepción <strong>solo afecta a ese sitio</strong> — los demás sitios no se ven alterados.</p>
+
+      <h3>Diferencia con desactivar una categoría completa</h3>
+      <table>
+        <thead><tr><th>Mecanismo</th><th>Granularidad</th><th>Cuándo usarlo</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Categoría CRS off</strong></td>
+            <td>Desactiva todas las reglas de esa categoría (<code>SecRuleRemoveByTag</code>)</td>
+            <td>La categoría entera genera falsos positivos para esta aplicación.</td>
+          </tr>
+          <tr>
+            <td><strong>Excepción por ID</strong></td>
+            <td>Desactiva una sola regla (<code>SecRuleRemoveById</code>)</td>
+            <td>Solo una regla específica del CRS genera falsos positivos. Minimiza la superficie expuesta.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Rango válido y restricciones</h3>
+      <p>Solo se aceptan IDs del rango del CRS oficial: <code>900000 – 999999</code>. Los IDs de reglas personalizadas (1000000–1999999) no son excluibles aquí — para desactivarlas, usa el switch de habilitación en "Reglas personalizadas".</p>
+      <div class="doc-warn doc-note">
+        <strong>Reglas críticas que no pueden excluirse:</strong><br>
+        Las siguientes reglas protegen el proceso de scoring y bloqueo del CRS. WardNode rechaza intentos de excluirlas:
+        <ul style="margin:6px 0 0;padding-left:18px;font-size:12.5px">
+          <li><code>901001–901420</code> — Inicialización del motor CRS</li>
+          <li><code>949110</code>, <code>949111</code> — Bloqueo por anomaly score entrante</li>
+          <li><code>959100</code> — Bloqueo por anomaly score saliente</li>
+          <li><code>980130</code>, <code>980140</code>, <code>980170</code> — Correlación y scoring final</li>
+        </ul>
+      </div>
+      <p>El campo "Comentario / motivo" (máx. 200 caracteres) permite registrar la razón de la excepción para auditoría.</p>
+    </div>
+
+    {# ── 11. Cabeceras de seguridad ──────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-headers">
+      <h2><i class="bi bi-card-heading" style="color:var(--accent)"></i>11 · Cabeceras de seguridad</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Cabeceras de seguridad</strong>. El proxy inyecta headers HTTP en cada respuesta que pasa por el WAF. WardNode pre-configura un conjunto de cabeceras por defecto y permite añadir o modificar headers personalizados.</p>
+
+      <h3>Headers por defecto</h3>
+      <table>
+        <thead><tr><th>Header</th><th>Valor por defecto</th><th>Activo</th><th>Qué protege</th></tr></thead>
+        <tbody>
+          <tr><td><code>X-Content-Type-Options</code></td><td><code>nosniff</code></td><td>✅</td><td>Evita que el navegador interprete el tipo MIME incorrecto (MIME sniffing).</td></tr>
+          <tr><td><code>X-Frame-Options</code></td><td><code>DENY</code></td><td>✅</td><td>Previene que el sitio sea embebido en iframes (clickjacking).</td></tr>
+          <tr><td><code>Referrer-Policy</code></td><td><code>strict-origin-when-cross-origin</code></td><td>✅</td><td>Controla qué información de referencia se envía a terceros.</td></tr>
+          <tr><td><code>Permissions-Policy</code></td><td><code>camera=(), microphone=(), geolocation=()</code></td><td>✅</td><td>Deshabilita acceso a cámara, micrófono y geolocalización.</td></tr>
+          <tr><td><code>X-XSS-Protection</code></td><td><code>1; mode=block</code></td><td>✅</td><td>Activa el filtro XSS del navegador (legacy; útil para IE/Edge antiguos).</td></tr>
+          <tr><td><code>Content-Security-Policy</code></td><td>Política WardNode por defecto</td><td>☐</td><td>Define orígenes permitidos para scripts, estilos e iframes. Desactivado porque cada app define su propia CSP.</td></tr>
+          <tr><td><code>Strict-Transport-Security</code></td><td>—</td><td>—</td><td>Gestionado por el selector HSTS del panel TLS — no configurar aquí.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Columna "Siempre"</h3>
+      <p>El flag <strong>Siempre</strong> (<code>always</code> en nginx) indica que el header se añade también en respuestas de error (4xx, 5xx) y redirecciones (3xx), no solo en las respuestas 2xx. Se recomienda activarlo para todos los headers de seguridad.</p>
+
+      <h3>Headers personalizados</h3>
+      <p>Se pueden añadir headers propios con cualquier nombre que cumpla el estándar HTTP (solo caracteres <code>A-Za-z0-9!#$%&amp;'*+.^_`|~-</code>, sin caracteres de control en el valor). Útil para headers no incluidos en los defaults, como <code>Cross-Origin-Opener-Policy</code> o <code>Cross-Origin-Resource-Policy</code>.</p>
+    </div>
+
+    {# ── 12. Política de tráfico ─────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-trafico">
+      <h2><i class="bi bi-speedometer2" style="color:var(--accent)"></i>12 · Política de tráfico</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Politica de trafico</strong>. Configura los mecanismos <code>limit_req</code> y <code>limit_conn</code> de Nginx para mitigar ataques de fuerza bruta y DoS a nivel de conexión.</p>
+
+      <h3>Parámetros configurables</h3>
+      <table>
+        <thead><tr><th>Parámetro</th><th>Descripción</th><th>Default</th><th>Rango</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Requests por segundo</strong></td><td>Tasa máxima de peticiones permitidas (<code>limit_req_zone … rate=N r/s</code>).</td><td>20</td><td>1 – 5.000</td></tr>
+          <tr><td><strong>Burst</strong></td><td>Peticiones adicionales en cola permitidas temporalmente sobre la tasa.</td><td>40</td><td>0 – 20.000</td></tr>
+          <tr><td><strong>Nodelay</strong></td><td>Si está activo, el burst se procesa sin espera artificial (respuesta inmediata); si está inactivo, las peticiones en burst se retrasan.</td><td>Activo</td><td>on / off</td></tr>
+          <tr><td><strong>Conexiones máximas</strong></td><td>Máximo de conexiones simultáneas por clave (<code>limit_conn</code>).</td><td>20</td><td>1 – 50.000</td></tr>
+          <tr><td><strong>Clave de aplicación</strong></td><td>Variable con la que se agrupa el rate limit.</td><td>IP remota</td><td>IP remota / X-Forwarded-For</td></tr>
+        </tbody>
+      </table>
+
+      <div class="doc-warn doc-note">
+        <strong>Atención — X-Forwarded-For puede ser falsificado:</strong><br>
+        La clave <code>X-Forwarded-For</code> permite que un atacante rote su IP aparente simplemente cambiando el header, evadiendo el rate limiting. Usa esta opción <em>solo</em> si WardNode está detrás de un load balancer de confianza que sobreescribe ese header. En todos los demás casos usa <strong>IP remota</strong>.
+      </div>
+
+      <h3>Qué genera en la configuración Nginx</h3>
+      <p>La política genera zonas globales en <code>generated/nginx/00-zones.conf</code> y directivas dentro del <code>location /</code> de cada sitio:</p>
+<pre># 00-zones.conf (global, agregado de todos los sitios)
+limit_req_zone  $binary_remote_addr  zone=req_site_1:10m  rate=20r/s;
+limit_conn_zone $binary_remote_addr  zone=conn_site_1:10m;
+
+# site-ejemplo.conf (dentro del location /)
+limit_req  zone=req_site_1  burst=40  nodelay;
+limit_conn zone=conn_site_1 20;</pre>
+      <p>Cuando el rate limit se supera, Nginx devuelve HTTP <code>429 Too Many Requests</code> (o <code>503</code> si el burst también se agota con nodelay).</p>
+    </div>
+
+    {# ── 13. TLS y certificados ──────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-tls">
+      <h2><i class="bi bi-lock-fill" style="color:var(--accent)"></i>13 · TLS y certificados</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → TLS y certificados</strong>. Controla si el sitio sirve tráfico HTTPS, qué certificado usa y cómo gestiona el redirect HTTP.</p>
+
+      <h3>Modos de certificado</h3>
+      <table>
+        <thead><tr><th>Modo</th><th>Configuración</th><th>Cuándo usarlo</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Let's Encrypt</strong></td>
+            <td>Activar switch "Usar Let's Encrypt" + email de contacto. WardNode lanza certbot en modo webroot contra el contenedor proxy y guarda el cert en <code>/etc/letsencrypt/live/{dominio}/</code>. La provisión activa automáticamente "Forzar HTTPS".</td>
+            <td>Dominios públicos accesibles desde internet. El dominio debe apuntar a la IP del servidor antes de provisionar.</td>
+          </tr>
+          <tr>
+            <td><strong>Certificado propio</strong></td>
+            <td>Introducir la ruta al archivo <code>.crt</code>/<code>.pem</code> (<em>Certificado personalizado</em>) y la ruta a la clave privada (<em>Llave privada personalizada</em>). Las rutas deben ser accesibles desde dentro del contenedor proxy.</td>
+            <td>Certificados de CA interna, wildcards, o dominios sin acceso público a internet.</td>
+          </tr>
+          <tr>
+            <td><strong>Sin TLS (HTTP)</strong></td>
+            <td>No activar ninguna opción de certificado.</td>
+            <td>Entorno de desarrollo o cuando TLS se gestiona en una capa exterior (CDN, balanceador).</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Forzar HTTPS (redirect 301)</h3>
+      <p>El switch <strong>"Forzar HTTPS"</strong> genera un bloque <code>server { listen 80; return 301 https://… }</code> separado que redirige todo el tráfico HTTP al HTTPS equivalente. La ruta <code>/.well-known/acme-challenge/</code> queda exenta del redirect para permitir renovaciones de Let's Encrypt.</p>
+
+      <h3>HSTS (Strict-Transport-Security)</h3>
+      <p>El selector <strong>HSTS</strong> añade el header <code>Strict-Transport-Security</code> con las opciones más comunes:</p>
+      <table>
+        <thead><tr><th>Opción</th><th>Header generado</th><th>Efecto</th></tr></thead>
+        <tbody>
+          <tr><td>Desactivado</td><td>—</td><td>No se añade el header.</td></tr>
+          <tr><td>1 año</td><td><code>max-age=31536000</code></td><td>El navegador recuerda usar HTTPS durante 1 año.</td></tr>
+          <tr><td>1 año + includeSubDomains <em>(recomendado)</em></td><td><code>max-age=31536000; includeSubDomains</code></td><td>Aplica también a todos los subdominios.</td></tr>
+          <tr><td>1 año + includeSubDomains + preload</td><td><code>max-age=31536000; includeSubDomains; preload</code></td><td>Permite incluir el dominio en la lista HSTS preload de los navegadores. Solo usar si tienes TLS en <em>todos</em> los subdominios.</td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        <strong>Orden recomendado:</strong> activar TLS → Forzar HTTPS → luego HSTS. Activar HSTS sin TLS activo o sin Forzar HTTPS puede dejar el sitio inaccesible desde navegadores que ya memorizaron el header.
+      </div>
+    </div>
+
+    {# ── 14. Protección contra bots ──────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-bots">
+      <h2><i class="bi bi-robot" style="color:var(--accent)"></i>14 · Protección contra bots</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Protección contra bots</strong>. Añade una capa de desafío matemático (tipo CAPTCHA ligero, sin servicio externo) para filtrar bots simples antes de que lleguen al upstream.</p>
+
+      <h3>Cómo funciona</h3>
+      <ol style="font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>Un visitante nuevo llega al sitio sin la cookie <code>wn_bot</code>.</li>
+        <li>Nginx redirige la petición a <code>/_wn_challenge/</code> — una página HTML+JavaScript embebida en el proxy que presenta un desafío matemático simple.</li>
+        <li>El navegador (o el bot) debe resolver el desafío y enviar la respuesta. Un bot sin motor JS habitualmente falla.</li>
+        <li>Al resolver correctamente, el proxy establece la cookie <code>wn_bot=ward_cleared_v1</code> con duración de <strong>1 hora</strong>.</li>
+        <li>Las peticiones posteriores con esa cookie pasan directamente al upstream sin volver a ver el desafío.</li>
+      </ol>
+      <div class="doc-note">
+        <strong>Cuándo activarlo:</strong> sitios con tráfico mayoritariamente humano que estén sufriendo scraping, ataques de credential stuffing o DoS de bots simples. No es una solución robusta contra bots con motor JavaScript. Para bots sofisticados considera complementarlo con las reglas CRS de detección de escáneres (<code>scanner</code>) y el módulo CrowdSec (WardNode CS).
+      </div>
+      <p>Puedes ver cómo se verá el desafío usando el enlace <strong>"Ver desafío"</strong> disponible en la tarjeta de Protección contra bots.</p>
+    </div>
+
+    {# ── 15. Bloqueo por país (GeoIP) ────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-geo">
+      <h2><i class="bi bi-globe-americas" style="color:var(--accent)"></i>15 · Bloqueo por país (GeoIP)</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Bloqueo por país (GeoIP)</strong>. Bloquea el tráfico originado en un país a nivel Nginx, antes de que llegue al WAF o al upstream. Cada entrada es <strong>por sitio</strong> — bloquear un país en un sitio no afecta a los demás.</p>
+
+      <h3>Qué genera</h3>
+      <p>Al añadir un país, se escribe un archivo de mapa (<code>generated/nginx/10-blocklist-site-{id}.map</code>) y el bloque del sitio incluye:</p>
+<pre>if ($geo_blocked_site_1) {
+    return 444;   # Cierra la conexión TCP sin respuesta HTTP
+}</pre>
+      <p>El código <code>444</code> es una extensión de Nginx que cierra la conexión silenciosamente — el cliente no recibe ninguna respuesta HTTP, ni siquiera un error.</p>
+
+      <h3>Requisito: base de datos GeoIP MaxMind</h3>
+      <div class="doc-note">
+        El bloqueo geográfico requiere la base de datos <strong>GeoLite2-Country</strong> de MaxMind, que no se incluye en WardNode. Para activarla: ve a <a href="{{ url_for('proxy.settings') }}">Ajustes → GeoIP — MaxMind</a>, introduce tus credenciales (cuenta MaxMind gratuita) y descarga la base. Mientras no esté disponible, la variable <code>$geo_blocked_site_N</code> vale siempre <code>0</code> y no se bloquea nada.
+      </div>
+
+      <h3>Diferencia con el rate limiting</h3>
+      <p>El bloqueo por país es <strong>binario</strong> (bloquea todo el tráfico de ese país para ese sitio); el rate limiting controla la <strong>frecuencia</strong> de peticiones. Se pueden usar juntos: bloquear países de alto riesgo y aplicar rate limit al resto.</p>
+    </div>
+
+    {# ── 16. Nginx extra ─────────────────────────────────────────────── #}
+    <div class="card-panel mb-4" style="padding:20px" id="waf-nginx-extra">
+      <h2><i class="bi bi-braces" style="color:var(--accent)"></i>16 · Nginx extra</h2>
+      <p>Acceso: <strong>Proxy &amp; WAF → [sitio] → Nginx extra</strong>. Permite inyectar directivas Nginx personalizadas y validadas dentro del bloque <code>server {}</code> o dentro del <code>location / {}</code> del sitio. Es una vía de escape para casos que no cubren los controles de la UI.</p>
+
+      <h3>Dos bloques disponibles</h3>
+      <table>
+        <thead><tr><th>Bloque</th><th>Dónde se inserta</th><th>Uso típico</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Directivas en server</strong></td>
+            <td>Dentro del bloque <code>server {}</code>, fuera del <code>location /</code></td>
+            <td><code>client_max_body_size 20m;</code>, <code>keepalive_timeout 30;</code>, directivas SSL adicionales.</td>
+          </tr>
+          <tr>
+            <td><strong>Directivas en location /</strong></td>
+            <td>Dentro del bloque <code>location / {}</code></td>
+            <td><code>proxy_buffering off;</code>, <code>proxy_read_timeout 120s;</code>, override de headers de proxy.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Ejemplo: corregir el header Host hacia una aplicación interna</h3>
+      <p>Si la aplicación LAN valida que el header <code>Host</code> coincida con su nombre interno (ver sección 4.5), añade en el bloque "Directivas en location /":</p>
+<pre>proxy_set_header Host servidor-interno.lan;</pre>
+
+      <h3>Validación y directivas prohibidas</h3>
+      <p>Cada snippet pasa por un validador antes de guardarse:</p>
+      <table>
+        <thead><tr><th>Restricción</th><th>Motivo</th></tr></thead>
+        <tbody>
+          <tr><td>Sin bloques anidados (<code>{</code> <code>}</code>)</td><td>Solo directivas planas; la estructura del <code>server{}</code> la gestiona WardNode.</td></tr>
+          <tr><td>Cada línea debe terminar en <code>;</code></td><td>Directivas Nginx mal terminadas invalidan la config completa.</td></tr>
+          <tr><td>Máx. 8.000 caracteres por bloque</td><td>Límite de tamaño.</td></tr>
+          <tr><td>Directivas prohibidas: <code>proxy_pass</code>, <code>return</code>, <code>rewrite</code>, <code>add_header</code>, <code>include</code>, <code>root</code>, <code>alias</code>, <code>ssl_certificate_key</code>, entre otras</td><td>Evitar SSRF, redirecciones no controladas, inyección de certificados y exfiltración.</td></tr>
+        </tbody>
+      </table>
+      <div class="doc-note">
+        Si el binario <code>nginx</code> está disponible en el entorno, WardNode valida el snippet con <code>nginx -t</code> sobre una config temporal antes de guardarlo. En producción (dentro de Docker) esta validación adicional puede no estar disponible — comprueba siempre los logs del proxy tras guardar cambios en Nginx extra.
+      </div>
     </div>
 
   </div>{# col-lg-9 #}

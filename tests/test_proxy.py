@@ -1914,3 +1914,77 @@ def test_waf_exclusion_duplicate_rejected(client, login_as, app, tmp_path):
 
     with app.app_context():
         assert WafRuleExclusion.query.count() == 1
+
+
+def test_security_headers_dedup_with_allowlist(app, tmp_path):
+    """Las cabeceras de la allowlist generan proxy_hide_header; las custom no."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+        from app.models import SecurityHeader
+
+        site = Site(
+            name="Dedup",
+            domain="dedup.local",
+            upstream_url="http://dedup:9000",
+            waf_enabled=True,
+        )
+        db.session.add(site)
+        db.session.commit()
+
+        # Cabecera custom fuera de la allowlist
+        custom_h = SecurityHeader(
+            site=site,
+            name="X-Mi-Header-Custom",
+            value="test",
+            enabled=True,
+            always=True,
+            position=99,
+            is_default=False,
+        )
+        db.session.add(custom_h)
+        db.session.commit()
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+
+    # Las cabeceras de la allowlist deben tener proxy_hide_header (dedup)
+    assert "proxy_hide_header X-Frame-Options;" in content
+    assert "proxy_hide_header X-Content-Type-Options;" in content
+    assert "proxy_hide_header Referrer-Policy;" in content
+    assert "proxy_hide_header Permissions-Policy;" in content
+
+    # Las cabeceras custom (fuera de la allowlist) solo add_header, nunca proxy_hide_header
+    assert 'add_header X-Mi-Header-Custom "test" always;' in content
+    assert "proxy_hide_header X-Mi-Header-Custom;" not in content
+
+
+def test_editing_default_header_marks_is_default_false(client, login_as):
+    """Editar un header default desde la UI pone is_default=False (la UI manda)."""
+    login_as(ROLE_OPERATOR)
+    client.post(
+        "/proxy/sites",
+        data={"name": "Demo", "domain": "demo.local", "upstream_url": "http://demo:8080"},
+        follow_redirects=True,
+    )
+
+    header = SecurityHeader.query.filter_by(name="X-Frame-Options").first()
+    assert header.is_default is True  # valor semilla
+
+    client.post(
+        "/proxy/sites/1/security-headers",
+        data={
+            "header_ids": [str(header.id)],
+            f"header_name_{header.id}": "X-Frame-Options",
+            f"header_value_{header.id}": "SAMEORIGIN",
+            "enabled_header_ids": [str(header.id)],
+            "always_header_ids": [str(header.id)],
+        },
+        follow_redirects=True,
+    )
+
+    updated = SecurityHeader.query.get(header.id)
+    assert updated.value == "SAMEORIGIN"
+    assert updated.is_default is False  # la UI marcó como editado por operador
