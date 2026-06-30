@@ -362,11 +362,11 @@ fi
 # ── 5. Construir imágenes Docker propias ──────────────────────────────────────
 step "5/6 · Construyendo imágenes Docker"
 echo ""
-info "Construyendo: wardnode-console, wardnode-proxy, wardnode-crowdsec-bouncer."
-info "El proxy compila ngx_http_geoip2_module desde fuente — puede tardar ~5 min."
+info "Delegando en scripts/build-prod.sh: construye las 3 imágenes con --pull"
+info "y exporta tarballs a dist/. El proxy compila ngx_http_geoip2_module — ~5 min."
 echo ""
 
-docker compose -f docker-compose.prod.yml build
+bash "${PROJECT_DIR}/scripts/build-prod.sh"
 
 ok "Imágenes construidas correctamente."
 
