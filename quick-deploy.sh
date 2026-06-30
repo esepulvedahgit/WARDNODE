@@ -44,6 +44,7 @@ REPO_URL="https://github.com/esepulvedahgit/WARDNODE.git"
 BRANCH="main"
 CLONE_DIR="/opt/wardnode"
 ENV_FILE=".env.prod"
+SELF_URL="https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh"
 
 # ── 0. Verificar root ─────────────────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
@@ -57,6 +58,21 @@ if [[ $EUID -ne 0 ]]; then
   err "    sudo bash quick-deploy.sh"
   err "    curl -fsSL <url> | sudo bash"
   exit 1
+fi
+
+# ── Auto-bootstrap: `curl | bash` conecta el pipe como stdin del script,
+# lo que deja sin terminal a los `read` interactivos del paso 3.
+# Si detectamos esa situación y /dev/tty está disponible, nos re-descargamos
+# a disco y re-ejecutamos con la terminal real como stdin.
+# Centinela WARDNODE_BOOTSTRAPPED evita el bucle; en la 2.ª pasada stdin ya
+# es la tty, así que la condición `-t 0` es verdadera y el bloque no aplica.
+if [[ ! -t 0 && -z "${WARDNODE_BOOTSTRAPPED:-}" && -r /dev/tty ]]; then
+  _self="$(mktemp /tmp/wardnode-deploy.XXXXXX.sh)"
+  if curl -fsSL "$SELF_URL" -o "$_self" 2>/dev/null && [[ -s "$_self" ]]; then
+    export WARDNODE_BOOTSTRAPPED=1
+    exec bash "$_self" "$@" < /dev/tty
+  fi
+  rm -f "$_self"
 fi
 
 # ── Banner ────────────────────────────────────────────────────────────────────
