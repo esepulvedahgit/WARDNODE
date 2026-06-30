@@ -124,33 +124,37 @@ def create_app(config_object: type[Config] | None = None) -> Flask:
 
         from psycopg import sql as psql
 
-        raw = db.engine.raw_connection()
-        exists = raw.execute(
-            "SELECT 1 FROM pg_roles WHERE rolname = %s", (gf_user,)
-        ).fetchone()
-        if not exists:
-            raw.execute(
-                psql.SQL("CREATE ROLE {u} LOGIN PASSWORD {p}").format(
-                    u=psql.Identifier(gf_user), p=psql.Literal(gf_pass)
+        try:
+            raw = db.engine.raw_connection()
+            exists = raw.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", (gf_user,)
+            ).fetchone()
+            if not exists:
+                raw.execute(
+                    psql.SQL("CREATE ROLE {u} LOGIN PASSWORD {p}").format(
+                        u=psql.Identifier(gf_user), p=psql.Literal(gf_pass)
+                    )
                 )
-            )
-            print(f"Rol '{gf_user}' creado.")
-        else:
-            raw.execute(
-                psql.SQL("ALTER ROLE {u} WITH PASSWORD {p}").format(
-                    u=psql.Identifier(gf_user), p=psql.Literal(gf_pass)
+                print(f"Rol '{gf_user}' creado.")
+            else:
+                raw.execute(
+                    psql.SQL("ALTER ROLE {u} WITH PASSWORD {p}").format(
+                        u=psql.Identifier(gf_user), p=psql.Literal(gf_pass)
+                    )
                 )
-            )
-            print(f"Rol '{gf_user}' ya existía — contraseña sincronizada.")
-        db_name = db.engine.url.database
-        user_ident = gf_user.replace('"', '""')
-        db_ident = db_name.replace('"', '""')
-        raw.execute(f'GRANT CONNECT ON DATABASE "{db_ident}" TO "{user_ident}"')
-        raw.execute(f'GRANT USAGE ON SCHEMA public TO "{user_ident}"')
-        raw.execute(f'GRANT SELECT ON attack_event, soc_incident TO "{user_ident}"')
-        raw.commit()
-        raw.close()
-        print(f"Rol read-only '{gf_user}' provisionado correctamente (SELECT en attack_event, soc_incident).")
+                print(f"Rol '{gf_user}' ya existía — contraseña sincronizada.")
+            db_name = db.engine.url.database
+            user_ident = gf_user.replace('"', '""')
+            db_ident = db_name.replace('"', '""')
+            raw.execute(f'GRANT CONNECT ON DATABASE "{db_ident}" TO "{user_ident}"')
+            raw.execute(f'GRANT USAGE ON SCHEMA public TO "{user_ident}"')
+            raw.execute(f'GRANT SELECT ON attack_event, soc_incident TO "{user_ident}"')
+            raw.commit()
+            raw.close()
+            print(f"Rol read-only '{gf_user}' provisionado correctamente (SELECT en attack_event, soc_incident).")
+        except Exception as exc:
+            print(f"Advertencia: grafana-provision-ro no completó: {exc}. "
+                  "El módulo OBS puede no tener acceso a la DB hasta que se corrija.")
 
     @app.cli.command("ensure-geoip")
     def ensure_geoip_command():
