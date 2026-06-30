@@ -164,6 +164,25 @@ detect_public_ip() {
 DOMAIN="${WARDNODE_DOMAIN:-}"
 PUBLIC_IP="${WARDNODE_IP:-}"
 
+# En redeploy, extraer dominio e IP del .env.prod existente para no preguntar.
+if [[ -f "$ENV_FILE" ]]; then
+  if [[ -z "$DOMAIN" ]]; then
+    _existing_url="$(grep -E '^PUBLIC_BASE_URL=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"' ')"
+    if [[ "$_existing_url" =~ ^https?://([^/:]+) ]]; then
+      DOMAIN="${BASH_REMATCH[1]}"
+      info "Dominio detectado de ${ENV_FILE}: ${BOLD}${DOMAIN}${RESET}"
+    fi
+  fi
+  if [[ -z "$PUBLIC_IP" ]]; then
+    _existing_trusted="$(grep -E '^TRUSTED_HOSTS=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"' ')"
+    _candidate="$(echo "$_existing_trusted" | tr ',' '\n' | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)"
+    if [[ -n "$_candidate" ]]; then
+      PUBLIC_IP="$_candidate"
+      info "IP detectada de ${ENV_FILE}: ${BOLD}${PUBLIC_IP}${RESET}"
+    fi
+  fi
+fi
+
 # Si stdin viene de una tubería (curl | bash), reconectar al terminal real
 # para que los prompts interactivos funcionen.
 if [[ -z "$DOMAIN" || -z "$PUBLIC_IP" ]]; then
