@@ -43,6 +43,7 @@ hr()     { echo -e "${CYAN}─────────────────�
 REPO_URL="https://github.com/esepulvedahgit/WARDNODE.git"
 BRANCH="main"
 CLONE_DIR="/opt/wardnode"
+ENV_FILE=".env.prod"
 
 # ── 0. Verificar root ─────────────────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
@@ -287,8 +288,6 @@ set_env() {
     echo "${key}=${val}" >> .env.prod
   fi
 }
-
-ENV_FILE=".env.prod"
 
 # ── ¿Ya existe .env.prod? ─────────────────────────────────────────────────
 ENV_EXISTED=false

@@ -48,9 +48,7 @@ services:
         cp /app/observability/loki.yaml /tmp/obs/loki/config.yaml &&
         cp /app/observability/prometheus.yml /tmp/obs/prometheus/prometheus.yml &&
         cp -r /app/observability/grafana/provisioning/. /tmp/obs/grafana_provisioning/ &&
-        flask db-setup &&
-        (flask ensure-geoip || echo "Advertencia: ensure-geoip no crítico, continuando...") &&
-        (flask grafana-provision-ro || echo "Advertencia: grafana-provision-ro no crítico, continuando...") &&
+        flask db-setup && flask ensure-geoip && flask grafana-provision-ro &&
         gunicorn -c gunicorn.conf.py wsgi:app
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/status')"]

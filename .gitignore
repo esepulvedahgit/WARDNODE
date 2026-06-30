@@ -19,9 +19,7 @@ env/
 
 ## Flask / SQLAlchemy
 instance/
-# migrations/ debe rastrearse: contiene env.py y el scaffolding de Alembic
-# necesario para que flask db-setup funcione dentro de la imagen Docker.
-# __pycache__/ queda excluido por la regla global de arriba.
+migrations/
 
 ## Variables de entorno (nunca commitear secretos)
 .env
