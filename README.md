@@ -21,6 +21,20 @@ Cuatro módulos opcionales extienden la consola con capacidades de gestión del 
 
 ---
 
+## ⚡ Deploy de un click
+
+Despliega WardNode en cualquier VPS Ubuntu 22.04/24.04 o Debian con **un solo comando** (requiere `root` o `sudo`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo bash
+```
+
+El script instala Docker si no está presente, clona el repositorio en `/opt/wardnode`, genera todos los secretos seguros de forma automática y levanta el stack completo de producción. Al terminar te indica la URL para crear el primer administrador.
+
+> Ver la sección [**Producción / VPS — Deploy de un click**](#producción--vps--deploy-de-un-click) para el detalle completo de los pasos post-instalación (DNS, TLS, cookie segura).
+
+---
+
 ## 🚀 Tecnologías
 
 ### Backend
@@ -407,8 +421,18 @@ docker compose --profile obs up --build
 
 La forma más rápida: **un solo comando** en la VPS limpia (Ubuntu 22.04/24.04 o Debian).
 
+**Método recomendado** — el script se descarga primero y luego se ejecuta; esto evita problemas con `curl | bash` cuando `/dev/tty` no está disponible en la sesión SSH:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh -o /tmp/wardnode-deploy.sh
+sudo bash /tmp/wardnode-deploy.sh
+```
+
+**Alternativa: one-liner con variables de entorno** (útil para automatización o si el método anterior cuelga en paso 3):
+
+```bash
+WARDNODE_DOMAIN=panel.tudominio.com WARDNODE_IP=1.2.3.4 \
+  curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo -E bash
 ```
 
 O si ya tienes el repo descargado:

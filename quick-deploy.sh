@@ -145,10 +145,6 @@ cd "$PROJECT_DIR"
 # ── 3. Datos interactivos del operador ────────────────────────────────────────
 step "3/6 · Configurando entorno"
 
-# Si stdin viene de una tubería (curl | bash), redirigirlo al terminal
-# para que read pueda capturar la entrada del operador.
-[[ -t 0 ]] || exec < /dev/tty
-
 # Detectar IP pública
 detect_public_ip() {
   local ip=""
@@ -163,33 +159,69 @@ detect_public_ip() {
   hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1"
 }
 
-# ── Pedir dominio ──────────────────────────────────────────────────────────
-echo ""
-info "Escribe el dominio que apuntará a esta VPS (ej: panel.miempresa.com)."
-info "Si aún no tienes DNS configurado puedes usar un valor provisional; lo"
-info "puedes cambiar editando TRUSTED_HOSTS y PUBLIC_BASE_URL en .env.prod."
-echo ""
+# Modo no-interactivo: si las variables ya vienen del entorno, saltar prompts.
+# Uso: WARDNODE_DOMAIN=panel.ejemplo.com WARDNODE_IP=1.2.3.4 bash quick-deploy.sh
+DOMAIN="${WARDNODE_DOMAIN:-}"
+PUBLIC_IP="${WARDNODE_IP:-}"
 
-DOMAIN=""
-while true; do
-  read -rp "  → Dominio: " DOMAIN
-  DOMAIN="${DOMAIN// /}"
-  # Validación básica de dominio (host.tld o sub.host.tld)
-  if [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
-    break
+# Si stdin viene de una tubería (curl | bash), reconectar al terminal real
+# para que los prompts interactivos funcionen.
+if [[ -z "$DOMAIN" || -z "$PUBLIC_IP" ]]; then
+  if ! [[ -t 0 ]]; then
+    if ! exec < /dev/tty 2>/dev/null; then
+      err ""
+      err "stdin no es un terminal y /dev/tty no está disponible."
+      err "Pasa el dominio y la IP como variables de entorno:"
+      err ""
+      err "  WARDNODE_DOMAIN=panel.ejemplo.com WARDNODE_IP=1.2.3.4 \\"
+      err "    curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo -E bash"
+      err ""
+      err "O descarga el script y ejecútalo directamente:"
+      err "  curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh -o /tmp/wardnode-deploy.sh"
+      err "  sudo bash /tmp/wardnode-deploy.sh"
+      exit 1
+    fi
   fi
-  warn "  Dominio inválido. Formato esperado: sub.dominio.com"
-done
+fi
 
-# ── Detectar IP pública ────────────────────────────────────────────────────
-echo ""
-info "Detectando IP pública de esta VPS..."
-DETECTED_IP="$(detect_public_ip)"
-echo ""
-echo -e "  IP detectada: ${BOLD}${DETECTED_IP}${RESET}"
-read -rp "  → ¿Es correcta? [Enter para confirmar / escribe otra IP]: " USER_IP
-PUBLIC_IP="${USER_IP:-$DETECTED_IP}"
-PUBLIC_IP="${PUBLIC_IP// /}"
+# ── Pedir dominio (si no viene en variable de entorno) ────────────────────
+if [[ -z "$DOMAIN" ]]; then
+  echo ""
+  info "Escribe el dominio que apuntará a esta VPS (ej: panel.miempresa.com)."
+  info "Si aún no tienes DNS configurado puedes usar un valor provisional; lo"
+  info "puedes cambiar editando TRUSTED_HOSTS y PUBLIC_BASE_URL en .env.prod."
+  echo ""
+
+  while true; do
+    read -rp "  → Dominio: " DOMAIN
+    DOMAIN="${DOMAIN// /}"
+    if [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
+      break
+    fi
+    warn "  Dominio inválido. Formato esperado: sub.dominio.com"
+  done
+else
+  if ! [[ "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
+    err "WARDNODE_DOMAIN='${DOMAIN}' no tiene formato válido (ej: panel.ejemplo.com)."
+    exit 1
+  fi
+  info "Dominio (variable de entorno): ${DOMAIN}"
+fi
+
+# ── Detectar / confirmar IP pública ──────────────────────────────────────
+if [[ -z "$PUBLIC_IP" ]]; then
+  echo ""
+  info "Detectando IP pública de esta VPS..."
+  DETECTED_IP="$(detect_public_ip)"
+  echo ""
+  echo -e "  IP detectada: ${BOLD}${DETECTED_IP}${RESET}"
+  read -rp "  → ¿Es correcta? [Enter para confirmar / escribe otra IP]: " USER_IP
+  PUBLIC_IP="${USER_IP:-$DETECTED_IP}"
+  PUBLIC_IP="${PUBLIC_IP// /}"
+else
+  DETECTED_IP="$PUBLIC_IP"
+  info "IP (variable de entorno): ${PUBLIC_IP}"
+fi
 
 if ! [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   warn "Formato de IP no estándar: '${PUBLIC_IP}'. Continuando de todas formas."
