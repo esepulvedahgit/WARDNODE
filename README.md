@@ -232,9 +232,13 @@ wardnode/
 ├── docs/                           # architecture.md, deployment.md, security-baseline.md
 │                                   # frontend-guidelines.md, testing-strategy.md, adr/
 ├── docker-compose.yml              # Stack de desarrollo
+├── docker-compose.prod.yml         # Build de imágenes propias (console, proxy, bouncer)
 ├── docker-compose.vps.yml          # Stack de producción (VPS, incluye Redis)
+├── quick-deploy.sh                 # Deploy de un click: instala Docker, clona, genera secretos, levanta
+├── deploy-vps.sh                   # Deploy avanzado: valida env, precarga imágenes, up -d
 ├── Dockerfile                      # Imagen de la consola Flask
-├── .env.example                    # Variables de entorno de referencia
+├── .env.example                    # Variables de entorno para desarrollo
+├── .env.prod.example               # Variables de entorno para producción (plantilla)
 ├── CHANGELOG.md
 └── SECURITY.md
 ```
@@ -399,23 +403,68 @@ docker compose --profile obs up --build
 - Proxy WAF: `http://localhost` / `https://localhost`
 - Grafana (perfil obs): `http://localhost:3000`
 
-### Producción / VPS
+### Producción / VPS — Deploy de un click
+
+La forma más rápida: **un solo comando** en la VPS limpia (Ubuntu 22.04/24.04 o Debian).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo bash
+```
+
+O si ya tienes el repo descargado:
+
+```bash
+sudo bash quick-deploy.sh
+```
+
+**Qué hace el script automáticamente:**
+1. Instala Docker + Compose v2 si no están presentes (vía `get.docker.com`).
+2. Clona el repositorio en `/opt/wardnode` (o actualiza si ya existe).
+3. Pide el dominio que usarás y detecta la IP pública de la VPS.
+4. Genera todos los secretos seguros (`SECRET_KEY`, `WARDNODE_SECRET_KEY`, contraseñas de BD, Redis y Grafana) en `.env.prod`.
+5. Agrega la IP de la VPS a `TRUSTED_HOSTS` para que puedas entrar a la consola por `http://IP:5000/auth/setup` antes de configurar el DNS.
+6. Construye las imágenes Docker propias desde el código fuente.
+7. Levanta el stack completo de producción.
+
+**Una vez desplegado**, sigue estos pasos desde la URL que muestra el script:
+
+| Paso | Acción |
+|------|--------|
+| 1 | `http://<IP>:5000/auth/setup` → crear el primer administrador |
+| 2 | Apuntar el DNS de tu dominio a `<IP>` en tu proveedor |
+| 3 | Emitir el certificado TLS (ver sección **Let's Encrypt** abajo) |
+| 4 | Cuando el dominio cargue por HTTPS, editar `.env.prod` → `SESSION_COOKIE_SECURE=true` y `docker compose -f docker-compose.vps.yml restart console` |
+
+Los módulos **WF (UFW)** y **CrowdSec** se instalan desde el panel `/modules/` vía SSH con la llave del admin — no requieren acción en este punto.
+
+> **`WARDNODE_SECRET_KEY`** cifra todos los secretos almacenados en BD (SMTP, MaxMind, claves LLM, TOTP). Los backups **nunca** la incluyen. Guárdala fuera del servidor; sin ella los secretos cifrados son irrecuperables.
+
+---
+
+### Producción / VPS — Deploy manual (método avanzado)
+
+Si prefieres controlar cada paso:
 
 ```bash
 # 1. Clonar y preparar variables de entorno
-cp .env.prod.example .env
+git clone https://github.com/esepulvedahgit/WARDNODE.git /opt/wardnode
+cd /opt/wardnode
+cp .env.prod.example .env.prod     # Editar secretos, dominio y contraseñas
 
-# 2. Construir e iniciar el stack (incluye Redis)
-docker compose -f docker-compose.vps.yml up -d --build
+# 2. Construir las imágenes propias
+docker compose -f docker-compose.prod.yml build
 
-# 3. (Opcional) Activar observabilidad
-docker compose -f docker-compose.vps.yml --profile obs up -d
-
-# 4. Instalar el agente de host (requiere root en el VPS)
-sudo bash host-agent/install.sh
+# 3. Desplegar el stack base (precarga imágenes de terceros y levanta contenedores)
+bash deploy-vps.sh
 ```
 
-Los comandos CLI se ejecutan en el entrypoint del contenedor (producción) o manualmente:
+`deploy-vps.sh` verifica que todas las variables obligatorias estén definidas antes de arrancar, crea el symlink `.env → .env.prod` para comandos manuales, y levanta: **console, docker-proxy, proxy, db, redis, alloy, loki, prometheus, nginx-exporter**.
+
+Los módulos OBS (Grafana, perfil `obs`) y DDoS (CrowdSec, perfil `ddos`) se activan desde el panel de módulos, no en este paso.
+
+> **Nota sobre `TRUSTED_HOSTS`**: para acceder a la consola por `http://IP:5000/auth/setup` antes de que el DNS resuelva, agrega la IP de la VPS a esta variable: `TRUSTED_HOSTS=tu-dominio.com,IP,IP:5000`. Flask 3.1+ rechaza peticiones cuyo header `Host` no esté en esta lista.
+
+Los comandos CLI se ejecutan automáticamente en el entrypoint del contenedor en producción (`flask db-setup`, `flask ensure-geoip`, `flask grafana-provision-ro`). También disponibles manualmente:
 
 | Comando | Descripción |
 |---|---|
