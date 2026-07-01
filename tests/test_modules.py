@@ -478,9 +478,21 @@ def test_ddos_docs_renders(client, login_as):
         assert f'href="#{anchor}"' in body
 
 
-def test_ddos_docs_denied_operator(client, login_as):
+def test_ddos_docs_accessible_operator(client, login_as):
     login_as(role=ROLE_OPERATOR)
     r = client.get("/modules/ddos/docs")
+    assert r.status_code == 200
+
+
+def test_ddos_index_operator_not_forbidden(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.get("/modules/ddos/")
+    assert r.status_code != 403  # rol pasa; el módulo puede redirigir si no está activo
+
+
+def test_ddos_activate_denied_operator(client, login_as):
+    login_as(role=ROLE_OPERATOR)
+    r = client.post("/modules/ddos/activate")
     assert r.status_code in (302, 403)
 
 
