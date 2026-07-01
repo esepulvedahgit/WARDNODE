@@ -1218,7 +1218,7 @@ def _ddos_client():
 
 
 @bp.get("/ddos/")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def ddos_index():
     if (r := _ddos_required()):
         return r
@@ -1227,7 +1227,7 @@ def ddos_index():
 
 
 @bp.get("/ddos/status")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def ddos_status():
     if AppConfig.get("module_ddos_enabled") != "1":
         return jsonify({"ok": False, "error": "Módulo DDoS no habilitado"}), 403
@@ -1639,7 +1639,7 @@ def _parse_go_duration(s):
 
 
 @bp.post("/ddos/decisions")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("30 per minute")
 def ddos_decisions():
     if AppConfig.get("module_ddos_enabled") != "1":
@@ -1677,7 +1677,7 @@ def ddos_decisions():
 
 
 @bp.post("/ddos/ban")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("10 per minute")
 def ddos_ban():
     if AppConfig.get("module_ddos_enabled") != "1":
@@ -1714,7 +1714,7 @@ def ddos_ban():
 
 
 @bp.post("/ddos/unban")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 @limiter.limit("10 per minute")
 def ddos_unban():
     if AppConfig.get("module_ddos_enabled") != "1":
@@ -1775,7 +1775,7 @@ def obs_docs():
 
 
 @bp.get("/ddos/docs")
-@roles_required(ROLE_ADMIN)
+@roles_required(ROLE_ADMIN, ROLE_OPERATOR)
 def ddos_docs():
     """Documentación oficial del módulo WardNode CrowdSec (DDoS/brute-force)."""
     return render_template("modules/ddos_docs.html")

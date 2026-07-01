@@ -74,7 +74,7 @@
           <i class="bi bi-robot"></i><span>SOC · Incidentes</span>
         </a>
         {% endif %}
-        {% if module_ddos_enabled and current_user.has_role('admin') %}
+        {% if module_ddos_enabled and current_user.has_role('admin', 'operator') %}
         <a class="nav-link-item {% if request.endpoint and 'ddos' in request.endpoint %}active{% endif %}"
            href="{{ url_for('modules.ddos_index') }}"
            style="padding-left:2rem">
