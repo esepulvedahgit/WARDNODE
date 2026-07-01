@@ -512,6 +512,25 @@ Los comandos CLI se ejecutan automáticamente en el entrypoint del contenedor en
 | `flask backup-restore <zip>` | Restaura desde un zip (interactivo; `--yes` para omitir confirmación) |
 | `flask backup-prune [--keep N]` | Elimina backups más antiguos, retiene N (default: config) |
 
+#### Actualizar producción con nuevos cambios
+
+Cuando publicas cambios en `main` (o `dev`) y el VPS tiene el repositorio clonado en `/opt/wardnode`:
+
+```bash
+# 1. Bajar los últimos cambios (en el VPS)
+cd /opt/wardnode
+git fetch origin
+git reset --hard origin/main   # o origin/dev si trabajas desde esa rama
+
+# 2. Reconstruir la imagen del console con el código actualizado
+docker compose -f docker-compose.prod.yml build console
+
+# 3. Recrear solo el contenedor console (sin tocar proxy, db ni otros servicios)
+docker compose -f docker-compose.vps.yml up -d --no-deps console
+```
+
+> `docker-compose.vps.yml` usa imágenes pre-construidas (`wardnode-console:prod`). El paso 2 genera esa imagen a partir del Dockerfile local; el paso 3 la activa.
+
 #### TLS / Let's Encrypt
 
 El aprovisionamiento de certificados se gestiona desde la interfaz web de la consola. Al primer inicio de sesión aparecen las instrucciones para emitir o cargar un certificado por sitio protegido.
