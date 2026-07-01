@@ -34,7 +34,16 @@ class Config:
     # Hosts permitidos en el header Host — rechaza requests con Host no listado (Flask 3.1+).
     # Ej: TRUSTED_HOSTS=wardnode.midominio.com
     _th = os.getenv("TRUSTED_HOSTS", "").strip()
-    TRUSTED_HOSTS: list[str] | None = [h.strip() for h in _th.split(",") if h.strip()] or None
+    _th_list = [h.strip() for h in _th.split(",") if h.strip()]
+    # El loopback se añade siempre que haya restricción: el healthcheck del contenedor
+    # (Host: localhost:5000) y las llamadas internas (WN_CONSOLE_URL, WF_SSH_HOST)
+    # usan localhost/127.0.0.1. Sin esto Flask 3.1+ los rechaza con 400 y el console
+    # nunca pasa a healthy.
+    if _th_list:
+        for _lo in ("localhost", "127.0.0.1"):
+            if _lo not in _th_list:
+                _th_list.append(_lo)
+    TRUSTED_HOSTS: list[str] | None = _th_list or None
 
 
 class ProductionConfig(Config):
