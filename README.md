@@ -23,6 +23,12 @@
 
 Cuatro módulos opcionales extienden la consola con capacidades de gestión del host: **WardNode WF** (firewall UFW), **WardNode OBS** (observabilidad Grafana/Loki/Prometheus), **WardNode SOC** (correlación de incidentes, análisis LLM y scoring ML) y **WardNode CrowdSec** (IDS/IPS). Cada pantalla de la consola incluye una página de **ayuda embebida** accesible desde el botón "Documentación".
 
+<p align="center">
+  <a href="https://ko-fi.com/esepulvedah">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi">
+  </a>
+</p>
+
 ---
 
 ## ⚡ Deploy de un click
