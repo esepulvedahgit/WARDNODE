@@ -425,24 +425,23 @@ docker compose --profile obs up --build
 
 La forma más rápida: **un solo comando** en la VPS limpia (Ubuntu 22.04/24.04 o Debian).
 
-**Método recomendado** — el script se descarga primero y luego se ejecuta; esto evita problemas con `curl | bash` cuando `/dev/tty` no está disponible en la sesión SSH:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh -o /tmp/wardnode-deploy.sh
-sudo bash /tmp/wardnode-deploy.sh
+curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo bash
 ```
 
-**Alternativa: one-liner con variables de entorno** (útil para automatización o si el método anterior cuelga en paso 3):
+El script detecta automáticamente que corre desde un pipe, se re-descarga a un temporal y se re-ejecuta con la terminal real — los prompts interactivos funcionan sin ninguna acción extra.
+
+**Alternativa con variables de entorno** (útil para automatización/CI, sin prompts interactivos):
 
 ```bash
 WARDNODE_DOMAIN=panel.tudominio.com WARDNODE_IP=1.2.3.4 \
   curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/WARDNODE/main/quick-deploy.sh | sudo -E bash
 ```
 
-O si ya tienes el repo descargado:
+O si ya tienes el repo descargado en la VPS:
 
 ```bash
-sudo bash quick-deploy.sh
+sudo bash /opt/wardnode/quick-deploy.sh
 ```
 
 **Qué hace el script automáticamente:**
@@ -460,7 +459,7 @@ sudo bash quick-deploy.sh
 |------|--------|
 | 1 | `http://<IP>:5000/auth/setup` → crear el primer administrador |
 | 2 | Apuntar el DNS de tu dominio a `<IP>` en tu proveedor |
-| 3 | Emitir el certificado TLS (ver sección **Let's Encrypt** abajo) |
+| 3 | Configurar TLS desde la interfaz web (instrucciones en el primer inicio de sesión) |
 | 4 | Cuando el dominio cargue por HTTPS, editar `.env.prod` → `SESSION_COOKIE_SECURE=true` y `docker compose -f docker-compose.vps.yml restart console` |
 
 Los módulos **WF (UFW)** y **CrowdSec** se instalan desde el panel `/modules/` vía SSH con la llave del admin — no requieren acción en este punto.
@@ -480,7 +479,7 @@ cd /opt/wardnode
 cp .env.prod.example .env.prod     # Editar secretos, dominio y contraseñas
 
 # 2. Construir las imágenes propias
-docker compose -f docker-compose.prod.yml build
+bash scripts/build-prod.sh
 
 # 3. Desplegar el stack base (precarga imágenes de terceros y levanta contenedores)
 bash deploy-vps.sh
@@ -490,7 +489,7 @@ bash deploy-vps.sh
 
 Los módulos OBS (Grafana, perfil `obs`) y DDoS (CrowdSec, perfil `ddos`) se activan desde el panel de módulos, no en este paso.
 
-> **Nota sobre `TRUSTED_HOSTS`**: para acceder a la consola por `http://IP:5000/auth/setup` antes de que el DNS resuelva, agrega la IP de la VPS a esta variable: `TRUSTED_HOSTS=tu-dominio.com,IP,IP:5000`. Flask 3.1+ rechaza peticiones cuyo header `Host` no esté en esta lista.
+> **Nota sobre `TRUSTED_HOSTS`**: para acceder a la consola por `http://IP:5000/auth/setup` antes de que el DNS resuelva, agrega la IP pública: `TRUSTED_HOSTS=tu-dominio.com,IP`. `localhost` y `127.0.0.1` se añaden automáticamente al arranque cuando hay algún dominio configurado.
 
 Los comandos CLI se ejecutan automáticamente en el entrypoint del contenedor en producción (`flask db-setup`, `flask ensure-geoip`, `flask grafana-provision-ro`). También disponibles manualmente:
 
@@ -507,14 +506,9 @@ Los comandos CLI se ejecutan automáticamente en el entrypoint del contenedor en
 | `flask backup-restore <zip>` | Restaura desde un zip (interactivo; `--yes` para omitir confirmación) |
 | `flask backup-prune [--keep N]` | Elimina backups más antiguos, retiene N (default: config) |
 
-#### Let's Encrypt (producción)
+#### TLS / Let's Encrypt
 
-```bash
-docker compose -f docker-compose.vps.yml --profile certbot run --rm certbot \
-  certonly --webroot -w /var/www/certbot \
-  -d app.ejemplo.com --email admin@ejemplo.com \
-  --agree-tos --no-eff-email
-```
+El aprovisionamiento de certificados se gestiona desde la interfaz web de la consola. Al primer inicio de sesión aparecen las instrucciones para emitir o cargar un certificado por sitio protegido.
 
 ---
 
@@ -538,7 +532,7 @@ docker compose -f docker-compose.vps.yml --profile certbot run --rm certbot \
 | `REDIS_PASSWORD` | `""` | Contraseña Redis; activa storage compartido de rate-limit en producción |
 | `REDIS_HOST` | `127.0.0.1:6379` | Host:puerto de Redis |
 | `RATELIMIT_DEFAULT` | `200/day;50/hour` | Límite global por defecto |
-| `LOGIN_RATELIMIT` | `5/hour` | Límite específico para el endpoint de login |
+| `LOGIN_RATELIMIT` | `10/hour` | Límite específico para el endpoint de login |
 | `PASSWORD_RESET_TOKEN_MINUTES` | `30` | Expiración de tokens de reset de contraseña |
 | `PASSWORD_RESET_SHOW_TOKEN` | `false` | Solo desarrollo — nunca activar en producción |
 | `PUBLIC_BASE_URL` | `""` | URL base pública para enlaces en emails de reset y alertas |
