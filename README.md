@@ -310,7 +310,7 @@ Pipeline automático sobre `AttackEvent`:
 3. **Análisis LLM** opt-in (OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini) — nunca se envían cuerpos de petición, solo metadatos agregados.
 4. **Alertas** email y Telegram con cooldown por IP.
 5. **Scoring ML**: IsolationForest (scikit-learn) entrenado sobre los últimos 14 días de datos; eleva el score heurístico si detecta anomalías.
-6. **SOAR**: bloqueo automático de IPs vía CrowdSec/UFW cuando la severidad supera el umbral.
+6. **SOAR — bloqueo automático**: cuando un incidente supera el umbral de severidad configurable (`high` por defecto), el motor SOAR bloquea la IP de forma automática antes de que el operador intervenga. Siete guardas de seguridad previenen auto-bloqueos accidentales: severidad mínima, IP pública (nunca rangos privados/loopback/Docker), cinco capas de `is_ban_safe()`, protección de IPs de login admin recientes (últimas 24 h), y anti-repetición (no rebanear si ya está bloqueada en la misma ventana de tiempo). Dos métodos de bloqueo configurables: **CrowdSec** (ban temporal con razón `soc-incident-<id>`, duración configurable, p. ej. `24h`) o **UFW** (regla permanente vía socket WF). El incidente queda marcado con `blocked=True`, método y timestamp; se emite entrada de auditoría y notificación al operador.
 7. **Reporte diario** por correo con estadísticas de incidentes.
 
 ### Backups cifrados
@@ -380,7 +380,7 @@ Grafana se sirve en `/obs/` con autenticación por proxy a la sesión Flask.
 ### WardNode SOC — Centro de Operaciones
 Correlación automática de `AttackEvent` en `SocIncident`. El pipeline (detección → enriquecimiento → LLM → alertas → ML → SOAR) corre en el worker daemon `soc-worker`. Gated por `module_soc_enabled` + rol admin.
 
-Configuración desde `/soc/config`: proveedores LLM y claves API (cifradas), opt-in de envío de datos, umbrales de alerta, habilitación del scoring ML, sincronización MITRE ATT&CK.
+Configuración desde `/soc/config`: proveedores LLM y claves API (cifradas), opt-in de envío de datos, umbrales de alerta, habilitación del scoring ML, sincronización MITRE ATT&CK, y parámetros SOAR (método de bloqueo, severidad mínima, duración del ban).
 
 ### WardNode CrowdSec — IDS/IPS
 Integra CrowdSec para detección y bloqueo de amenazas (SSH brute-force, escaneos, etc.). Comunica con el contenedor `wardnode-crowdsec` vía **Docker SDK** (no el socket WF). El bouncer actúa sobre UFW.
