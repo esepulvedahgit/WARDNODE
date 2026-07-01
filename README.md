@@ -15,6 +15,10 @@
 ![Version](https://img.shields.io/badge/versión-1.0.0-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 
+<p align="center">
+  <img src="app/static/img/logo%20login.png" alt="WardNode" width="320">
+</p>
+
 **WardNode** es una consola de administración Flask para un stack de proxy inverso Nginx + ModSecurity + OWASP CRS. Separa el **plano de gestión** (consola Flask, puerto 5000) del **plano de tráfico** (proxy Nginx, puertos 80/443): la consola escribe configuración Nginx a disco y el proxy la lee, sin manejar tráfico de usuario directamente.
 
 Cuatro módulos opcionales extienden la consola con capacidades de gestión del host: **WardNode WF** (firewall UFW), **WardNode OBS** (observabilidad Grafana/Loki/Prometheus), **WardNode SOC** (correlación de incidentes, análisis LLM y scoring ML) y **WardNode CrowdSec** (IDS/IPS). Cada pantalla de la consola incluye una página de **ayuda embebida** accesible desde el botón "Documentación".
