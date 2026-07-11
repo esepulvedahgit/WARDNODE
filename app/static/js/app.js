@@ -36,9 +36,47 @@ document.addEventListener("DOMContentLoaded", () => {
   if (toggle && sidebar) {
     toggle.addEventListener("click", () => sidebar.classList.toggle("open"));
     document.addEventListener("click", (e) => {
-      if (sidebar.classList.contains("open") && !sidebar.contains(e.target) && e.target !== toggle) {
+      if (sidebar.classList.contains("open") && !sidebar.contains(e.target) && !toggle.contains(e.target)) {
         sidebar.classList.remove("open");
       }
+    });
+  }
+
+  // Desktop sidebar icon-only mode (el panel nunca se oculta, solo se angosta)
+  const iconToggle = document.getElementById("sidebarIconToggle");
+  if (iconToggle && sidebar) {
+    const ICON_MODE_KEY = "wn-sidebar-icon-mode";
+    const setIcon = (isIconMode) => {
+      iconToggle.querySelector("i").className = isIconMode
+        ? "bi bi-chevron-double-right"
+        : "bi bi-chevron-double-left";
+      iconToggle.title = isIconMode ? "Expandir menú" : "Reducir menú a iconos";
+    };
+    const startsIconMode = localStorage.getItem(ICON_MODE_KEY) === "1";
+    sidebar.classList.toggle("icon-mode", startsIconMode);
+    setIcon(startsIconMode);
+    iconToggle.addEventListener("click", () => {
+      const isIconMode = sidebar.classList.toggle("icon-mode");
+      localStorage.setItem(ICON_MODE_KEY, isIconMode ? "1" : "0");
+      setIcon(isIconMode);
+    });
+
+    // Tooltip con el nombre completo de cada ítem, solo visible en modo iconos.
+    const tooltip = document.createElement("div");
+    tooltip.className = "sidebar-icon-tooltip";
+    document.body.appendChild(tooltip);
+    sidebar.querySelectorAll(".nav-link-item").forEach((link) => {
+      const label = link.querySelector("span");
+      if (!label) return;
+      link.addEventListener("mouseenter", () => {
+        if (!sidebar.classList.contains("icon-mode")) return;
+        const rect = link.getBoundingClientRect();
+        tooltip.textContent = label.textContent;
+        tooltip.style.left = `${rect.right + 10}px`;
+        tooltip.style.top = `${rect.top + rect.height / 2}px`;
+        tooltip.classList.add("show");
+      });
+      link.addEventListener("mouseleave", () => tooltip.classList.remove("show"));
     });
   }
 });
