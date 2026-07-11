@@ -91,6 +91,8 @@ code, pre, .font-mono {
   flex-shrink: 0;
 }
 
+.sidebar-brand-link { display: flex; align-items: center; text-decoration: none; }
+
 .sidebar-logo {
   max-height: 40px;
   width: auto;
@@ -962,6 +964,10 @@ code, pre, .font-mono {
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
+@media (max-width: 640px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 768px) {
   .sidebar {
     position: fixed; top:0; left:0; bottom:0;
@@ -987,12 +993,13 @@ code, pre, .font-mono {
 }
 
 @media (max-width: 480px) {
-  .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi-grid { gap: 10px; }
   .kpi-value { font-size: 22px; }
   .card-panel-header { padding: 12px 14px; }
   .card-panel-body  { padding: 12px 14px 16px; }
   .events-panel-head { padding: 8px 14px; }
   .events-panel-sec  { padding: 12px 14px; }
+  .events-console-stats { grid-template-columns: 1fr; }
   /* Donut más compacto en teléfonos pequeños */
   .chart-wrap-sm { max-width: 240px; }
 }

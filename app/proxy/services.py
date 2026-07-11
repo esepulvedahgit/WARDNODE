@@ -660,15 +660,18 @@ def _render_bot_challenge_location() -> str:
     console_url = current_app.config.get("WN_CONSOLE_URL", "http://console:5000").rstrip("/")
     return f"""
     location = /_wn_challenge/verify {{
+        modsecurity off;
         proxy_pass {console_url}/proxy/bot-verify;
-        proxy_set_header Host $host;
+        proxy_set_header Host localhost;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
         proxy_read_timeout 10s;
     }}
 
     location /_wn_challenge/ {{
+        modsecurity off;
         alias /etc/nginx/generated/challenge/;
         index challenge.html;
         try_files $uri /challenge.html =404;

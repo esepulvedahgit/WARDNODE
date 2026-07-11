@@ -21,7 +21,9 @@
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-      <img src="{{ url_for('static', filename='img/logo 2.png') }}" alt="WardNode" class="sidebar-logo">
+      <a href="{{ url_for('proxy.dashboard') }}" class="sidebar-brand-link">
+        <img src="{{ url_for('static', filename='img/logo 2.png') }}" alt="WardNode" class="sidebar-logo">
+      </a>
     </div>
 
     <nav class="sidebar-nav">

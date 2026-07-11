@@ -40,28 +40,28 @@
 
   {# ── KPI cards ── #}
   <div class="row g-3 mb-4">
-    <div class="col-6 col-lg-3">
+    <div class="col-md-6 col-lg-3">
       <div class="card-panel" style="padding:16px 20px">
         <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Eventos hoy</div>
         <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ total_24h }}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
       </div>
     </div>
-    <div class="col-6 col-lg-3">
+    <div class="col-md-6 col-lg-3">
       <div class="card-panel" style="padding:16px 20px;{% if failures_24h > 0 %}border-color:#fca5a5{% endif %}">
         <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fallos</div>
         <div style="font-size:28px;font-weight:700;color:{% if failures_24h > 0 %}var(--c-danger){% else %}var(--text-primary){% endif %};line-height:1">{{ failures_24h }}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
       </div>
     </div>
-    <div class="col-6 col-lg-3">
+    <div class="col-md-6 col-lg-3">
       <div class="card-panel" style="padding:16px 20px">
         <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Acciones usuarios</div>
         <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ user_actions_24h }}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">últimas 24 h</div>
       </div>
     </div>
-    <div class="col-6 col-lg-3">
+    <div class="col-md-6 col-lg-3">
       <div class="card-panel" style="padding:16px 20px">
         <div style="font-size:11px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Eventos sistema</div>
         <div style="font-size:28px;font-weight:700;color:var(--text-primary);line-height:1">{{ system_events_24h }}</div>
