@@ -1481,9 +1481,9 @@ def settings_save_smtp():
 @roles_required(ROLE_ADMIN)
 @limiter.limit("5 per minute")
 def settings_smtp_test():
-    from app.email import send_password_reset_email
+    from app.email import send_smtp_test_email
     try:
-        send_password_reset_email(current_user.email, "https://example.com/test-wardnode")
+        send_smtp_test_email(current_user.email)
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500

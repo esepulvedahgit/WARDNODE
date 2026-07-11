@@ -101,6 +101,14 @@ def send_soc_alert_email(
     send_email(to_emails, subject, body, html_body=html_body)
 
 
+def send_smtp_test_email(to_email: str) -> None:
+    body = (
+        "Este es un correo de prueba de WardNode.\n\n"
+        "Si lo recibiste, la configuracion SMTP esta funcionando correctamente."
+    )
+    send_email([to_email], "Prueba de configuracion SMTP — WardNode", body)
+
+
 def send_password_reset_email(to_email: str, reset_url: str) -> None:
     minutes = current_app.config.get("PASSWORD_RESET_TOKEN_MINUTES", 30)
     body = (
