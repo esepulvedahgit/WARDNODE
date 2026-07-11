@@ -190,6 +190,8 @@ code, pre, .font-mono {
 .bc-root { color: var(--text-muted); font-weight: 500; }
 .bc-sep  { color: var(--text-muted); }
 .bc-current { color: var(--text-primary); font-weight: 600; }
+.bc-link { color: var(--text-muted); font-weight: 500; text-decoration: none; }
+.bc-link:hover { color: var(--accent); text-decoration: underline; }
 
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
