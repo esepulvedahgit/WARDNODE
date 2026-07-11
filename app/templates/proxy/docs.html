@@ -629,8 +629,8 @@ SecAction "id:1000002,phase:1,pass,nolog,setvar:tx.sql_injection_score=0"</pre>
       <table>
         <thead><tr><th>Parámetro</th><th>Descripción</th><th>Default</th><th>Rango</th></tr></thead>
         <tbody>
-          <tr><td><strong>Requests por segundo</strong></td><td>Tasa máxima de peticiones permitidas (<code>limit_req_zone … rate=N r/s</code>).</td><td>20</td><td>1 – 5.000</td></tr>
-          <tr><td><strong>Burst</strong></td><td>Peticiones adicionales en cola permitidas temporalmente sobre la tasa.</td><td>40</td><td>0 – 20.000</td></tr>
+          <tr><td><strong>Requests por segundo</strong></td><td>Tasa máxima de peticiones permitidas (<code>limit_req_zone … rate=N r/s</code>).</td><td>50</td><td>1 – 5.000</td></tr>
+          <tr><td><strong>Burst</strong></td><td>Peticiones adicionales en cola permitidas temporalmente sobre la tasa.</td><td>100</td><td>0 – 20.000</td></tr>
           <tr><td><strong>Nodelay</strong></td><td>Si está activo, el burst se procesa sin espera artificial (respuesta inmediata); si está inactivo, las peticiones en burst se retrasan.</td><td>Activo</td><td>on / off</td></tr>
           <tr><td><strong>Conexiones máximas</strong></td><td>Máximo de conexiones simultáneas por clave (<code>limit_conn</code>).</td><td>20</td><td>1 – 50.000</td></tr>
           <tr><td><strong>Clave de aplicación</strong></td><td>Variable con la que se agrupa el rate limit.</td><td>IP remota</td><td>IP remota / X-Forwarded-For</td></tr>
@@ -645,11 +645,11 @@ SecAction "id:1000002,phase:1,pass,nolog,setvar:tx.sql_injection_score=0"</pre>
       <h3>Qué genera en la configuración Nginx</h3>
       <p>La política genera zonas globales en <code>generated/nginx/00-zones.conf</code> y directivas dentro del <code>location /</code> de cada sitio:</p>
 <pre># 00-zones.conf (global, agregado de todos los sitios)
-limit_req_zone  $binary_remote_addr  zone=req_site_1:10m  rate=20r/s;
+limit_req_zone  $binary_remote_addr  zone=req_site_1:10m  rate=50r/s;
 limit_conn_zone $binary_remote_addr  zone=conn_site_1:10m;
 
 # site-ejemplo.conf (dentro del location /)
-limit_req  zone=req_site_1  burst=40  nodelay;
+limit_req  zone=req_site_1  burst=100  nodelay;
 limit_conn zone=conn_site_1 20;</pre>
       <p>Cuando el rate limit se supera, Nginx devuelve HTTP <code>429 Too Many Requests</code> (o <code>503</code> si el burst también se agota con nodelay).</p>
     </div>
