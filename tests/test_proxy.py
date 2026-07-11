@@ -2,6 +2,7 @@ from app.models import (
     AppConfig,
     AttackEvent,
     AuditLog,
+    BotProtectionConfig,
     CustomModSecurityRule,
     NginxExtraConfig,
     ROLE_ADMIN,
@@ -136,6 +137,37 @@ def test_obs_location_is_not_rendered_for_non_console_site(app, tmp_path):
 
     content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
     assert "location /obs/" not in content
+
+
+def test_bot_challenge_locations_disable_modsecurity(app, tmp_path):
+    """Regresión: /_wn_challenge/verify y /_wn_challenge/ deben quedar exentos de
+    ModSecurity, igual que el resto de rutas internas de la consola (obs, admin).
+    Sin esto, el motor CRS inspecciona el token HMAC del challenge y produce
+    un 500 al resolver el desafío anti-bot en vez de setear la cookie wn_bot."""
+    app.config["PROXY_CONFIG_DIR"] = str(tmp_path)
+
+    with app.app_context():
+        from app.extensions import db
+
+        site = Site(
+            name="App",
+            domain="app.example",
+            upstream_url="http://app:8080",
+            waf_enabled=True,
+        )
+        db.session.add(site)
+        db.session.commit()
+        db.session.add(BotProtectionConfig(site=site, enabled=True))
+        db.session.commit()
+
+        render_nginx_configs()
+
+    content = next(tmp_path.glob("site-*.conf")).read_text(encoding="utf-8")
+    verify_block = content.split("location = /_wn_challenge/verify {", 1)[1].split("}", 1)[0]
+    challenge_block = content.split("location /_wn_challenge/ {", 1)[1].split("}", 1)[0]
+    assert "modsecurity off;" in verify_block
+    assert "modsecurity off;" in challenge_block
+    assert "proxy_http_version 1.1;" in verify_block
 
 
 def test_operator_can_update_site_traffic_policy(client, login_as):
